@@ -1,0 +1,15 @@
+{
+  "name": "LazyLord",
+  "id": "lazylord-figma-transfer",
+  "api": "1.0.0",
+  "editorType": ["figma", "figjam"],
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": [
+      "ws://localhost:7878"
+    ],
+    "reasoning": "LazyLord talks only to the local LazyLord bridge (ws://localhost:7878) to hand your selection to Photoshop, Illustrator and After Effects. No data leaves your machine."
+  }
+}

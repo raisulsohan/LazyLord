@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Enables remote (Chrome) debugging of the LazyLord panel during development.
+  Open the printed port in Chrome, e.g. http://localhost:8770
+-->
+<ExtensionList>
+  <Extension Id="com.lazylord.panel">
+    <HostList>
+      <Host Name="PHXS" Port="8770" />
+      <Host Name="PHSP" Port="8770" />
+      <Host Name="ILST" Port="8771" />
+      <Host Name="AEFT" Port="8772" />
+    </HostList>
+  </Extension>
+</ExtensionList>

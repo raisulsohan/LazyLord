@@ -1,0 +1,11 @@
+{
+  "name": "@lazylord/adobe-cep",
+  "version": "0.1.0",
+  "description": "LazyLord CEP panel for Photoshop, Illustrator and After Effects — receives design transfers from the Figma plugin and rebuilds them natively.",
+  "license": "MIT",
+  "private": true,
+  "lazylord": {
+    "bundleId": "com.lazylord.panel",
+    "hosts": ["PHXS", "PHSP", "ILST", "AEFT"]
+  }
+}

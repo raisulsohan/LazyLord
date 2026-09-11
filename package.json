@@ -1,0 +1,25 @@
+{
+  "name": "lazylord",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LazyLord — transfer vectors, live text and images between Figma and Adobe Photoshop, Illustrator and After Effects. An open alternative to Battle Axe Overlord.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/core",
+    "packages/figma-plugin",
+    "packages/bridge"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @lazylord/core && npm run build --workspace @lazylord/figma-plugin && npm run build --workspace @lazylord/bridge",
+    "build:core": "npm run build --workspace @lazylord/core",
+    "build:figma": "npm run build --workspace @lazylord/figma-plugin",
+    "build:bridge": "npm run build --workspace @lazylord/bridge",
+    "dev:figma": "npm run dev --workspace @lazylord/figma-plugin",
+    "bridge": "npm run start --workspace @lazylord/bridge",
+    "test": "npm run build:core && node tools/smoke-test.mjs",
+    "test:core": "node --experimental-transform-types tools/test-core.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}

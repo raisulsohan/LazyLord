@@ -197,6 +197,27 @@ function handleMessage(client: Client, msg: Message) {
       break;
     }
 
+    case "request": {
+      // A question for one app (the AE panel asking Photoshop for its document):
+      // routed like a transfer, answered like an ack.
+      const targets = targetsFor(client, msg.target);
+      if (targets.length === 0) {
+        send(client.socket, { type: "reply", id: msg.id, from: "unknown", ok: false, message: notConnected(msg.target) });
+        return;
+      }
+      pruneOrigins();
+      transferOrigins.set(msg.id, { client, at: Date.now() });
+      send(targets[0].socket, msg);
+      break;
+    }
+
+    case "reply": {
+      const origin = transferOrigins.get(msg.id);
+      if (origin && clients.has(origin.client)) send(origin.client.socket, msg);
+      transferOrigins.delete(msg.id);
+      break;
+    }
+
     case "ping": {
       send(client.socket, { type: "pong", t: msg.t });
       break;

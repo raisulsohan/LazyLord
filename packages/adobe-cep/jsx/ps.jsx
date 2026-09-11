@@ -49,6 +49,24 @@ LazyLord.build = function (doc) {
   return { ok: true, layersCreated: st.created, message: "" };
 };
 
+/**
+ * For the After Effects panel's PSD import: the active document's name, where
+ * it is saved ("" when it never was) and whether it has unsaved changes.
+ */
+LazyLord.activeDocumentInfo = function () {
+  var res = { ok: false, message: "", data: {} };
+  if (!app.documents.length) {
+    res.message = "Photoshop has no document open.";
+    return JSON.stringify(res);
+  }
+  var doc = app.activeDocument;
+  res.data.name = String(doc.name);
+  try { res.data.path = doc.fullName.fsName; } catch (e) { res.data.path = ""; } // never saved
+  try { res.data.saved = doc.saved === true; } catch (e2) { res.data.saved = false; }
+  res.ok = true;
+  return JSON.stringify(res);
+};
+
 /** Guides, when asked for; named colours are reported, not added. */
 LazyLord._ps_extras = function (psDoc, doc) {
   var guides = LazyLord.wantedGuides(doc);

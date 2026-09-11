@@ -226,6 +226,41 @@ function detach(item) {
     for (var i = 0; i < colls.length; i++) if (colls[i]) removeFrom(colls[i], item);
 }
 
+var ElementPlacement = {
+    PLACEBEFORE: "before",
+    PLACEAFTER: "after",
+    PLACEATBEGINNING: "begin",
+    PLACEATEND: "end"
+};
+
+/** The typed collection an item belongs to in its container. */
+function typedColl(p, item) {
+    if (item.typename === "PathItem") return p.pathItems;
+    if (item.typename === "CompoundPathItem") return p.compoundPathItems;
+    if (item.typename === "TextFrame") return p.textFrames;
+    if (item.typename === "PlacedItem" || item.typename === "RasterItem") return p.placedItems;
+    if (item.typename === "GroupItem") return p.groupItems;
+    return null;
+}
+
+/**
+ * PageItem.move. Illustrator's z-order runs front to back, so index 0 is the
+ * frontmost item and PLACEBEFORE means "in front of".
+ */
+function moveItem(relObj, placement) {
+    if (MOCK.rejectMove) throw new Error("Illustrator could not move the item");
+    detach(this);
+    var p = relObj.parent;
+    this.parent = p;
+    var at = p.pageItems.length;
+    for (var i = 0; i < p.pageItems.length; i++) {
+        if (p.pageItems[i] === relObj) { at = (placement === ElementPlacement.PLACEAFTER) ? i + 1 : i; break; }
+    }
+    p.pageItems.splice(at, 0, this);
+    var coll = typedColl(p, this);
+    if (coll) coll.unshift(this);
+}
+
 function scaleWidth(path, clw) {
     // Model changeLineWidths as a percentage: 1 would shrink strokes to 1%.
     if (path.stroked && typeof clw === "number") path.strokeWidth = path.strokeWidth * clw / 100;
@@ -258,6 +293,7 @@ PathItem.prototype.transform = function (m, cp, cfp, cfg, csp, clw, about) {
     scaleWidth(this, clw);
 };
 PathItem.prototype.remove = function () { if (this.parent.pageItems) detach(this); };
+PathItem.prototype.move = moveItem;
 
 function CompoundPathItem(parent) {
     var self = this;
@@ -278,6 +314,7 @@ CompoundPathItem.prototype.transform = function (m, cp, cfp, cfg, csp, clw, abou
     }
 };
 CompoundPathItem.prototype.remove = function () { detach(this); };
+CompoundPathItem.prototype.move = moveItem;
 
 function GroupItem(parent) {
     makeContainer(this);
@@ -289,6 +326,7 @@ function GroupItem(parent) {
     this.removed = false;
 }
 GroupItem.prototype.remove = function () { this.removed = true; detach(this); };
+GroupItem.prototype.move = moveItem;
 
 // Rigid-box helpers shared by text frames and placed items (y-up).
 function turnPts(pts, c, deg) {
@@ -341,6 +379,7 @@ function TextFrame(parent) {
     this.turnedWith = []; // the justification in force at each rotate()
     this._place([0, 0]);
 }
+TextFrame.prototype.move = moveItem;
 TextFrame.prototype._justification = function () {
     var pa = this.textRange.paragraphAttributes;
     return (pa && pa.justification) || Justification.LEFT;
@@ -393,6 +432,7 @@ function PlacedItem(parent) {
     this.rotations = [];
     this._corners = null;
 }
+PlacedItem.prototype.move = moveItem;
 PlacedItem.prototype._fromPosition = function () {
     var p = this.position, w = this.width, h = this.height;
     this._corners = [[p[0], p[1]], [p[0] + w, p[1]], [p[0] + w, p[1] - h], [p[0], p[1] - h]];
@@ -1740,6 +1780,145 @@ var CLIP_FLIPPED = [[10, 580], [110, 580], [110, 530], [10, 530]];
        stack(aiDoc.pageItems[0]) === "<clip>,G", stack(aiDoc) + " / " + (aiDoc.pageItems[0] ? stack(aiDoc.pageItems[0]) : ""));
 })();
 
+
+/* -------------------------------------------------------------------------
+ * Phase 3: tagging Illustrator artwork and replacing it where it stands
+ *
+ * Illustrator has no timeline, so "update" here means the artwork is rebuilt
+ * into the stacking position the old artwork held, and the old items go. What
+ * that buys is placement: re-sending a shape does not move it to the front of
+ * the stack, and does not leave a duplicate behind.
+ * ---------------------------------------------------------------------- */
+
+function taggedDocAI(layers, key, options) {
+    var d = canvasDoc(layers);
+    d.sourceKey = key === undefined ? "file-A" : key;
+    if (options) d.options = options;
+    return d;
+}
+/** findDiag, but by pattern rather than substring. */
+function findDiag2(re) {
+    for (var i = 0; i < LazyLord.diagnostics.length; i++) {
+        if (re.test(LazyLord.diagnostics[i].reason)) return LazyLord.diagnostics[i];
+    }
+    return null;
+}
+function updateOptsAI(extra) {
+    var o = { existing: "update" };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return o;
+}
+
+// U1) A first transfer tags the artwork it draws.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(1, 0, 0) }])]));
+
+    var item = aiDoc.pageItems[0];
+    ok("AI tag: the drawn item carries a tag", /\[\[LazyLord /.test(item.note), String(item.note));
+    ok("AI tag: it names the source app, file and layer id",
+       String(item.note).indexOf("figma|file-A|Box") >= 0, String(item.note));
+})();
+
+// U2) Sending it again with Update replaces it in place.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(1, 0, 0) }])]));
+    var was = aiDoc.pageItems[0];
+
+    var r = build(taggedDocAI(
+        [vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(0, 0, 1) }])],
+        "file-A", updateOptsAI()));
+
+    ok("AI update: still one item", aiDoc.pageItems.length === 1, String(aiDoc.pageItems.length));
+    ok("AI update: the old item is gone", was.parent === null || aiDoc.pageItems[0] !== was);
+    ok("AI update: the replacement has the new fill",
+       aiDoc.pageItems[0].fillColor.blue === 255 && aiDoc.pageItems[0].fillColor.red === 0,
+       aiDoc.pageItems[0].fillColor.red + "," + aiDoc.pageItems[0].fillColor.blue);
+    ok("AI update: counted as replaced", r.layersUpdated === 1, String(r.layersUpdated));
+    ok("AI update: the summary says so", /Replaced 1 item/.test(r.message), r.message);
+    ok("AI update: the replacement is tagged for next time",
+       /\[\[LazyLord /.test(String(aiDoc.pageItems[0].note)), String(aiDoc.pageItems[0].note));
+})();
+
+// U3) The point of replacing in place: the artwork keeps its depth in the stack.
+(function () {
+    var aiDoc = openDoc();
+    // Build B then A, so the stack is A (front), B (back).
+    build(taggedDocAI([vectorLayer("B", BOX, [rectPath(20, 20)], [{ type: "solid", color: rgba(0, 1, 0) }]),
+                       vectorLayer("A", BOX, [rectPath(10, 10)], [{ type: "solid", color: rgba(1, 0, 0) }])]));
+    ok("AI stack: A is in front to begin with",
+       aiDoc.pageItems[0].name === "A" && aiDoc.pageItems[1].name === "B",
+       aiDoc.pageItems[0].name + "," + aiDoc.pageItems[1].name);
+
+    build(taggedDocAI([vectorLayer("B", BOX, [rectPath(30, 30)], [{ type: "solid", color: rgba(0, 0, 1) }])],
+                      "file-A", updateOptsAI()));
+
+    ok("AI stack: still two items", aiDoc.pageItems.length === 2, String(aiDoc.pageItems.length));
+    ok("AI stack: the replaced B stayed behind A",
+       aiDoc.pageItems[0].name === "A" && aiDoc.pageItems[1].name === "B",
+       aiDoc.pageItems[0].name + "," + aiDoc.pageItems[1].name);
+    ok("AI stack: and it is the new B", aiDoc.pageItems[1].fillColor.blue === 255,
+       String(aiDoc.pageItems[1].fillColor.blue));
+})();
+
+// U4) A different source file does not match.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(1, 0, 0) }])], "file-A"));
+    var r = build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(0, 0, 1) }])],
+                              "file-B", updateOptsAI()));
+
+    ok("AI key: a different file adds instead", aiDoc.pageItems.length === 2, String(aiDoc.pageItems.length));
+    ok("AI key: nothing was replaced", r.layersUpdated === 0, String(r.layersUpdated));
+    ok("AI key: the miss is reported", /Nothing matched/.test(r.message), r.message);
+})();
+
+// U5) Update cannot also restructure the document, so Groups is ignored.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(1, 0, 0) }])]));
+    var before = aiDoc.groupItems.length;
+
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(0, 1, 0) }])],
+                      "file-A", updateOptsAI({ hierarchy: "groups" })));
+
+    ok("AI layout: Groups was reported as ignored",
+       (findDiag2(/Groups was ignored/) ? 1 : 0) === 1, diags());
+    ok("AI layout: no group was created", aiDoc.groupItems.length === before,
+       aiDoc.groupItems.length + " vs " + before);
+})();
+
+// U6) A compound path's members all carry the tag, so the whole shape is
+//     replaced as one and nothing is left behind.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Ring", BOX, [rectPath(200, 100), rectPath(100, 50, 50, 25)],
+                                   [{ type: "solid", color: rgba(1, 0, 0) }])]));
+    var topLevel = aiDoc.pageItems.length;
+    ok("AI compound: drawn as one compound path", topLevel === 1 && aiDoc.compoundPathItems.length === 1,
+       String(topLevel));
+    ok("AI compound: it is tagged", /\[\[LazyLord /.test(String(aiDoc.pageItems[0].note)));
+
+    var r = build(taggedDocAI([vectorLayer("Ring", BOX, [rectPath(200, 100), rectPath(80, 40, 60, 30)],
+                                           [{ type: "solid", color: rgba(0, 0, 1) }])],
+                              "file-A", updateOptsAI()));
+    ok("AI compound: replaced, not duplicated", aiDoc.pageItems.length === 1, String(aiDoc.pageItems.length));
+    ok("AI compound: counted as replaced", r.layersUpdated === 1, String(r.layersUpdated));
+})();
+
+// U7) When the rebuilt artwork cannot be put back, the user is told rather
+//     than left with it silently sitting at the front.
+(function () {
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(1, 0, 0) }])]));
+    MOCK.rejectMove = true;
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], [{ type: "solid", color: rgba(0, 1, 0) }])],
+                      "file-A", updateOptsAI()));
+    MOCK.rejectMove = false;
+
+    ok("AI move failure: reported", (findDiag2(/could not be put back in its old place/) ? 1 : 0) === 1, diags());
+})();
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

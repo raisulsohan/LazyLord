@@ -1,18 +1,17 @@
 # LazyLord
 
-**Transfer vectors, live text and images between Figma and Adobe Photoshop, Illustrator & After Effects.**
+**Move vectors, live text and images between Figma, Photoshop, Illustrator and After Effects — any of them to any other.**
 
-LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://battleaxe.co/overlord). Select layers in Figma, hit **Send**, and they are rebuilt as **native** shape layers, path items, text layers and images inside your Adobe app — not flattened screenshots.
+LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://battleaxe.co/overlord). Select layers anywhere, press **Send**, and they are rebuilt as **native** shape layers, path items, text layers and images in the app you sent them to — not flattened screenshots.
 
-> Status: **v0.4 — Phase 2 + hierarchy.** Routes implemented end to end:
-> **Figma → Photoshop / Illustrator / After Effects**, **Illustrator → After Effects** (push),
-> and **After Effects → Illustrator** (pull) — now with native gradients, clipping masks,
-> parametric rectangles/ellipses, correct rotation, source-sized documents, group hierarchy
-> and Split/Combine layout.
+> Status: **v0.7 — every app to every app, and one interface.** All four hosts both send and receive, with the
+> same options everywhere: where the transfer lands and at what size, how it is laid out,
+> whether it adds layers or updates the ones an earlier transfer built, plus blend modes and
+> effects. Both front ends now wear one stylesheet, and both windows resize.
 >
-> Everything is covered by mocked-host test suites, but **none of the v0.4 work has been run
-> inside a real Adobe app or Figma yet.** Treat host-API behaviour marked *unverified* below as
-> the first thing to check.
+> Everything is covered by mocked-host test suites, but **none of the work since v0.3 has been
+> run inside a real Adobe app or Figma yet.** Treat host-API behaviour marked *unverified* below
+> as the first thing to check.
 
 ---
 
@@ -21,18 +20,17 @@ LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://
 Figma plugins can only reach `localhost`, and Adobe apps script through CEP/ExtendScript. LazyLord connects them with a tiny local WebSocket relay. Any connected app can send; the bridge routes a transfer to the chosen destination and the acknowledgement back to whoever started it.
 
 ```
-┌────────────┐                     ┌────────────┐         ┌─────────────────────┐
-│   Figma    │ ──── selection ───► │            │ ── IR ► │  Adobe CEP panel    │
-│  plugin    │ ◄────── ack ─────── │   Bridge   │ ◄ ack ─ │  PS / AI / AE       │
-└────────────┘                     │ (Node, ws) │         │  → ExtendScript      │
-┌────────────┐ ◄─── push/pull ───► │   :7878    │         └─────────────────────┘
-│  AI ⇄ AE   │                     │            │
-└────────────┘                     └────────────┘
+┌────────────┐                     ┌────────────┐                ┌──────────────────┐
+│   Figma    │ ◄──── IR / ack ───► │   Bridge   │ ◄── IR / ack ─► │  Photoshop       │
+│  plugin    │                     │ (Node, ws) │                │  Illustrator     │
+└────────────┘                     │   :7878    │                │  After Effects   │
+                                   └────────────┘                └──────────────────┘
+        every app sends and receives; the bridge routes by destination
 ```
 
 1. **Figma plugin** reads the selection and serialises it to a host-neutral **IR** (intermediate representation): groups, bezier contours, paints, clip paths, live-text properties and PNG fallbacks. `packages/figma-plugin`
 2. **Bridge** routes each transfer to its target app and each acknowledgement back to its originator. `packages/bridge`
-3. **Adobe CEP panel** (one panel, three hosts) rebuilds incoming IR natively, and — where the host has a reader — serialises its own selection to push out. `packages/adobe-cep`
+3. **Adobe CEP panel** (one panel, three hosts) rebuilds incoming IR natively, and serialises its own selection to send out. `packages/adobe-cep`
 4. **Core** holds the shared IR types, the transfer protocol, the SVG-path → bezier math and the pure geometry (transform baking, gradient handles, artboard detection) used by every side. `packages/core`
 
 Everything runs on your machine — **no data leaves localhost.**
@@ -45,20 +43,23 @@ Everything runs on your machine — **no data leaves localhost.**
 lazylord/
 ├── packages/
 │   ├── core/           # IR types, protocol, SVG-path → bezier, geometry helpers (TS)
-│   ├── figma-plugin/   # Figma plugin: selection → IR → WebSocket (TS + esbuild)
+│   ├── ui-kit/         # the one stylesheet both front ends wear
+│   ├── figma-plugin/   # Figma plugin: selection ⇄ IR over WebSocket (TS + esbuild)
 │   ├── bridge/         # Local WebSocket relay (Node + ws)
 │   └── adobe-cep/      # CEP panel for PS/AI/AE (HTML/JS + ExtendScript)
-│       ├── js/main.js  #   panel: bridge client, push flow, options, diagnostics
-│       └── jsx/        #   ae/ai/ps builders + ai-read / ae-read (readers)
+│       ├── js/main.js  #   panel: bridge client, send flow, options, diagnostics
+│       └── jsx/        #   ae/ai/ps builders + ae-read / ai-read / ps-read (readers)
 ├── tools/
 │   ├── install-cep.ps1              # install the panel for dev (Windows)
 │   ├── install-cep.sh               # install the panel for dev (macOS)
+│   ├── sync-ui-css.mjs              # copies ui-kit/lazylord.css into the panel
 │   ├── check-extendscript.js        # ES3 syntax check (needs only cscript)
 │   ├── test-ae-builder.js           # AE builder vs. a mocked AE DOM
 │   ├── test-ai-builder.js           # Illustrator builder vs. a mocked AI DOM
 │   ├── test-ps-builder.js           # Photoshop builder vs. mocked ActionManager/DOM
 │   ├── test-illustrator-reader.js   # Illustrator reader vs. a mocked AI DOM
 │   ├── test-aftereffects-reader.js  # AE reader vs. a mocked AE DOM
+│   ├── test-photoshop-reader.js     # Photoshop reader vs. mocked ActionManager/DOM
 │   ├── test-cep-panel.js            # CEP panel vs. mocked CSInterface/WebSocket
 │   ├── test-core.mjs                # core geometry + Figma plugin vs. a mocked scene (Node)
 │   └── smoke-test.mjs               # path-parser checks against the built core
@@ -112,6 +113,24 @@ Enable CEP debug mode and link the panel into your CEP extensions folder:
 
 Restart the Adobe app, then open **Window → Extensions (legacy) → LazyLord**.
 
+## What talks to what
+
+Every app both sends and receives, so all twelve directions work:
+
+| sends ↓ / receives → | Figma | Illustrator | After Effects | Photoshop |
+| --- | --- | --- | --- | --- |
+| **Figma** | — | ✅ | ✅ | ✅ |
+| **Illustrator** | ✅ | — | ✅ | ✅ |
+| **After Effects** | ✅ | ✅ | — | ✅ |
+| **Photoshop** | ✅ | ✅ | ✅ | — |
+
+What each app can *describe* still differs — After Effects has no inner shadow, Illustrator has
+no timeline, Photoshop cannot be scripted to hold a layer tag — and every one of those gaps is
+reported on the transfer rather than left to be discovered. The tables under
+[What transfers](#what-transfers) say which.
+
+---
+
 ### Transfer from Figma
 
 1. Bridge running, LazyLord panel open in your Adobe app (its dot turns green).
@@ -120,14 +139,26 @@ Restart the Adobe app, then open **Window → Extensions (legacy) → LazyLord**
 
 If everything you selected sits inside one top-level frame, it lands where it sits in that frame, and a new document or comp is created at the frame's size.
 
-### Push and pull between Illustrator and After Effects
+### Sending from an Adobe app
 
-With the panel open in both apps, each one offers the other as a destination automatically.
+Every panel has a **Send selection** card. It lists every other app that is connected, and the button says where the transfer is going — **Send to After Effects**, **Send to Figma**, and so on.
 
-- **Illustrator → AE:** select artwork, press **Push**. It is rebuilt as native AE shape, text and footage layers, positioned where it sat on the artboard.
-- **AE → Illustrator:** select layers, press **Pull**. Shape layers come back as editable Illustrator paths, text as live text on its real baseline, and footage as your original linked file.
+> Earlier versions labelled these **Push** and **Pull**, following Overlord. Those words name a
+> direction through a workflow rather than what the button does — After Effects' button said
+> "Pull" while sending artwork *out* — and they stop meaning anything once every app talks to
+> every other one. The button now simply names its destination.
 
-### Options: Layout and Hierarchy
+The panel has the same **Destination** and **Image scale** choices the Figma plugin does, so a
+transfer out of Illustrator can make a new comp the size of the artboard exactly as one out of
+Figma can:
+
+| Destination | What the receiving app does |
+| --- | --- |
+| **Open document** (default) | Into the document or comp already open, where it sits on the page |
+| **New — source page size** | A new document or comp the size of the source artboard / composition / canvas, with everything where it sits on it |
+| **New — selection size** | A new document or comp the size of the selection, with the artwork at its origin |
+
+### Options: Layout, Hierarchy, Existing and Keyframes
 
 Both the Figma plugin and the Adobe panel have a folded **Options** section. The sender chooses; the receiving app obeys (they travel as `document.options`). Choices are remembered per app.
 
@@ -149,8 +180,39 @@ Transfers pushed from Illustrator or pulled from After Effects always go into th
 | | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. Text, images, gradient-filled shapes and shapes with a different clip stay separate layers (reported). Illustrator and Photoshop ignore it. |
 | **Hierarchy** | **Flatten** (default) | Groups dissolve into their layers; a group's opacity is multiplied into its layers (reported when they could overlap) |
 | | **Groups** | Illustrator groups, Photoshop layer groups, After Effects parent **nulls** — or nested shape groups when combining |
+| **Existing** | **Add** (default) | Every transfer creates new layers |
+| | **Update** | A layer an earlier transfer built from the same object is edited where it stands, instead of a duplicate being added |
+| **Keyframes** | **Auto** (default) | While updating: a property that is already animated gets a new key at the playhead; a still one is just set |
+| | **Always** | Every property LazyLord updates is keyed at the playhead — how you animate a shape by re-sending it |
 
-Split + Flatten is what earlier versions produced, with two intentional fixes (see *Behaviour changes in v0.4*).
+Split + Flatten + Add is what earlier versions produced, with two intentional fixes (see *Behaviour changes in v0.4*).
+
+#### Shape updating
+
+Each layer a transfer builds records where it came from — the source app, the source **document** and the object's own id — in the one writable text field its host gives every layer (an After Effects layer **comment**, an Illustrator **note**). The tag is a single bracketed token, so anything else you keep in that field survives:
+
+```
+my own note
+[[LazyLord figma|0:1|1:42]]
+```
+
+With **Existing: Update**, the receiving app reads those tags back and edits the matching layer instead of adding one. What that changes:
+
+| | After Effects | Illustrator |
+| --- | --- | --- |
+| What is rewritten | The transform, the outline and the paint — found by searching the layer's contents, not assumed to still be where they were left | The artwork is rebuilt and dropped into the stacking position the old item held; the old item is removed |
+| What survives | Its place in the stack, its parent, its effects, its masks, and any property LazyLord does not own | Its place in the stack and the layer or group it was in |
+| What does not | — | Anything added to the item itself, such as an Illustrator appearance |
+| Keyframes | Animated properties take a key at the playhead rather than a static value, which is what makes re-sending an edited shape animate it | No timeline, so none |
+
+Notes worth knowing:
+
+- **The first transfer always adds** — there are no tags to match yet. Send once, then switch to Update.
+- **Update ignores Layout and Hierarchy** (reported). Editing layers where they stand cannot also restructure them; send with Add to change the layout.
+- **Update needs somewhere to update**, so it always builds into the open document or comp — in the Figma plugin it overrides Destination, and says so.
+- **A layer id only matches within its own document.** Node ids, Illustrator `uuid`s and After Effects layer ids all repeat across files, so the document key is part of the tag. An unsaved source has no stable key; its tags match only other keyless ones.
+- **Nothing is ever deleted in After Effects.** If a shape no longer holds what the source describes — you added a contour, or deleted a group — the contours that pair up are updated and the mismatch is reported.
+- Deleting the tag from a layer's comment or note detaches it: the next Update adds a fresh layer instead.
 
 After every transfer the panel prints a one-line summary (layers, images — originals vs. generated — and fallbacks by kind), and lists anything that needed a fallback, naming the object and the reason, sorted skipped → rasterized → approximated.
 
@@ -216,6 +278,36 @@ Figma rotation used to pivot on the layer's top-left; vectors now have their tra
 - **After Effects:** images LazyLord generated are copied next to your saved project in `LazyLord Assets/` (never overwriting; `-1`, `-2`… appended) and imported from there. In an unsaved project they stay in the temp folder, and the panel says so. Your own linked files are never copied.
 - **Illustrator:** generated images are embedded; your own files stay linked.
 
+### Blend modes and effects
+
+A layer's blend mode and its shadows and blurs travel with it, in one shared vocabulary
+(`BlendMode` and `Effect` in `packages/core/src/ir.ts`). What a host cannot rebuild it reports,
+naming the layer and what was lost — it is never dropped quietly.
+
+| | Figma | After Effects | Illustrator | Photoshop |
+| --- | --- | --- | --- | --- |
+| **Blend modes** (all 16) | ✅ native | ✅ native | ✅ native | ✅ native |
+| **Drop shadow** | ✅ native | ✅ Drop Shadow effect | reported | reported |
+| **Shadow spread** | ✅ native | reported | reported | reported |
+| **Inner shadow** | ✅ native | reported | reported | reported |
+| **Layer blur** | ✅ native | ✅ Gaussian Blur | reported | reported |
+| **Background blur** | ✅ native | reported | reported | reported |
+
+Worth knowing:
+
+- **After Effects describes a shadow differently.** It has no x/y offset — it has a direction
+  dial and a distance — so the IR's offset is converted into them. Its Drop Shadow also has no
+  spread, so a shadow that uses one is rebuilt without it and says so.
+- **A blur radius is not the same number everywhere.** Figma's radius is a standard deviation;
+  AE's Blurriness is roughly twice it for the same look, and is converted.
+- **Illustrator live effects and Photoshop layer styles are not rebuilt.** Both live in
+  ActionManager with parameters that do not line up with anyone else's, so approximating them
+  would be guesswork. They are reported instead.
+- **A rasterised layer keeps its effects in its pixels**, so its effects are deliberately *not*
+  sent as well — otherwise every shadow would be drawn twice. Its blend mode still travels,
+  because an export renders the layer, not how it composites with what is under it.
+- A blend mode a host does not have leaves the layer Normal, reported.
+
 ## Behaviour changes in v0.4
 
 - **Illustrator stacking order fixed.** The Illustrator reader used to send overlapping artwork upside down; it now sends it bottom-to-top like every other source.
@@ -233,12 +325,24 @@ Figma rotation used to pivot on the layer's top-left; vectors now have their tra
 - **Effects** (shadows, blurs, layer styles), blend modes and AE path operators (Merge, Trim, Repeater…) are not transferred; they are reported.
 - A clip on a group (rather than on its layers) is not rebuilt by After Effects. No source produces one today.
 - Combining shapes in After Effects may pull a shape above its neighbours when only some shapes in a Figma clipping frame carry the clip (reported).
-- **Not yet implemented:** Photoshop → anywhere, anything → Figma, updating existing layers instead of appending, per-character text styling, effects.
+- **Shape updating does not cover Photoshop.** Photoshop's DOM has no per-layer text field to hold a tag (After Effects uses a layer comment, Illustrator an item note), so a transfer *into* Photoshop always adds. Photoshop can send an update to anywhere else.
+- **Updating does not restructure.** Layout and Hierarchy are ignored while updating, and an Illustrator update replaces the item rather than editing it, so an appearance added to that item in Illustrator goes with it.
+- **An After Effects gradient is not updated.** Its colours are written to the underlying solid fill, but the Gradient Ramp effect is left as it was (reported). Re-send with Add for a gradient that changed.
+- **Figma cannot read a file**, so anything sent there travels as bytes rather than as a path — the panel reads the file and embeds it. A transfer that reaches Figma with only a path (from a host that could not read it) reports the image rather than dropping it silently.
+- **Photoshop can only read its selection through ActionManager.** If that call fails, only the active layer is sent, reported. Its shape layers also need both a vector mask and a readable fill colour; without either, the layer is rasterised instead.
+- **Not yet implemented:** per-character text styling, Illustrator live effects and Photoshop layer styles, smart diff (an update rewrites every property it owns rather than only the changed ones).
 - **Not verified in real apps.** Every host-API assumption was checked against documentation and forums only. The main ones:
   - the Gradient Ramp property names and the space its points use on shape layers;
   - Photoshop's ActionManager descriptors for shape, gradient and vector-mask layers;
   - whether setting `Layer.parent` in AE keeps the child's visual position;
-  - the mapping of Illustrator's `GradientColor.matrix`.
+  - the mapping of Illustrator's `GradientColor.matrix`;
+  - that `AVLayer.comment` and `PageItem.note` persist in a saved project/document and survive a round trip (the whole mapping engine rests on this);
+  - that `Property.setValueAtTime` on a shape path and a Text Document behaves as the scripting guide describes, and that `numKeys` reads back as expected;
+  - that Illustrator's `document.pageItems` really does reach nested items (the mocked tests only cover top-level artwork), and that `PageItem.move(..., ElementPlacement.PLACEBEFORE)` puts an item directly in front of the reference;
+  - that `FootageSource.replace` relinks a layer without disturbing its transform;
+  - Photoshop's `targetLayers` ActionManager call and its Background-layer index offset, and that a shape layer's vector mask really does appear in `document.pathItems` once that layer is active;
+  - the AE effect match names and control indices for Drop Shadow and Gaussian Blur, and that its shadow dial is measured clockwise from straight up;
+  - that a Figma plugin can create the nodes the builder asks for — `createVector` with `vectorPaths`, `createImage`, `figma.group` — and that `isMask` on the first child of a group clips the rest.
 
 ---
 
@@ -279,6 +383,9 @@ cscript //Nologo tools\test-illustrator-reader.js
 cscript //Nologo tools\test-aftereffects-reader.js
 ```
 ```bash
+cscript //Nologo tools\test-photoshop-reader.js
+```
+```bash
 cscript //Nologo tools\test-cep-panel.js
 ```
 
@@ -288,7 +395,7 @@ The core geometry and the Figma plugin's serialiser run under Node ≥ 22.7 with
 node --experimental-transform-types tools/test-core.mjs
 ```
 
-They pin down the maths that is otherwise invisible until something looks wrong on screen: y-flips, tangent signs, rotation direction and pivots, gradient handles, clip spaces, group order and opacity, and every fallback's diagnostic.
+They pin down the maths that is otherwise invisible until something looks wrong on screen: y-flips, tangent signs, rotation direction and pivots, gradient handles, clip spaces, group order and opacity, and every fallback's diagnostic. The Phase 3 suites cover the mapping engine end to end — tags surviving a user's own comment, ids from different files not matching, a second transfer editing rather than duplicating, keys landing at the playhead, and a reworked shape being reported rather than clobbered. The v0.6 ones add the Photoshop reader, the Figma builder (including a subpaths → SVG → subpaths round trip and gradient handles that survive the transform they are turned into), and that a shadow offset becomes the direction-and-distance dial After Effects actually uses.
 
 ### Architecture notes
 
@@ -300,7 +407,47 @@ They pin down the maths that is otherwise invisible until something looks wrong 
 - `Document.originSpace` says whether `bounds` is a real page offset (`"document"`: Illustrator, After Effects, Figma inside one frame) or an arbitrary canvas point (`"canvas"`). Only the former is added back when placing, and only then does `Document.canvas` size a new document or comp.
 - Every conversion that is not native records a diagnostic (`approximated`, `rasterized` or `skipped`) naming the object and the reason.
 - A host that can push ships a **reader** module registered in `READ_MODULE` in `js/main.js`. Adding one is how the remaining directions get built.
+- **Identity** is `source app | source document | layer id`, built by `LazyLord.tagKey` and stored on the built layer by the host's own means. `Document.sourceKey` carries the middle part: without it, ids from different files would collide. The tag helpers in `lazylord.jsx` are host-agnostic; only reading and writing the field is per-host, which is what a Photoshop implementation would have to solve.
+- An update **writes what LazyLord owns and searches for it first** (`_ae_findParts`) rather than trusting the structure it left behind, so a layer the user has since reworked is reported instead of clobbered.
 
 ## License
 
 MIT — see `LICENSE`.
+
+---
+
+## The interface
+
+Both front ends wear one stylesheet, `packages/ui-kit/lazylord.css`. The Figma plugin inlines it
+at build time (Figma only loads a single HTML file); the Adobe panel links a copy that
+`npm run build` syncs into `packages/adobe-cep/css/`. **Edit the source, never the copy** — the
+copy carries a "generated" banner and git ignores it.
+
+Only the colours differ, and only because the hosts do: the plugin reads Figma's own light/dark
+theme variables, while a CEP panel has no theme to read and Adobe expects dark, so the panel
+re-declares the same tokens. Everything else — the section labels, the chip rows, the option
+disclosure, the fallback list — is the same component in both.
+
+Two things stay different on purpose: the panel shows what the plugin has no use for (which host
+it is running in, a running log, the auto-receive switch), and the plugin has a resize grip the
+panel does not need.
+
+### Resizing
+
+- **The Figma plugin** has a grip in its bottom-right corner. A plugin window is only ever the
+  size the plugin asks for — there is no chrome to drag — so the grip *is* the chrome: drag it and
+  the window resizes, down to 300 × 360 and up to whatever Figma allows. The size is remembered
+  and restored next time you open the plugin.
+- **The Adobe panel** is resized the way every Adobe panel is, by dragging its edge — between
+  240 × 240 and whatever your display allows.
+
+  > A CEP panel will not grow past its `<Size>` unless the manifest also declares a `<MaxSize>`.
+  > Leaving it out is why the panel was once stuck at 300 × 360 however hard its edge was
+  > dragged; `packages/adobe-cep/CSXS/manifest.xml` now declares one, and a test asserts it
+  > stays there. **CEP only reads the manifest when the host app starts**, so a change to it
+  > needs a full restart of Photoshop, Illustrator or After Effects — `install.bat` links the
+  > panel with a junction, so there is nothing to reinstall.
+
+Either way the layout reflows rather than overflowing: the Send-to and Image-scale rows are
+`auto-fit` grids, so they go from one column at the narrowest to as many as fit, and stop growing
+past a readable width instead of stretching a handful of chips across a wide window.

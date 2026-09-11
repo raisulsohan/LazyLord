@@ -32,6 +32,19 @@ LazyLord.build = function (doc) {
   try {
     LazyLord.applyOrigin(doc);
     var opts = LazyLord.options(doc);
+    var update = LazyLord.wantsUpdate(doc);
+
+    // Updating edits layers where they already stand, so it cannot also
+    // restructure them: a matched layer keeps whatever parent and shape layer
+    // it is in. Both layout choices are therefore ignored while updating.
+    if (update && (opts.layout === "combine" || opts.hierarchy === "groups")) {
+      LazyLord.warn("Transfer", "Update edits layers where they stand, so " +
+        (opts.layout === "combine" ? "Combine" : "Groups") +
+        " was ignored; send with Add to change how the layers are laid out", "approximated");
+      opts.layout = "split";
+      opts.hierarchy = "flatten";
+    }
+
     ctx = {
       doc: doc,
       comp: LazyLord._ae_comp(doc),
@@ -39,8 +52,17 @@ LazyLord.build = function (doc) {
       groups: opts.hierarchy === "groups",
       combo: null,
       created: 0, // AE layers actually made: nulls and split stroke layers included
-      nulls: 0
+      nulls: 0,
+      update: update,
+      updated: 0,
+      index: null,
+      time: 0,
+      always: opts.keyframes === "always"
     };
+    if (update) {
+      ctx.index = LazyLord._ae_index(ctx.comp);
+      try { ctx.time = ctx.comp.time; } catch (eT) { ctx.time = 0; }
+    }
 
     // A group with nothing inside vanishes in every mode: say so.
     LazyLord._ae_noteEmptyGroups(doc.layers);
@@ -64,7 +86,15 @@ LazyLord.build = function (doc) {
   if (ctx.combo && ctx.combo.drawn) {
     notes.push("The shape layer '" + ctx.combo.name + "' holds " + LazyLord._ae_plural(ctx.combo.drawn, "shape") + ".");
   }
-  return { ok: true, layersCreated: ctx.created, message: notes.join(" ") };
+  if (ctx.update) {
+    if (ctx.updated) {
+      notes.push("Updated " + LazyLord._ae_plural(ctx.updated, "layer") +
+        (ctx.always ? " with a key at the playhead on every property." : ", keying the ones already animated."));
+    } else {
+      notes.push("Nothing matched a layer from an earlier transfer, so everything was added.");
+    }
+  }
+  return { ok: true, layersCreated: ctx.created, layersUpdated: ctx.updated, message: notes.join(" ") };
 };
 
 /* -------------------------------------------------------------------------
@@ -159,6 +189,11 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
     }
 
     if (fade < 1 && layer.frame) layer.frame.opacity = LazyLord._ae_opacityOf(layer) * fade;
+
+    // A layer an earlier transfer built is edited where it stands; only the
+    // ones with nothing to match are added.
+    if (ctx.update && LazyLord._ae_update(ctx, layer)) continue;
+
     try {
       var made = LazyLord._ae_leaf(ctx, layer);
       ctx.created += made.length;
@@ -176,10 +211,23 @@ LazyLord._ae_leaf = function (ctx, layer) {
   if (layer.type === "vector") {
     var made = [];
     LazyLord._ae_vector(ctx.comp, layer, made);
+    // made[0] is the shape itself; a second layer is its split-off stroke, and
+    // takes a tag of its own so a later update can find both.
+    for (var i = 0; i < made.length; i++) {
+      LazyLord._ae_tag(ctx, made[i], layer, i === 0 ? null : "stroke");
+    }
     return made;
   }
-  if (layer.type === "text") return [LazyLord._ae_text(ctx.comp, layer)];
-  if (layer.type === "image") return [LazyLord._ae_image(ctx.comp, layer, ctx.assets)];
+  if (layer.type === "text") {
+    var tl = LazyLord._ae_text(ctx.comp, layer);
+    LazyLord._ae_tag(ctx, tl, layer);
+    return [tl];
+  }
+  if (layer.type === "image") {
+    var il = LazyLord._ae_image(ctx.comp, layer, ctx.assets);
+    LazyLord._ae_tag(ctx, il, layer);
+    return [il];
+  }
   LazyLord.warn(layer.name, "Layers of type '" + layer.type + "' are not rebuilt in After Effects", "skipped");
   return [];
 };
@@ -787,6 +835,8 @@ LazyLord._ae_vector = function (comp, layer, out) {
     LazyLord._ae_setTransform(main.layer, xf, layer.frame.opacity);
     if (gradient && fillAt) LazyLord._ae_ramp(main.layer, fillAt, layer, paint);
     LazyLord._ae_clip(main.layer, layer, xf);
+    LazyLord._ae_applyBlend(main.layer, layer);
+    LazyLord._ae_applyEffects(main.layer, layer);
 
     if (splitStroke) {
       // Created second, so it sits directly above the fill layer.
@@ -794,6 +844,12 @@ LazyLord._ae_vector = function (comp, layer, out) {
       LazyLord._ae_stroke(top.vectors, layer, stroke);
       LazyLord._ae_setTransform(top.layer, xf, layer.frame.opacity);
       LazyLord._ae_clip(top.layer, layer, xf);
+      // The stroke layer composites with the fill under it, so it needs the same
+      // blend mode; the effects stay on the fill, or every shadow would double.
+      LazyLord._ae_applyBlend(top.layer, layer);
+      if (layer.effects && layer.effects.length) {
+        LazyLord.warn(name, "The stroke is on a layer of its own, so the shape's effects apply to the fill only", "approximated");
+      }
       // Faded as one, the source hides the fill under the stroke; faded as two
       // layers, that part of the fill shows through the stroke.
       var op = layer.frame.opacity;
@@ -829,22 +885,26 @@ LazyLord._ae_shapeLayer = function (comp, layer, name, made, quiet) {
 };
 
 /** Drawn bezier paths, one path group per contour. */
+/** One IR subpath as an AE Shape, in the layer's own space. */
+LazyLord._ae_shapeOf = function (sp) {
+  var shape = new Shape();
+  var verts = [], ins = [], outs = [];
+  for (var i = 0; i < sp.vertices.length; i++) {
+    verts.push([sp.vertices[i][0], sp.vertices[i][1]]);
+    ins.push(sp.inTangents[i] || [0, 0]);
+    outs.push(sp.outTangents[i] || [0, 0]);
+  }
+  shape.vertices = verts;
+  shape.inTangents = ins;
+  shape.outTangents = outs;
+  shape.closed = !!sp.closed;
+  return shape;
+};
+
 LazyLord._ae_paths = function (g, layer) {
   LazyLord.eachSubPath(layer, function (sp) {
     var pathGroup = g.addProperty("ADBE Vector Shape - Group");
-    var pathProp = pathGroup.property("ADBE Vector Shape");
-    var shape = new Shape();
-    var verts = [], ins = [], outs = [];
-    for (var i = 0; i < sp.vertices.length; i++) {
-      verts.push([sp.vertices[i][0], sp.vertices[i][1]]);
-      ins.push(sp.inTangents[i] || [0, 0]);
-      outs.push(sp.outTangents[i] || [0, 0]);
-    }
-    shape.vertices = verts;
-    shape.inTangents = ins;
-    shape.outTangents = outs;
-    shape.closed = !!sp.closed;
-    pathProp.setValue(shape);
+    pathGroup.property("ADBE Vector Shape").setValue(LazyLord._ae_shapeOf(sp));
   });
 };
 
@@ -1186,6 +1246,8 @@ LazyLord._ae_text = function (comp, layer) {
     };
     LazyLord._ae_setTransform(tl, xf, opacity);
     LazyLord._ae_clip(tl, layer, xf);
+    LazyLord._ae_applyBlend(tl, layer);
+    LazyLord._ae_applyEffects(tl, layer);
   } catch (e) {
     LazyLord._ae_discard([tl]);
     throw e;
@@ -1290,9 +1352,472 @@ LazyLord._ae_image = function (comp, layer, assets) {
     };
     LazyLord._ae_setTransform(il, xf, layer.frame.opacity);
     LazyLord._ae_clip(il, layer, xf);
+    LazyLord._ae_applyBlend(il, layer);
+    LazyLord._ae_applyEffects(il, layer);
   } catch (e) {
     LazyLord._ae_discard([il]);
     throw e;
   }
   return il;
+};
+
+/* -------------------------------------------------------------------------
+ * Updating what an earlier transfer built (options.existing "update")
+ *
+ * Every layer this builder makes records where it came from in its comment
+ * (LazyLord.makeTag). When the sender asks to update, those tags are read back
+ * into an index and a matching layer is edited in place instead of a new one
+ * being added — so it keeps its place in the stack, its parent, its effects
+ * and anything else the user did to it.
+ *
+ * What gets written is only what LazyLord owns: the transform, the outline and
+ * the paint. The layer's contents are searched for those properties rather
+ * than assumed to be where they were left, and if the shape no longer holds
+ * what the source describes (contours added, a group deleted) the mismatch is
+ * reported and the rest is still updated. Nothing is ever deleted.
+ *
+ * Timeline behaviour is the point of the exercise: a property that is already
+ * animated cannot take a plain value at all, so it gets a key at the playhead.
+ * keyframes "always" keys every property instead, which is how re-sending a
+ * shape animates it.
+ * ---------------------------------------------------------------------- */
+
+/** Layers in `comp` that carry a LazyLord tag, as tag key -> layer. */
+LazyLord._ae_index = function (comp) {
+  var index = {};
+  for (var i = 1; i <= comp.numLayers; i++) {
+    var lyr = comp.layer(i);
+    var key = null;
+    try { key = LazyLord.readTagKey(lyr.comment); } catch (e) { continue; }
+    // First match wins: the lowest layer is the one an earlier transfer made.
+    if (key && !index[key]) index[key] = lyr;
+  }
+  return index;
+};
+
+/** Record on a freshly built layer where it came from, keeping any comment. */
+LazyLord._ae_tag = function (ctx, lyr, layer, role) {
+  if (!ctx || !ctx.doc || !lyr || !layer) return;
+  try {
+    lyr.comment = LazyLord.withTag(lyr.comment, LazyLord.makeTag(ctx.doc, layer, role));
+  } catch (e) {
+    // A layer that cannot be tagged simply will not match next time.
+  }
+};
+
+/**
+ * Write `value` to `prop`: as a keyframe at the playhead when the property is
+ * animated (a plain setValue throws on an animated property) or when the
+ * sender asked for keys, otherwise as a plain value. Returns true when written.
+ */
+LazyLord._ae_put = function (ctx, prop, value) {
+  if (!prop) return false;
+  try {
+    var animated = false;
+    try { animated = prop.numKeys > 0; } catch (eKeys) {}
+    if (animated || ctx.always) prop.setValueAtTime(ctx.time, value);
+    else prop.setValue(value);
+    return true;
+  } catch (e) {
+    return false;
+  }
+};
+
+/** Keep a third component (a 3D layer's Z) that the IR has nothing to say about. */
+LazyLord._ae_keepZ = function (prop, x, y) {
+  try {
+    var cur = prop.value;
+    if (cur && cur.length > 2) return [x, y, cur[2]];
+  } catch (e) {}
+  return [x, y];
+};
+
+/** The transform half of an update. Returns how many properties were written. */
+LazyLord._ae_putTransform = function (ctx, lyr, xf, opacity) {
+  var tg = lyr.property("ADBE Transform Group");
+  var n = 0;
+  var anchor = tg.property("ADBE Anchor Point");
+  var position = tg.property("ADBE Position");
+  var scale = tg.property("ADBE Scale");
+
+  if (LazyLord._ae_put(ctx, anchor, LazyLord._ae_keepZ(anchor, xf.anchor[0], xf.anchor[1]))) n++;
+  if (LazyLord._ae_put(ctx, position, LazyLord._ae_keepZ(position, xf.position[0], xf.position[1]))) n++;
+  if (LazyLord._ae_put(ctx, scale, LazyLord._ae_keepZ(scale, xf.scale[0], xf.scale[1]))) n++;
+  if (LazyLord._ae_put(ctx, tg.property("ADBE Rotate Z"), xf.rotation || 0)) n++;
+  if (opacity !== undefined && opacity !== null) {
+    if (LazyLord._ae_put(ctx, tg.property("ADBE Opacity"), LazyLord.pct(opacity))) n++;
+  }
+  return n;
+};
+
+/**
+ * The properties LazyLord owns inside a shape layer, found by walking its
+ * contents rather than assuming the shape was left as it was built.
+ */
+LazyLord._ae_findParts = function (sl) {
+  var parts = { paths: [], rect: null, ellipse: null, fill: null, stroke: null };
+
+  function walk(group) {
+    for (var i = 1; i <= group.numProperties; i++) {
+      var p = group.property(i);
+      var mn;
+      try { mn = p.matchName; } catch (e) { continue; }
+
+      if (mn === "ADBE Vector Group") {
+        var inner = null;
+        try { inner = p.property("ADBE Vectors Group"); } catch (eG) {}
+        if (inner) walk(inner);
+      } else if (mn === "ADBE Vector Shape - Group") {
+        try { parts.paths.push(p.property("ADBE Vector Shape")); } catch (eP) {}
+      } else if (mn === "ADBE Vector Shape - Rect") {
+        if (!parts.rect) parts.rect = p;
+      } else if (mn === "ADBE Vector Shape - Ellipse") {
+        if (!parts.ellipse) parts.ellipse = p;
+      } else if (mn === "ADBE Vector Graphic - Fill") {
+        if (!parts.fill) parts.fill = p;
+      } else if (mn === "ADBE Vector Graphic - Stroke") {
+        if (!parts.stroke) parts.stroke = p;
+      }
+    }
+  }
+
+  try { walk(sl.property("ADBE Root Vectors Group")); } catch (e) {}
+  return parts;
+};
+
+/** Update a shape layer's outline. Returns how many properties were written. */
+LazyLord._ae_putOutline = function (ctx, parts, layer, name) {
+  var n = 0;
+  var p = layer.primitive;
+  var live = null;
+  if (p && p.kind === "rect") live = parts.rect;
+  else if (p && p.kind === "ellipse") live = parts.ellipse;
+
+  if (live && typeof p.width === "number" && typeof p.height === "number") {
+    var size = [p.width, p.height];
+    var centre = [(p.x || 0) + p.width / 2, (p.y || 0) + p.height / 2];
+    if (p.kind === "rect") {
+      if (LazyLord._ae_put(ctx, live.property("ADBE Vector Rect Size"), size)) n++;
+      if (LazyLord._ae_put(ctx, live.property("ADBE Vector Rect Position"), centre)) n++;
+      if (LazyLord._ae_put(ctx, live.property("ADBE Vector Rect Roundness"), p.roundness || 0)) n++;
+    } else {
+      if (LazyLord._ae_put(ctx, live.property("ADBE Vector Ellipse Size"), size)) n++;
+      if (LazyLord._ae_put(ctx, live.property("ADBE Vector Ellipse Position"), centre)) n++;
+    }
+    return n;
+  }
+
+  var subs = layer.subpaths || [];
+  if (parts.paths.length === 0) {
+    if (subs.length) {
+      LazyLord.warn(name, "The layer no longer holds a path to update, so its outline was left alone", "skipped");
+    }
+    return n;
+  }
+  if (parts.paths.length !== subs.length) {
+    LazyLord.warn(name, "The shape now has " + LazyLord._ae_plural(parts.paths.length, "contour") +
+      " but the source sends " + subs.length + ", so only the ones that pair up were updated", "approximated");
+  }
+  var count = Math.min(parts.paths.length, subs.length);
+  for (var i = 0; i < count; i++) {
+    if (LazyLord._ae_put(ctx, parts.paths[i], LazyLord._ae_shapeOf(subs[i]))) n++;
+  }
+  return n;
+};
+
+/** Update a shape layer's paint. Returns how many properties were written. */
+LazyLord._ae_putPaint = function (ctx, parts, layer, name) {
+  var n = 0;
+  var paint = LazyLord.fillPaint(layer);
+  var gradient = LazyLord.isGradient(paint);
+
+  if (parts.fill && layer.fills && layer.fills.length) {
+    var c = gradient ? LazyLord._ae_sortedStops(paint)[0].color : LazyLord.fillColor(layer);
+    if (LazyLord._ae_put(ctx, parts.fill.property("ADBE Vector Fill Color"), LazyLord._ae_rgba(c))) n++;
+    if (LazyLord._ae_put(ctx, parts.fill.property("ADBE Vector Fill Opacity"), LazyLord.pct(LazyLord._ae_alpha(c)))) n++;
+    if (gradient) {
+      LazyLord.warn(name, "The gradient's colours were updated on the solid fill, but its Gradient Ramp was left as it was", "approximated");
+    }
+  }
+
+  var stroke = LazyLord.firstStroke(layer);
+  if (stroke && stroke.paint && parts.stroke) {
+    var sc;
+    if (LazyLord.isGradient(stroke.paint)) sc = LazyLord._ae_sortedStops(stroke.paint)[0].color;
+    else sc = stroke.paint.color || { r: 0, g: 0, b: 0, a: 1 };
+    if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Color"), LazyLord._ae_rgba(sc))) n++;
+    if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Width"), stroke.weight || 1)) n++;
+    if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Opacity"), LazyLord.pct(LazyLord._ae_alpha(sc)))) n++;
+  } else if (stroke && stroke.paint && !parts.stroke) {
+    LazyLord.warn(name, "The source has a stroke but the layer has none to update; re-send with Add to rebuild it", "skipped");
+  }
+
+  return n;
+};
+
+LazyLord._ae_updateVector = function (ctx, lyr, layer) {
+  var name = layer.name || "Vector";
+  var parts = LazyLord._ae_findParts(lyr);
+  var xf = LazyLord._ae_vectorXf(layer.frame);
+  var n = 0;
+  n += LazyLord._ae_putTransform(ctx, lyr, xf, layer.frame.opacity);
+  n += LazyLord._ae_putOutline(ctx, parts, layer, name);
+  n += LazyLord._ae_putPaint(ctx, parts, layer, name);
+  return n;
+};
+
+LazyLord._ae_updateText = function (ctx, lyr, layer) {
+  var name = layer.name || "Text";
+  var prop;
+  try {
+    prop = lyr.property("ADBE Text Properties").property("ADBE Text Document");
+  } catch (e) {
+    LazyLord.warn(name, "The matching layer is no longer a text layer, so it was left alone", "skipped");
+    return 0;
+  }
+
+  // Start from what the layer has, so styling LazyLord never set is kept.
+  var td = prop.value;
+  td.text = layer.characters || "";
+  td.fontSize = layer.fontSize || 24;
+
+  var c = layer.color || { r: 0, g: 0, b: 0, a: 1 };
+  td.applyFill = true;
+  td.fillColor = [c.r || 0, c.g || 0, c.b || 0];
+
+  if (layer.letterSpacing) td.tracking = (layer.letterSpacing / (layer.fontSize || 24)) * 1000;
+  if (layer.lineHeight) td.leading = layer.lineHeight;
+
+  try {
+    var jmap = {
+      left: ParagraphJustification.LEFT_JUSTIFY,
+      center: ParagraphJustification.CENTER_JUSTIFY,
+      right: ParagraphJustification.RIGHT_JUSTIFY,
+      justified: ParagraphJustification.FULL_JUSTIFY_LASTLINE_LEFT
+    };
+    td.justification = jmap[layer.textAlignHorizontal] || ParagraphJustification.LEFT_JUSTIFY;
+  } catch (eJ) {}
+
+  var n = LazyLord._ae_put(ctx, prop, td) ? 1 : 0;
+  try { LazyLord._ae_font(prop, layer); } catch (eF) {}
+
+  var opacity = layer.frame.opacity;
+  var ca = LazyLord._ae_alpha(c);
+  if (ca < 1) opacity = (typeof opacity === "number" ? opacity : 1) * ca;
+
+  n += LazyLord._ae_putTransform(ctx, lyr, {
+    anchor: [0, 0],
+    position: LazyLord.rotatedTextAnchor(layer),
+    scale: [100, 100],
+    rotation: layer.frame.rotation || 0
+  }, opacity);
+  return n;
+};
+
+LazyLord._ae_updateImage = function (ctx, lyr, layer) {
+  var name = layer.name || "Image";
+  var n = 0;
+  var source = null;
+  try { source = lyr.source; } catch (e) {}
+
+  // Point the footage at the file the source now sends, when it moved.
+  var path = LazyLord.imagePath(layer);
+  if (path && source) {
+    var current = null;
+    try { current = source.file ? source.file.fsName : null; } catch (eF) {}
+    if (current && String(current) !== String(path)) {
+      try {
+        source.replace(new File(path));
+        n++;
+      } catch (eR) {
+        LazyLord.warn(name, "The image file changed but the footage could not be relinked, so the layer still shows the old one", "skipped");
+      }
+    }
+  }
+
+  var w = 0, h = 0;
+  try { w = lyr.width || 0; h = lyr.height || 0; } catch (eW) {}
+  var fw = layer.frame.width || w;
+  var fh = layer.frame.height || h;
+
+  n += LazyLord._ae_putTransform(ctx, lyr, {
+    anchor: [w / 2, h / 2],
+    position: [layer.frame.x + fw / 2, layer.frame.y + fh / 2],
+    scale: [w ? (fw / w) * 100 : 100, h ? (fh / h) * 100 : 100],
+    rotation: layer.frame.rotation || 0
+  }, layer.frame.opacity);
+  return n;
+};
+
+/**
+ * Update the layer an earlier transfer built from this source object.
+ * Returns true when one was found and updated, false to build a new one.
+ */
+LazyLord._ae_update = function (ctx, layer) {
+  var lyr = ctx.index[LazyLord.tagKey(ctx.doc, layer)];
+  if (!lyr) return false;
+
+  var name = layer.name || "Layer";
+  try {
+    if (layer.type === "vector") LazyLord._ae_updateVector(ctx, lyr, layer);
+    else if (layer.type === "text") LazyLord._ae_updateText(ctx, lyr, layer);
+    else if (layer.type === "image") LazyLord._ae_updateImage(ctx, lyr, layer);
+    else return false;
+  } catch (e) {
+    var why = (e && e.message) ? e.message : String(e);
+    LazyLord.warn(name, "Could not be updated (" + why + "), so it was left as it was", "skipped");
+    return true; // matched: do not also add a duplicate
+  }
+
+  // A gradient-filled shape keeps its stroke on a layer of its own; it carries
+  // its own tag, so update it alongside (it has no fill to touch).
+  if (layer.type === "vector") {
+    var strokeLyr = ctx.index[LazyLord.tagKey(ctx.doc, layer, "stroke")];
+    if (strokeLyr) {
+      try {
+        LazyLord._ae_updateVector(ctx, strokeLyr, layer);
+        try { if (layer.name) strokeLyr.name = layer.name + " stroke"; } catch (eSN) {}
+      } catch (eS) {
+        LazyLord.warn(name, "The shape updated but its separate stroke layer did not", "approximated");
+      }
+    }
+  }
+
+  // Keep the layer's name in step with the source; the comment tag stays.
+  try { if (layer.name) lyr.name = layer.name; } catch (eN) {}
+  ctx.updated++;
+  return true;
+};
+
+/* -------------------------------------------------------------------------
+ * Blend modes and effects
+ *
+ * The two things a layer wears rather than is. After Effects has a native
+ * blend mode for every one in the IR's vocabulary, and effects for the
+ * shadows and blurs that travel — but not for all of them: an inner shadow
+ * has no stock AE effect, and a background blur is a Figma idea with nothing
+ * to map onto. Those are reported, as is any effect on a layer whose pixels
+ * already carry it.
+ * ---------------------------------------------------------------------- */
+
+/** IR blend mode -> the BlendingMode constant of the same name. */
+LazyLord._ae_BLEND = {
+  "normal": "NORMAL",
+  "multiply": "MULTIPLY",
+  "screen": "SCREEN",
+  "overlay": "OVERLAY",
+  "darken": "DARKEN",
+  "lighten": "LIGHTEN",
+  "color-dodge": "CLASSIC_COLOR_DODGE",
+  "color-burn": "CLASSIC_COLOR_BURN",
+  "hard-light": "HARD_LIGHT",
+  "soft-light": "SOFT_LIGHT",
+  "difference": "DIFFERENCE",
+  "exclusion": "EXCLUSION",
+  "hue": "HUE",
+  "saturation": "SATURATION",
+  "color": "COLOR",
+  "luminosity": "LUMINOSITY"
+};
+
+LazyLord._ae_applyBlend = function (lyr, layer) {
+  var mode = layer.blendMode;
+  if (!mode || mode === "normal") return;
+
+  var name = LazyLord._ae_BLEND[mode];
+  var value = name ? BlendingMode[name] : undefined;
+  if (value === undefined) {
+    LazyLord.warn(layer.name || "Layer", "After Effects has no '" + LazyLord.blendLabel(mode) +
+      "' blend mode, so the layer is drawn as Normal", "approximated");
+    return;
+  }
+  try {
+    lyr.blendingMode = value;
+  } catch (e) {
+    LazyLord.warn(layer.name || "Layer", "The '" + LazyLord.blendLabel(mode) +
+      "' blend mode could not be set, so the layer is drawn as Normal", "approximated");
+  }
+};
+
+/**
+ * Rebuild the IR's effects on `lyr`. Drop shadows and layer blurs become the
+ * stock AE effects of the same name; the rest is reported.
+ */
+LazyLord._ae_applyEffects = function (lyr, layer) {
+  var list = layer.effects;
+  if (!list || !list.length) return;
+
+  var name = layer.name || "Layer";
+  for (var i = 0; i < list.length; i++) {
+    var fx = list[i];
+    if (!fx || !fx.kind) continue;
+    try {
+      if (fx.kind === "drop-shadow") LazyLord._ae_dropShadow(lyr, fx, name);
+      else if (fx.kind === "layer-blur") LazyLord._ae_blur(lyr, fx, name);
+      else if (fx.kind === "inner-shadow") {
+        LazyLord.warn(name, "After Effects has no inner-shadow effect, so it was left off", "skipped");
+      } else if (fx.kind === "background-blur") {
+        LazyLord.warn(name, "A background blur blurs what is behind the layer, which After Effects " +
+          "cannot do from the layer itself, so it was left off", "skipped");
+      }
+    } catch (e) {
+      LazyLord.warn(name, "The " + LazyLord._ae_fxLabel(fx.kind) + " could not be rebuilt — " +
+        ((e && e.message) ? e.message : String(e)), "skipped");
+    }
+  }
+};
+
+LazyLord._ae_fxLabel = function (kind) {
+  return String(kind || "effect").replace(/-/g, " ");
+};
+
+/**
+ * The stock Drop Shadow effect. AE describes a shadow by direction and
+ * distance rather than by an x/y offset, so the IR's offset is turned into
+ * one: AE measures its direction clockwise from straight up.
+ */
+LazyLord._ae_dropShadow = function (lyr, fx, name) {
+  var fxGroup = lyr.property("ADBE Effect Parade");
+  var shadow = fxGroup.addProperty("ADBE Drop Shadow");
+
+  var dx = (fx.offset && fx.offset.x) || 0;
+  var dy = (fx.offset && fx.offset.y) || 0;
+  var distance = Math.sqrt(dx * dx + dy * dy);
+  // atan2(dx, -dy) is 0 straight up and grows clockwise, which is AE's dial.
+  var direction = (Math.atan2(dx, -dy) * 180 / Math.PI + 360) % 360;
+
+  var c = fx.color || { r: 0, g: 0, b: 0, a: 1 };
+  LazyLord._ae_setFx(shadow, "ADBE Drop Shadow-0001", [c.r || 0, c.g || 0, c.b || 0, 1]);
+  LazyLord._ae_setFx(shadow, "ADBE Drop Shadow-0002", LazyLord.pct(LazyLord._ae_alpha(c)) * 255 / 100);
+  LazyLord._ae_setFx(shadow, "ADBE Drop Shadow-0003", direction);
+  LazyLord._ae_setFx(shadow, "ADBE Drop Shadow-0004", distance);
+  LazyLord._ae_setFx(shadow, "ADBE Drop Shadow-0005", fx.radius || 0);
+
+  if (fx.spread) {
+    LazyLord.warn(name, "The shadow's spread of " + Math.round(fx.spread) +
+      " px has no equivalent in After Effects' Drop Shadow, so it was left off", "approximated");
+  }
+  return shadow;
+};
+
+/** The stock Gaussian Blur effect. */
+LazyLord._ae_blur = function (lyr, fx, name) {
+  var fxGroup = lyr.property("ADBE Effect Parade");
+  var blur = fxGroup.addProperty("ADBE Gaussian Blur 2");
+  // Figma's radius is the standard deviation; AE's Blurriness is roughly twice
+  // it for the same visual spread.
+  LazyLord._ae_setFx(blur, "ADBE Gaussian Blur 2-0001", (fx.radius || 0) * 2);
+  try { blur.property("ADBE Gaussian Blur 2-0003").setValue(true); } catch (eEdge) {}
+  void name;
+  return blur;
+};
+
+/** Set one effect control, by match name, without failing the whole effect. */
+LazyLord._ae_setFx = function (effect, matchName, value) {
+  try {
+    var prop = effect.property(matchName);
+    if (prop) prop.setValue(value);
+  } catch (e) {
+    /* one control of an effect; the rest of it still applies */
+  }
 };

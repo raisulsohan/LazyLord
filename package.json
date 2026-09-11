@@ -10,7 +10,8 @@
     "packages/bridge"
   ],
   "scripts": {
-    "build": "npm run build --workspace @lazylord/core && npm run build --workspace @lazylord/figma-plugin && npm run build --workspace @lazylord/bridge",
+    "sync:css": "node tools/sync-ui-css.mjs",
+    "build": "npm run sync:css && npm run build --workspace @lazylord/core && npm run build --workspace @lazylord/figma-plugin && npm run build --workspace @lazylord/bridge",
     "build:core": "npm run build --workspace @lazylord/core",
     "build:figma": "npm run build --workspace @lazylord/figma-plugin",
     "build:bridge": "npm run build --workspace @lazylord/bridge",

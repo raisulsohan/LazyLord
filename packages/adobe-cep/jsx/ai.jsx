@@ -20,12 +20,26 @@ LazyLord.build = function (doc) {
   var aiDoc = LazyLord._ai_doc(doc);
   var ab = aiDoc.artboards[aiDoc.artboards.getActiveArtboardIndex()];
   var rect = ab.artboardRect; // [left, top, right, bottom]
+  var update = LazyLord.wantsUpdate(doc);
+
+  // Updating drops artwork back where the old artwork stood, so it cannot also
+  // restructure the document: a replaced item keeps the group it was in.
+  if (update && opts.hierarchy === "groups") {
+    LazyLord.warn("Transfer", "Update puts artwork back where the old artwork stood, so Groups was ignored; " +
+      "send with Add to rebuild the group structure", "approximated");
+    opts.hierarchy = "flatten";
+  }
+
   var ctx = {
     doc: aiDoc,
+    ir: doc,         // the IR document, for layer tags
     container: aiDoc,
     left: rect[0],
     top: rect[1],
-    created: 0       // leaf layers built (groups themselves are not counted)
+    created: 0,      // leaf layers built (groups themselves are not counted)
+    update: update,
+    updated: 0,
+    index: update ? LazyLord._ai_index(aiDoc) : null
   };
 
   var root = LazyLord._ai_scope(aiDoc);
@@ -34,7 +48,14 @@ LazyLord.build = function (doc) {
   ctx.container = aiDoc;
   LazyLord._ai_closeClips(ctx, root);
   try { app.redraw(); } catch (eR) {}
-  return { ok: true, layersCreated: ctx.created, message: "" };
+
+  var message = "";
+  if (update) {
+    message = ctx.updated
+      ? "Replaced " + ctx.updated + " item" + (ctx.updated === 1 ? "" : "s") + " where they already stood."
+      : "Nothing matched artwork from an earlier transfer, so everything was added.";
+  }
+  return { ok: true, layersCreated: ctx.created, layersUpdated: ctx.updated, message: message };
 };
 
 /**
@@ -64,12 +85,23 @@ LazyLord._ai_buildList = function (ctx, scope, layers) {
 LazyLord._ai_buildOne = function (ctx, scope, layers, i) {
   var layer = layers[i];
   try {
+    // Artwork an earlier transfer made is replaced where it stands, outside the
+    // clipping-group bookkeeping: it is not entering the stack, it is already in it.
+    if (ctx.update && layer.type !== "group" && LazyLord._ai_update(ctx, layer)) return;
+
     var entry = layer.clip ? LazyLord._ai_clipEntry(ctx, scope, layer) : LazyLord._ai_joinEntry(scope, layers, i);
     ctx.container = entry ? entry.group : scope.item;
     var isGroup = (layer.type === "group");
+    var before = 0;
+    if (!isGroup) {
+      try { before = ctx.container.pageItems.length; } catch (eB) { before = -1; }
+    }
     var built = isGroup ? LazyLord._ai_group(ctx, scope, layer) : LazyLord._ai_layer(ctx, layer);
     if (built) {
-      if (!isGroup) ctx.created++;
+      if (!isGroup) {
+        ctx.created++;
+        if (before >= 0) LazyLord._ai_tagNew(ctx, ctx.container, before, layer);
+      }
       if (entry) entry.members++;
       else scope.topBuilt++;
     }
@@ -1137,4 +1169,160 @@ LazyLord._ai_embed = function (pl, name, opacity) {
   } catch (e2) {
     LazyLord.warn(name, "The image was embedded, but its name and opacity could not be restored", "approximated");
   }
+};
+
+/* -------------------------------------------------------------------------
+ * Updating what an earlier transfer built (options.existing "update")
+ *
+ * Illustrator has no timeline, so "update" means something plainer here than
+ * it does in After Effects: the artwork is rebuilt and dropped into the exact
+ * stacking position the old item held, inside the same layer or group, and the
+ * old item is removed. What that preserves is where the artwork sits in the
+ * document — re-sending a logo does not send it to the front of the stack, and
+ * does not leave a duplicate behind.
+ *
+ * What it does not preserve is anything done to the item itself: an appearance
+ * added in Illustrator goes with the item it was added to. The panel says so.
+ * ---------------------------------------------------------------------- */
+
+/** Items in the document that carry a LazyLord tag, as tag key -> [items]. */
+LazyLord._ai_index = function (aiDoc) {
+  var index = {};
+  var items;
+  try { items = aiDoc.pageItems; } catch (e) { return index; }
+  for (var i = 0; i < items.length; i++) {
+    var it = items[i];
+    var key = null;
+    try { key = LazyLord.readTagKey(it.note); } catch (eN) { continue; }
+    if (!key) continue;
+    if (!index[key]) index[key] = [];
+    index[key].push(it);
+  }
+  return index;
+};
+
+/**
+ * Tag every item added to `container` since it held `before` items. They all
+ * take the same tag: an update replaces the whole set, so they have to be
+ * found as a set.
+ */
+LazyLord._ai_tagNew = function (ctx, container, before, layer) {
+  if (!ctx.ir || !container) return;
+  var made = [];
+  try {
+    var n = container.pageItems.length - before;
+    for (var i = 0; i < n; i++) made.push(container.pageItems[i]);
+  } catch (e) {
+    return;
+  }
+  LazyLord._ai_tagItems(ctx, made, layer);
+  // Blend mode and effects belong to every item the layer produced.
+  for (var f = 0; f < made.length; f++) LazyLord._ai_finish(made[f], layer);
+};
+
+/** Put this layer's tag on each of `items`, keeping whatever note they hold. */
+LazyLord._ai_tagItems = function (ctx, items, layer) {
+  if (!ctx.ir || !items || !items.length) return;
+  var tag = LazyLord.makeTag(ctx.ir, layer);
+  for (var i = 0; i < items.length; i++) {
+    // An item that cannot be tagged simply will not match next time.
+    try { items[i].note = LazyLord.withTag(items[i].note, tag); } catch (eI) {}
+  }
+};
+
+/**
+ * Rebuild `layer` over the items an earlier transfer made from it.
+ * Returns true when a match was found and replaced, false to build normally.
+ */
+LazyLord._ai_update = function (ctx, layer) {
+  var old = ctx.index[LazyLord.tagKey(ctx.ir, layer)];
+  if (!old || !old.length) return false;
+
+  var anchor = old[0];
+  var parent;
+  try { parent = anchor.parent; } catch (e) { return false; }
+  if (!parent) return false;
+
+  var name = layer.name || "Layer";
+  var before, made;
+  var saved = ctx.container;
+  ctx.container = parent;
+  try {
+    before = parent.pageItems.length;
+    if (!LazyLord._ai_layer(ctx, layer)) { ctx.container = saved; return false; }
+    made = parent.pageItems.length - before;
+  } catch (eBuild) {
+    ctx.container = saved;
+    LazyLord.warn(name, "Could not be rebuilt over the old artwork (" + eBuild.message + "), so that was left alone", "skipped");
+    return true; // matched: adding a second copy would be worse
+  }
+  ctx.container = saved;
+
+  // Take the new items before moving any of them: the indices shift as they go.
+  var fresh = [];
+  for (var i = 0; i < made; i++) {
+    try { fresh.push(parent.pageItems[i]); } catch (eF) {}
+  }
+
+  // New items land at the front. Walk back to front, each one moving in front
+  // of the last one moved, so they end up where the old artwork stood.
+  var at = anchor;
+  for (var m = fresh.length - 1; m >= 0; m--) {
+    try {
+      fresh[m].move(at, ElementPlacement.PLACEBEFORE);
+      at = fresh[m];
+    } catch (eM) {
+      LazyLord.warn(name, "The rebuilt artwork could not be put back in its old place in the stack", "approximated");
+      break;
+    }
+  }
+
+  // Tag the items themselves, not by index: moving them shuffled the indices.
+  LazyLord._ai_tagItems(ctx, fresh, layer);
+  for (var q = 0; q < fresh.length; q++) LazyLord._ai_finish(fresh[q], layer);
+
+  var removed = 0;
+  for (var r = 0; r < old.length; r++) {
+    try { old[r].remove(); removed++; } catch (eR) {}
+  }
+  if (removed < old.length) {
+    LazyLord.warn(name, "The old artwork could not be removed, so it is still under the new version", "approximated");
+  }
+
+  ctx.updated++;
+  return true;
+};
+
+/* -------------------------------------------------------------------------
+ * Blend modes and effects
+ *
+ * Illustrator has a blend mode for each of the IR's, under its own spelling
+ * ("color" is COLORBLEND). It has no stock live effect matching the IR's
+ * shadows and blurs that can be scripted safely, so those are reported.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._ai_BLEND = {
+  "multiply": "MULTIPLY",
+  "screen": "SCREEN",
+  "overlay": "OVERLAY",
+  "darken": "DARKEN",
+  "lighten": "LIGHTEN",
+  "color-dodge": "COLORDODGE",
+  "color-burn": "COLORBURN",
+  "hard-light": "HARDLIGHT",
+  "soft-light": "SOFTLIGHT",
+  "difference": "DIFFERENCE",
+  "exclusion": "EXCLUSION",
+  "hue": "HUE",
+  "saturation": "SATURATION",
+  "color": "COLORBLEND",
+  "luminosity": "LUMINOSITY"
+};
+
+/** Apply the IR's blend mode and report any effects, on one Illustrator item. */
+LazyLord._ai_finish = function (item, layer) {
+  if (!item) return;
+  LazyLord.applyBlend(function (v) { item.blendingMode = v; }, layer,
+    typeof BlendModes !== "undefined" ? BlendModes : null, LazyLord._ai_BLEND);
+  LazyLord.noteEffects(layer, "Illustrator live effects cannot be scripted, so these were left off");
 };

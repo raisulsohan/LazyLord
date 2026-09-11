@@ -1,4 +1,4 @@
-# LazyLord — লাইভ টেস্ট চেকলিস্ট (v0.4)
+# LazyLord — লাইভ টেস্ট চেকলিস্ট (v0.7)
 
 এই সংস্করণের সব কোড শুধু নকল (mock) Adobe/Figma পরিবেশে টেস্ট করা হয়েছে। আসল অ্যাপে প্রথমবার চালিয়ে দেখার জন্য এই তালিকা।
 **⚠ চিহ্ন দেওয়া ঘরগুলো সবচেয়ে জরুরি।** এগুলো ডকুমেন্টেশন দেখে লেখা অনুমান, আসল অ্যাপ ছাড়া নিশ্চিত হওয়ার উপায় নেই।
@@ -49,12 +49,12 @@
 - [ ] ঘোরানো text আর image ঠিক।
 - [ ] কোনো document খোলা না থাকলে নতুন document ঠিক মাপে তৈরি হয়।
 
-## ৪. Illustrator → After Effects (Push)
+## ৪. Illustrator → After Effects
 
 - [ ] সাধারণ path, আর compound path-এ ছিদ্র (hole) ঠিক থাকে।
 - [ ] আয়তক্ষেত্র আর উপবৃত্ত AE-তে live Rect / Ellipse হয়।
 - [ ] **Clipping group** → AE-তে mask।
-- [ ] ⚠ **Gradient:** gradient দেওয়ার **পরে** বস্তুটা ঘুরিয়ে বা বড়-ছোট করে তারপর push করুন: দিক ঠিক থাকে।
+- [ ] ⚠ **Gradient:** gradient দেওয়ার **পরে** বস্তুটা ঘুরিয়ে বা বড়-ছোট করে তারপর পাঠান: দিক ঠিক থাকে।
 - [ ] Point text নিজের আসল baseline-এ বসে।
 - [ ] ⚠ **ঘোরানো point text** আর **ঘোরানো placed image** ঠিক কোণে আসে (আগে সোজা হয়ে বা চ্যাপ্টা হয়ে আসত)।
 - [ ] Linked image AE-তে **আপনার আসল ফাইল** হিসেবে আসে।
@@ -64,12 +64,12 @@
 - [ ] Artboard-এ যেখানে ছিল, AE-তে সেখানেই বসে। নতুন comp **artboard-এর মাপে** হয়।
 - [ ] **Asset folder:** AE project আগে save করা থাকলে তৈরি হওয়া ছবি `.aep`-এর পাশে `LazyLord Assets` ফোল্ডারে যায়। Save না থাকলে "Project" নামে একটা সতর্কতা আসে।
 
-## ৫. After Effects → Illustrator (Pull)
+## ৫. After Effects → Illustrator
 
 - [ ] ⚠ একই shape layer-এ **লাল বৃত্ত আর নীল বর্গ** (দুটো আলাদা group, আলাদা fill): Illustrator-এ দুটো আলাদা রঙেই আসে।
 - [ ] Rect, Ellipse আর Star shape ঠিক আকারে আসে।
 - [ ] ⚠ **Parent করা layer** (একটা null-এর child, null ঘোরানো বা সরানো): Illustrator-এ AE-র মতোই জায়গায় বসে।
-- [ ] Parent null আর তার child একসঙ্গে select করে Hierarchy "Groups" দিয়ে pull করলে Illustrator-এ group হয়।
+- [ ] Parent null আর তার child একসঙ্গে select করে Hierarchy "Groups" দিয়ে পাঠালে Illustrator-এ group হয়।
 - [ ] **Add mask** → clipping group। Subtract mask দিলে প্যানেলে সতর্কতা আসে।
 - [ ] **Gradient round trip:** Illustrator → AE → Illustrator করলে gradient ফিরে আসে।
 - [ ] দুটো ওভারল্যাপ করা ellipse (Non-Zero fill rule) ফেরত আসার পর মাঝখানে ফাঁকা ছিদ্র হয় না।
@@ -89,11 +89,11 @@
 - [ ] **background ছাড়া frame:** comp frame-এর পুরো মাপেই হয়, ভেতরের জিনিসের মাপে নয়, আর জিনিসগুলো frame-এ যেখানে ছিল সেখানেই বসে।
 - [ ] **একাধিক frame + Open document:** সব একসঙ্গে খোলা document-এ যায়।
 - [ ] Figma প্লাগিন বন্ধ করে আবার খুললে বাছাই করা Destination মনে থাকে।
-- [ ] Illustrator থেকে push আর AE থেকে pull আগের মতোই খোলা document বা comp-এ যায়।
+- [ ] Illustrator থেকে পাঠানো আর AE থেকে পাঠানো আগের মতোই খোলা document বা comp-এ যায়।
 
 ## ৬. Options (Layout / Hierarchy)
 
-প্যানেলের Push card বা Figma প্লাগিনে **Options** খুলে বাছুন।
+প্যানেলের Send card বা Figma প্লাগিনে **Options** খুলে বাছুন।
 
 - [ ] **Hierarchy = Groups → AE:** প্রতিটা group-এর জন্য একটা **null**, আর layer গুলো তার child।
 - [ ] ⚠ Null-এ parent করার পরও layer গুলো **সরে যায় না** (AE-তে parent সেট করার আসল আচরণ এখানে পরীক্ষা হচ্ছে)।
@@ -102,6 +102,71 @@
 - [ ] Combine + Groups → AE: Figma-র group গুলো shape layer-এর ভেতরে nested group হয়।
 - [ ] অ্যাপ বন্ধ করে আবার খুললে বাছাই করা অপশন মনে থাকে।
 - [ ] ডিফল্টে (Split + Flatten) ফল আগের সংস্করণের মতোই।
+
+## ৬ক. Shape updating (Existing / Keyframes) — নতুন
+
+পুরো Phase 3-টা host API-র দুটো অনুমানের উপর দাঁড়িয়ে: AE-র layer **comment** আর Illustrator-এর item **note** সেভ করার পরও টিকে থাকে। **প্রথমে সেটাই যাচাই করুন।**
+
+- [ ] ⚠ **ট্যাগ টেকে কিনা:** Add দিয়ে একবার পাঠান। AE-তে layer-এর **Comment** কলামে (Timeline-এ ডান-ক্লিক → Columns → Comment) `[[LazyLord …]]` দেখা যায়; Illustrator-এ item সিলেক্ট করে **Window → Attributes**-এর Note-এ একই জিনিস। প্রোজেক্ট/ফাইল **সেভ করে বন্ধ করে আবার খুলুন** — ট্যাগ এখনও আছে কিনা দেখুন।
+- [ ] **প্রথমবার সবসময় Add:** Existing = Update দিয়ে একেবারে নতুন কিছু পাঠালে সেটা যোগই হয়, আর প্যানেল বলে "Nothing matched…"।
+- [ ] **দ্বিতীয়বার আপডেট হয়:** Figma/Illustrator-এ shape-টার রং আর অবস্থান বদলে Existing = **Update** দিয়ে আবার পাঠান — **নতুন layer তৈরি হয় না**, পুরোনোটাই বদলায়। সারসংক্ষেপে "N layers updated" আসে।
+- [ ] **জায়গা ঠিক থাকে:** আপডেট হওয়া layer stack-এ নিজের জায়গাতেই থাকে (উপরে উঠে আসে না), তার parent/effect/mask ঠিক থাকে।
+- [ ] ⚠ **Keyframes = Auto:** AE-তে ওই layer-এর Position-এ আগে থেকে একটা keyframe দিন। playhead সরিয়ে Update পাঠান — **playhead-এর জায়গায় নতুন key** বসে, পুরোনো key মুছে যায় না। যে property-তে keyframe ছিল না সেটা keyframe ছাড়াই থাকে।
+- [ ] ⚠ **Keyframes = Always:** playhead সরিয়ে দু-তিনবার Update পাঠান — প্রতিবার সব property-তে key বসে, অর্থাৎ shape-টা animate হয়।
+- [ ] **অন্য ফাইল মেলে না:** একই নামের অন্য একটা Figma ফাইল/Illustrator ডকুমেন্ট থেকে Update পাঠালে সেটা **যোগ** হয়, পুরোনোটা বদলায় না।
+- [ ] **Update + Groups/Combine:** বাছলে প্যানেল বলে যে ওগুলো উপেক্ষা করা হয়েছে, আর কোনো null/group তৈরি হয় না।
+- [ ] **Figma-তে Destination উপেক্ষা:** Existing = Update বাছলে প্লাগিন লিখে দেয় যে খোলা ডকুমেন্টেই যাবে।
+- [ ] **হাতে বদলানো shape:** AE-তে shape layer-এর ভেতরে একটা বাড়তি path যোগ করে Update পাঠান — কিছু **মুছে যায় না**, আর "only the ones that pair up" জাতীয় সতর্কতা আসে।
+- [ ] ⚠ **Illustrator-এ replace:** Update-এ পুরোনো item সরে গিয়ে নতুনটা **ঠিক সেই জায়গায়** বসে (সামনে চলে আসে না), আর ডুপ্লিকেট পড়ে থাকে না।
+- [ ] **ট্যাগ মুছে দিলে:** কোনো layer-এর comment/note থেকে `[[LazyLord …]]` অংশটা মুছে Update পাঠান — ওটা নতুন layer হিসেবে যোগ হয়।
+- [ ] আপনার নিজের লেখা comment/note থাকলে সেটা **নষ্ট হয় না**, ট্যাগ শুধু আলাদা লাইনে বসে।
+
+## ৬খ. সব দিকে আনা-নেয়া (v0.6) — নতুন
+
+এখন চারটে অ্যাপই পাঠাতে আর নিতে পারে। প্যানেলের বোতামে আর "Push"/"Pull" লেখা নেই — **কোথায় যাচ্ছে সেটাই লেখা** ("Send to After Effects")।
+
+- [ ] **Photoshop থেকে পাঠানো:** PS-এ shape layer, text layer আর একটা pixel layer সিলেক্ট করে AE-তে পাঠান। Shape এডিটযোগ্য path হয়, text live text হয়, pixel layer ছবি হয়ে আসে।
+- [ ] ⚠ **PS-এ একাধিক layer সিলেক্ট:** তিনটে layer একসাথে সিলেক্ট করে পাঠালে তিনটেই যায়। যদি শুধু একটা যায় আর "Only the active layer could be read" সতর্কতা আসে — সেটা কপি করে জানাবেন।
+- [ ] ⚠ **PS shape layer:** Illustrator-এ পাঠিয়ে দেখুন path-টা **এডিটযোগ্য** কিনা (ছবি নয়)। না হলে প্যানেল কী কারণ দেখাচ্ছে জানাবেন।
+- [ ] **Adobe → Figma:** Illustrator বা AE থেকে **Send to Figma** করুন (Figma প্লাগিন খোলা থাকতে হবে)। Figma-তে vector, text আর ছবি এসে বসে, আর যা এলো তা-ই সিলেক্ট হয়ে থাকে।
+- [ ] ⚠ **Figma-তে ছবি:** linked ছবি সহ কিছু পাঠান — Figma-তে ছবিটা আসে (path নয়, আসল ছবি)।
+- [ ] **সব দিক:** PS→AI, AI→PS, AE→PS, PS→Figma — প্রতিটা অন্তত একবার।
+
+## ৬গ. প্যানেলে Destination আর Image scale — নতুন
+
+আগে এগুলো শুধু Figma প্লাগিনে ছিল; এখন Adobe প্যানেলেও আছে।
+
+- [ ] **Destination = Open document** (ডিফল্ট): খোলা document/comp-এ বসে, আগের মতোই।
+- [ ] ⚠ **Destination = New — source page size:** AE থেকে Illustrator-এ পাঠালে **comp-এর মাপে নতুন document** তৈরি হয়, আর আর্টওয়ার্ক comp-এ যেখানে ছিল সেখানেই বসে। (এটাই আপনার চাওয়া জিনিসটা।)
+- [ ] **Destination = New — selection size:** শুধু সিলেকশনের মাপে নতুন document, আর্টওয়ার্ক তার origin-এ।
+- [ ] **Image scale:** 1x আর 4x দিয়ে এমন কিছু পাঠান যা raster হয় (mesh, symbol, PS pixel layer) — 4x-এর ছবি স্পষ্ট বেশি ধারালো।
+- [ ] অ্যাপ বন্ধ করে খুললে Destination আর scale মনে থাকে।
+
+## ৬ঘ. Blend mode আর Effects — নতুন
+
+- [ ] **Blend mode:** Figma-তে একটা shape-এ **Multiply** দিয়ে AE-তে পাঠান — AE-তেও Multiply থাকে। Illustrator আর Photoshop-এও পরীক্ষা করুন।
+- [ ] ⚠ **Drop shadow → AE:** Figma-তে drop shadow (offset নিচে-ডানে, blur আছে) দিয়ে AE-তে পাঠান। AE-তে **Drop Shadow** effect বসে, আর ছায়াটা **একই দিকে** পড়ে। দিক উল্টো হলে স্ক্রিনশট নিন — direction-এর হিসাবটা এখানেই যাচাই হচ্ছে।
+- [ ] ⚠ **Layer blur → AE:** blur দেওয়া shape পাঠান — AE-তে Gaussian Blur বসে, আর ঝাপসার মাত্রা কাছাকাছি দেখায়।
+- [ ] **Spread:** shadow-এ spread দিলে AE-তে effect বসে ঠিকই, কিন্তু "spread" নিয়ে একটা সতর্কতা আসে — এটা প্রত্যাশিত।
+- [ ] **Inner shadow / background blur:** এগুলো দিয়ে পাঠালে AE-তে কিছু বসে **না**, আর কারণ সহ সতর্কতা আসে — এটাও প্রত্যাশিত।
+- [ ] **Illustrator / Photoshop-এ effect:** shadow দেওয়া কিছু পাঠালে effect বসে না, কিন্তু "left off" সতর্কতা আসে।
+- [ ] ⚠ **ছায়া দুবার পড়ে না:** Figma-তে shadow দেওয়া এমন একটা জিনিস পাঠান যেটা ছবি হয়ে যায় (যেমন image fill সহ frame) — ছায়াটা **একবারই** দেখা যায়, দুবার নয়।
+
+## ৬ঙ. ইন্টারফেস আর রিসাইজ (v0.7) — নতুন
+
+Figma প্লাগিন আর Adobe প্যানেল এখন **একই স্টাইলশিট** পরে (`packages/ui-kit/lazylord.css`)।
+
+- [ ] **প্যানেলের চেহারা:** PS/AI/AE-র প্যানেল এখন Figma প্লাগিনের মতো দেখায় — উপরে বড় অক্ষরে SEND TO / IMAGE SCALE / DESTINATION / OPTIONS, আর টার্গেট বাছাই dropdown নয়, **বোতাম** (chip)।
+- [ ] **বোতামে গন্তব্যের নাম:** টার্গেট বদলালে নিচের বড় বোতামের লেখাও বদলায় — "Send to After Effects" → "Send to Photoshop"।
+- [ ] ⚠ **Figma প্লাগিন টেনে বড় করা:** প্লাগিনের **নিচ-ডান কোণে** একটা ছোট তির্যক দাগ আছে — সেটা মাউস দিয়ে টেনে জানালা বড়-ছোট করুন। আগে ৩২০×৫৪০-এ আটকানো ছিল।
+- [ ] **মাপ মনে থাকে:** প্লাগিন বন্ধ করে আবার খুললে আপনার করা মাপেই খোলে।
+- [ ] **সবচেয়ে ছোট মাপ:** টেনে খুব ছোট করার চেষ্টা করুন — ৩০০×৩৬০-এর নিচে যায় না, আর ভেতরের জিনিস উপচে পড়ে না।
+> ⚠ **প্যানেলের মাপ বদলানোর আগে Photoshop/Illustrator/After Effects পুরোপুরি বন্ধ করে আবার চালু করুন।** CEP শুধু অ্যাপ চালু হওয়ার সময় manifest পড়ে, আর প্যানেল বড় করার অনুমতি ওখানেই লেখা (`MaxSize`)। `install.bat` junction ব্যবহার করে, তাই নতুন করে ইনস্টল করার দরকার নেই — শুধু রিস্টার্ট। (যদি `install-cep.ps1` দিয়ে ইনস্টল করে থাকেন আর সেটা copy করে থাকে, তাহলে ওটা আবার চালাতে হবে।)
+
+- [ ] ⚠ **প্যানেল বড় করা:** Adobe-র প্যানেলের কিনারা টেনে বড় করুন — **আগে এটা কাজ করত না**, ৩০০×৩৬০-এ আটকে থাকত। এখন যত খুশি বড় হওয়ার কথা।
+- [ ] **প্যানেল সরু করা:** কিনারা টেনে সরু করুন (২৪০px পর্যন্ত) — বোতামগুলো এক কলামে নেমে আসে, **পাশে স্ক্রলবার আসে না**।
+- [ ] **প্যানেল চওড়া করা:** চওড়া করলে বোতামগুলো ২, ৩, ৪ কলামে ছড়ায় — কিন্তু হাস্যকরভাবে পুরো পর্দা জুড়ে টানটান হয়ে যায় না।
+- [ ] প্যানেলের log আর fallback তালিকা আগের মতোই কাজ করে।
 
 ## ৭. প্যানেল
 

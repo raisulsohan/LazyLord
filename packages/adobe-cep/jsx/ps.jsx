@@ -65,6 +65,8 @@ LazyLord._ps_leaf = function (st, layer, parentSet) {
   }
   if (!made || !made.length) return [];
   st.created++;
+  // Blend mode and effects belong to every layer the leaf produced.
+  for (var f = 0; f < made.length; f++) LazyLord._ps_finish(made[f], layer);
   LazyLord._ps_noteClip(st.clips, layer, made, parentSet);
   return made;
 };
@@ -1181,4 +1183,39 @@ LazyLord._ps_place = function (path) {
   off.putUnitDouble(charIDToTypeID("Vrtc"), charIDToTypeID("#Pxl"), 0);
   desc.putObject(charIDToTypeID("Ofst"), charIDToTypeID("Ofst"), off);
   executeAction(idPlc, desc, DialogModes.NO);
+};
+
+/* -------------------------------------------------------------------------
+ * Blend modes and effects
+ *
+ * Photoshop has a blend mode for each of the IR's, under its own spelling
+ * ("color" is COLORBLEND). Layer styles are close cousins of the IR's
+ * shadows, but they live in ActionManager and their parameters do not line up
+ * with anyone else's, so they are reported instead of approximated badly.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._ps_BLEND = {
+  "multiply": "MULTIPLY",
+  "screen": "SCREEN",
+  "overlay": "OVERLAY",
+  "darken": "DARKEN",
+  "lighten": "LIGHTEN",
+  "color-dodge": "COLORDODGE",
+  "color-burn": "COLORBURN",
+  "hard-light": "HARDLIGHT",
+  "soft-light": "SOFTLIGHT",
+  "difference": "DIFFERENCE",
+  "exclusion": "EXCLUSION",
+  "hue": "HUE",
+  "saturation": "SATURATION",
+  "color": "COLORBLEND",
+  "luminosity": "LUMINOSITY"
+};
+
+/** Apply the IR's blend mode and report any effects, on one Photoshop layer. */
+LazyLord._ps_finish = function (lyr, layer) {
+  if (!lyr) return;
+  LazyLord.applyBlend(function (v) { lyr.blendMode = v; }, layer,
+    typeof BlendMode !== "undefined" ? BlendMode : null, LazyLord._ps_BLEND);
+  LazyLord.noteEffects(layer, "Photoshop layer styles are not rebuilt, so these were left off");
 };

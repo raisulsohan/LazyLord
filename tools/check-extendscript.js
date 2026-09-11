@@ -19,6 +19,7 @@ var targets = [
   "jsx\\lazylord.jsx",
   "jsx\\ai-read.jsx",
   "jsx\\ae-read.jsx",
+  "jsx\\ps-read.jsx",
   "jsx\\ae.jsx",
   "jsx\\ai.jsx",
   "jsx\\ps.jsx",

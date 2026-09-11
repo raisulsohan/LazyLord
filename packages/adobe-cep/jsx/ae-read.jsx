@@ -125,8 +125,24 @@ LazyLord.readSelection = function (outDir) {
     originSpace: "document",
     // The comp is the page, so a target that has to create one matches it.
     canvas: { width: comp.width, height: comp.height, name: comp.name || "Composition" },
+    sourceKey: LazyLord._aer_sourceKey(comp),
     layers: layers
   };
+};
+
+/**
+ * What tells this composition apart from every other one, so a target can match
+ * a layer id back to the thing it came from: the saved project's path plus the
+ * comp's own id, since layer ids repeat across comps. An unsaved project has
+ * nothing stable to offer, and matching then falls back to the layer id alone.
+ */
+LazyLord._aer_sourceKey = function (comp) {
+  var project = "";
+  try { if (app.project.file) project = app.project.file.fsName; } catch (e) {}
+  var id = "";
+  try { id = comp.id ? String(comp.id) : ""; } catch (eId) {}
+  if (!project && !id) return "";
+  return project + "#" + id;
 };
 
 /**

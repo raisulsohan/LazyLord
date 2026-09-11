@@ -108,10 +108,52 @@ export type BaseLayer = {
   name: string;
   frame: Frame;
   visible?: boolean;
-  blendMode?: string;
+  /** How the layer composites with what is under it. */
+  blendMode?: BlendMode;
+  /**
+   * Shadows and blurs, in the order the source applies them. Hosts rebuild
+   * what they have a native equivalent for and report the rest.
+   */
+  effects?: Effect[];
   /** Visible only inside this path. Nested masks keep the innermost one. */
   clip?: ClipPath;
 };
+
+/**
+ * The blend modes every host in the ecosystem shares, in one spelling. A mode
+ * a source has and a target does not is reported rather than guessed at.
+ */
+export type BlendMode =
+  | "normal"
+  | "multiply"
+  | "screen"
+  | "overlay"
+  | "darken"
+  | "lighten"
+  | "color-dodge"
+  | "color-burn"
+  | "hard-light"
+  | "soft-light"
+  | "difference"
+  | "exclusion"
+  | "hue"
+  | "saturation"
+  | "color"
+  | "luminosity";
+
+/**
+ * A shadow or blur, described by what every host agrees on. Anything richer
+ * than this — a Photoshop bevel, an Illustrator live effect with its own
+ * parameters — has no shared vocabulary, so it is reported instead.
+ *
+ * `radius` is the blur radius in px; `spread` grows the shadow before it is
+ * blurred, and is left out by sources that have no such control.
+ */
+export type Effect =
+  | { kind: "drop-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number }
+  | { kind: "inner-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number }
+  | { kind: "layer-blur"; radius: number }
+  | { kind: "background-blur"; radius: number };
 
 /**
  * An axis-aligned parametric shape, in the layer's local space (the same
@@ -240,6 +282,15 @@ export type Document = {
    * Only meaningful with originSpace "document"; informational otherwise.
    */
   canvas?: { width: number; height: number; name?: string };
+  /**
+   * Stable identifier for the source *document*, so a layer id can be matched
+   * back to the thing it came from. Layer ids are only unique within their own
+   * document — a Figma node id, an Illustrator `uuid` and an After Effects
+   * layer id all repeat across files — so a target that remembers where a layer
+   * came from has to remember this too. Absent when the source cannot offer
+   * one (an unsaved document); matching then falls back to the layer id alone.
+   */
+  sourceKey?: string;
   /** How the sender asked the target to lay the transfer out. */
   options?: TransferOptions;
 };
@@ -270,6 +321,22 @@ export type TransferOptions = {
    * selection bounds) and named after the source page or the selection.
    */
   destination?: "active" | "new";
+  /**
+   * "add" (default): every transfer creates new layers.
+   * "update": a layer the target already built from the same source object is
+   * updated in place instead, keeping its position in the stack and anything
+   * the user did to it that LazyLord does not own. Matching needs the layer
+   * tags written by a previous transfer, so the first one always adds.
+   */
+  existing?: "add" | "update";
+  /**
+   * Only consulted while updating, and only by hosts with a timeline.
+   * "auto" (default): a property that is already animated gets a new key at the
+   * playhead; a static one is just set, so nothing becomes animated by surprise.
+   * "always": every animatable property LazyLord updates is keyed at the
+   * playhead, which is how you animate a shape by re-sending it.
+   */
+  keyframes?: "auto" | "always";
 };
 
 /** Resolved options with defaults applied. */
@@ -279,6 +346,8 @@ export function transferOptions(doc: Pick<Document, "options">): Required<Transf
     layout: o.layout === "combine" ? "combine" : "split",
     hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
     destination: o.destination === "new" ? "new" : "active",
+    existing: o.existing === "update" ? "update" : "add",
+    keyframes: o.keyframes === "always" ? "always" : "auto",
   };
 }
 
@@ -290,4 +359,66 @@ export function emptyDocument(name = "Untitled", source: SourceApp = "figma"): D
     bounds: { x: 0, y: 0, width: 0, height: 0 },
     layers: [],
   };
+}
+
+/**
+ * Host blend-mode names in one vocabulary. Figma and After Effects shout
+ * ("MULTIPLY", "COLOR_DODGE"), Illustrator and Photoshop use their own
+ * spellings, and Figma's "PASS_THROUGH" is a group idea with no leaf meaning —
+ * all of it normalises to the IR's names, and anything unrecognised comes back
+ * null so the caller can report it rather than guess.
+ */
+export function blendModeFrom(name: unknown): BlendMode | null {
+  if (typeof name !== "string") return null;
+  const key = name.trim().toLowerCase().replace(/[\s_]+/g, "-");
+  switch (key) {
+    case "normal":
+    case "pass-through":
+
+      return "normal";
+    case "multiply":
+      return "multiply";
+    case "screen":
+      return "screen";
+    case "overlay":
+      return "overlay";
+    case "darken":
+      return "darken";
+    case "lighten":
+      return "lighten";
+    case "color-dodge":
+    case "colordodge":
+      return "color-dodge";
+    case "color-burn":
+    case "colorburn":
+      return "color-burn";
+    case "hard-light":
+    case "hardlight":
+      return "hard-light";
+    case "soft-light":
+    case "softlight":
+      return "soft-light";
+    case "difference":
+      return "difference";
+    case "exclusion":
+      return "exclusion";
+    case "hue":
+      return "hue";
+    case "saturation":
+      return "saturation";
+    case "color":
+      return "color";
+    case "luminosity":
+      return "luminosity";
+    default:
+      return null;
+  }
+}
+
+/** The IR's name for a blend mode, as a label for a diagnostic. */
+export function blendModeLabel(mode: BlendMode | string): string {
+  return String(mode)
+    .split("-")
+    .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : w))
+    .join(" ");
 }

@@ -145,7 +145,7 @@ function handleMessage(client: Client, msg: Message) {
     case "transfer": {
       const targets = [...clients].filter((c) => {
         if (c === client) return false; // never echo to the sender
-        if (c.role === "figma") return false; // Figma has no receive path yet
+        // Figma receives like any other host now; only the sender is excluded.
         if (msg.target && msg.target !== "unknown") return c.role === msg.target;
         return true; // broadcast to all Adobe clients
       });
@@ -161,7 +161,7 @@ function handleMessage(client: Client, msg: Message) {
           ok: false,
           message: msg.target
             ? `${roleLabel(msg.target)} is not connected. Open the LazyLord panel there first.`
-            : "No receiving app is connected. Open the LazyLord panel in Photoshop, Illustrator or After Effects.",
+            : "No receiving app is connected. Open the LazyLord panel in Photoshop, Illustrator or After Effects, or the plugin in Figma.",
         });
         return;
       }

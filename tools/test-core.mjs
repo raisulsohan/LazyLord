@@ -1485,6 +1485,10 @@ const linearFill = (gt) => ({
   ok("destination auto, the frame itself: sized and named after the frame, a new document",
     auto2.canvas && auto2.canvas.name === "Screen" && near(auto2.bounds.width, 1920) && near(auto2.bounds.height, 1080) &&
     auto2.name === "Screen" && auto2.options.destination === "new");
+  const screenGroup = groupsIn(auto2.tree).find((g) => g.name === "Screen");
+  ok("a frame's group carries its page box, for precomps",
+    screenGroup && screenGroup.page && near(screenGroup.page.x, 0) && near(screenGroup.page.y, 0) &&
+    screenGroup.page.width === 1920 && screenGroup.page.height === 1080, JSON.stringify(screenGroup && screenGroup.page));
   const open1 = await docFor([screen], [icon], 2, "open");
   ok("destination open: into the open document, where the object sits in its frame",
     open1.originSpace === "document" && near(open1.bounds.x, 500) && near(open1.bounds.y, 300) && open1.options.destination === "active");
@@ -1867,7 +1871,7 @@ await block("markup", async () => {
   const layout = dom.querySelector("#layout");
   const hierarchy = dom.querySelector("#hierarchy");
   ok("markup: Layout offers Split then Combine", layout && layout.tagName === "SELECT" && optionValues(layout) === "split,combine" && layout.options.map((o) => o.textContent).join() === "Split,Combine");
-  ok("markup: Hierarchy offers Flatten then Groups", hierarchy && hierarchy.tagName === "SELECT" && optionValues(hierarchy) === "flatten,groups" && hierarchy.options.map((o) => o.textContent).join() === "Flatten,Groups");
+  ok("markup: Hierarchy offers Flatten, Groups, then Precomps", hierarchy && hierarchy.tagName === "SELECT" && optionValues(hierarchy) === "flatten,groups,precomps" && hierarchy.options.map((o) => o.textContent).join() === "Flatten,Groups,Precomps (After Effects)");
   ok("markup: both inside the Options disclosure, defaults first", layout.closest("#opts") && hierarchy.closest("#opts") && layout.value === "split" && hierarchy.value === "flatten");
 });
 

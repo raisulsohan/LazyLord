@@ -430,7 +430,7 @@
   // only ever mention a choice that differs from them.
 
   var LAYOUTS = ["split", "combine"];
-  var HIERARCHIES = ["flatten", "groups"];
+  var HIERARCHIES = ["flatten", "groups", "precomps"];
   var EXISTING = ["add", "update"];
   var KEYFRAMES = ["auto", "always"];
 
@@ -439,7 +439,7 @@
     o = o || {};
     return {
       layout: o.layout === "combine" ? "combine" : "split",
-      hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
+      hierarchy: (o.hierarchy === "groups" || o.hierarchy === "precomps") ? o.hierarchy : "flatten",
       existing: o.existing === "update" ? "update" : "add",
       keyframes: o.keyframes === "always" ? "always" : "auto"
     };
@@ -450,6 +450,7 @@
     var parts = [];
     if (o.layout === "combine") parts.push("Combine");
     if (o.hierarchy === "groups") parts.push("Groups");
+    if (o.hierarchy === "precomps") parts.push("Precomps");
     if (o.existing === "update") parts.push("Update");
     if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
     var sc = activeChip(scalesEl, "scale");

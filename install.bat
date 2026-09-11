@@ -49,6 +49,9 @@ if errorlevel 1 (
 rem ---------------------------------------------------------------- 3. build
 echo.
 echo [3/7] Building core, Figma plugin and bridge...
+rem The panel's stylesheet and dropdowns are copied in from packages\ui-kit.
+call npm run sync:css
+if errorlevel 1 goto :fail
 call :build "core" "@lazylord/core" "packages\core\dist\index.js"
 if errorlevel 1 goto :fail
 call :build "Figma plugin" "@lazylord/figma-plugin" "packages\figma-plugin\dist\ui.html"
@@ -98,7 +101,13 @@ echo            %FIGMA_MANIFEST%
 echo         4. Run it from Plugins - Development - LazyLord.
 echo       After later code changes, just re-run install.bat; Figma picks up the rebuilt plugin.
 echo %FIGMA_MANIFEST%| clip
-start "" explorer /select,"%FIGMA_MANIFEST%"
+rem Show the file in Explorer the first time only: Figma remembers an imported
+rem plugin, so later runs need nothing but the path already on the clipboard.
+if not exist "%LOCALAPPDATA%\LazyLord\figma-manifest-shown" (
+  start "" explorer /select,"%FIGMA_MANIFEST%"
+  if not exist "%LOCALAPPDATA%\LazyLord" mkdir "%LOCALAPPDATA%\LazyLord"
+  echo shown> "%LOCALAPPDATA%\LazyLord\figma-manifest-shown"
+)
 
 rem ---------------------------------------------------------------- 7. bridge
 echo.

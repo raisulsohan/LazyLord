@@ -1983,6 +1983,9 @@
   // Closing the panel (or quitting the app) frees the port for another panel.
   try { window.addEventListener("beforeunload", stopBridge); } catch (eU) {}
 
+  // The dropdowns drawn like the rest of the panel (js/select.js).
+  if (window.LazyLordSelect) window.LazyLordSelect.enhance(document);
+
   // Photoshop unloads a panel that is closed or tabbed behind another, which
   // would drop the bridge connection (and Live); ask it to keep this one loaded.
   if (role === "photoshop") {

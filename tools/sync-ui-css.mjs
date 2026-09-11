@@ -28,3 +28,9 @@ const banner = [
 mkdirSync(outDir, { recursive: true });
 writeFileSync(target, banner + readFileSync(source, "utf8"));
 console.log("synced packages/adobe-cep/css/lazylord.css");
+
+// The dropdowns (select.js) go the same way, into the panel's js/ folder.
+const selectSource = resolve(root, "packages/ui-kit/select.js");
+const selectTarget = resolve(root, "packages/adobe-cep/js/select.js");
+writeFileSync(selectTarget, banner.replace("lazylord.css", "select.js").replace("lazylord.css", "select.js") + readFileSync(selectSource, "utf8"));
+console.log("synced packages/adobe-cep/js/select.js");

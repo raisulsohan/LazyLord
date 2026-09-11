@@ -13,3 +13,7 @@ packages/**/dist/
 packages/adobe-cep/css/
 # The relay the panel runs, bundled by packages/bridge/scripts/bundle-relay.mjs
 packages/adobe-cep/js/relay.js
+# Synced from packages/ui-kit/select.js by tools/sync-ui-css.mjs
+packages/adobe-cep/js/select.js
+# Design reference exported from Figma Make (not part of the build)
+design-make/

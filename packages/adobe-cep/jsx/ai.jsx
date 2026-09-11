@@ -1109,6 +1109,42 @@ LazyLord._ai_turnText = function (ctx, tf, layer, deg) {
  * source sent its real baseline (Illustrator point text, After Effects text),
  * on the IR estimate otherwise (Figma), as After Effects and Photoshop do.
  */
+/** Per-character styles: each run's attributes set on its characters. */
+LazyLord._ai_textRuns = function (tf, layer) {
+  var runs = LazyLord.fullTextRuns(layer);
+  if (!runs.length) return;
+  var name = layer.name || "Text";
+  var chars = null;
+  try { chars = tf.textRange.characters; } catch (e) {}
+  if (!chars || typeof chars.length !== "number") {
+    LazyLord.warn(name, "Mixed character styles could not be applied, so the whole text uses its first style", "approximated");
+    return;
+  }
+  var lost = false, missing = {};
+  for (var i = 0; i < runs.length; i++) {
+    var r = runs[i];
+    var font = r.fontFamily ? LazyLord._ai_findFont(r.fontFamily, r.fontStyle) : null;
+    if (r.fontFamily && !font) missing[r.fontFamily + " " + r.fontStyle] = true;
+    var color = LazyLord._ai_rgb(r.color);
+    var tracking = Math.round((r.letterSpacing / (r.fontSize || 24)) * 1000);
+    for (var k = r.start; k < r.end && k < chars.length; k++) {
+      try {
+        var a = chars[k].characterAttributes;
+        a.size = r.fontSize;
+        a.fillColor = color;
+        a.tracking = tracking;
+        if (font) a.textFont = font;
+        a.underline = r.decoration === "underline";
+        a.strikeThrough = r.decoration === "strikethrough";
+      } catch (eC) { lost = true; }
+    }
+  }
+  for (var m in missing) {
+    if (missing.hasOwnProperty(m)) LazyLord.warn(name, "Font '" + m + "' used in part of the text was not found; that part keeps the text's font", "approximated");
+  }
+  if (lost) LazyLord.warn(name, "Some mixed character styles could not be applied", "approximated");
+};
+
 LazyLord._ai_text = function (ctx, layer) {
   var name = layer.name || "Text";
   var anchor = LazyLord.textAnchor(layer);
@@ -1127,6 +1163,7 @@ LazyLord._ai_text = function (ctx, layer) {
 
   var font = LazyLord._ai_findFont(layer.fontFamily, layer.fontStyle);
   if (font) attr.textFont = font;
+  LazyLord._ai_textRuns(tf, layer);
 
   // Justify once the contents and their size are final, and before anything
   // is measured or turned: point text keeps its anchor where it was created

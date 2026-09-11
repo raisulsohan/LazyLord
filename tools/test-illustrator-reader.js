@@ -866,6 +866,38 @@ function uv2(g) { return uv(g.from) + " " + uv(g.to); }
     ok("text: baseline still exact", near(l.baseline, 20), String(l.baseline));
 })();
 
+// Mixed character styles travel as runs.
+(function () {
+    function ch(size, color, extra) {
+        var a = { size: size, tracking: 0, textFont: { family: "Futura", style: "Bold", name: "Futura-Bold" },
+                  fillColor: color, underline: false, strikeThrough: false };
+        if (extra) for (var k in extra) a[k] = extra[k];
+        return { characterAttributes: a };
+    }
+    var tf = {
+        typename: "TextFrame", name: "Mixed", contents: "Hi!", kind: TextType.POINTTEXT,
+        anchor: [100, 480], opacity: 100, hidden: false, guides: false,
+        geometricBounds: [100, 500, 160, 470], matrix: mx(1, 0, 0, 1, 100, 480),
+        textRange: {
+            characterAttributes: { size: 24, tracking: 0, autoLeading: true,
+                                   textFont: { family: "Futura", style: "Bold", name: "Futura-Bold" }, fillColor: rgb(255, 0, 0) },
+            paragraphAttributes: { justification: Justification.LEFT },
+            characters: [ch(24, rgb(255, 0, 0)), ch(24, rgb(255, 0, 0)), ch(36, rgb(0, 0, 255), { underline: true })]
+        }
+    };
+    var l = readSel([tf]).layers[0];
+    ok("text runs: equal neighbouring characters merge into one run",
+       l.runs && l.runs.length === 2 && l.runs[0].start === 0 && l.runs[0].end === 2 && l.runs[1].start === 2 && l.runs[1].end === 3,
+       JSON.stringify(l.runs));
+    ok("text runs: each run has its own size, colour, font and decoration",
+       l.runs && l.runs[1].fontSize === 36 && near(l.runs[1].color.b, 1) && l.runs[1].decoration === "underline" &&
+       l.runs[0].fontFamily === "Futura" && l.runs[0].decoration === "none", JSON.stringify(l.runs));
+    ok("text runs: nothing reported as flattened", !warned("flattened", "approximated"), diags());
+
+    tf.textRange.characters = [ch(24, rgb(255, 0, 0)), ch(24, rgb(255, 0, 0)), ch(24, rgb(255, 0, 0))];
+    ok("text runs: one style throughout sends no runs", readSel([tf]).layers[0].runs === undefined);
+})();
+
 // --- Clipping masks --------------------------------------------------------
 // Mask: AI (120,480)-(180,420) with an up-pointing handle on its first point.
 function maskPath(uuid) {

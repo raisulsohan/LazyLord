@@ -1920,5 +1920,24 @@ function updateOptsAI(extra) {
     ok("AI move failure: reported", (findDiag2(/could not be put back in its old place/) ? 1 : 0) === 1, diags());
 })();
 WScript.Echo("");
+// Mixed character styles on a host whose text range cannot be split: the
+// text is still built, in its first style, and the loss is reported.
+(function () {
+    resetMock();
+    openDoc();
+    build(canvasDoc([{
+        id: "T", name: "Styled", type: "text", frame: { x: 0, y: 0, width: 50, height: 10 }, characters: "Hi there",
+        fontFamily: "Inter", fontStyle: "Regular", fontSize: 12, color: { r: 0, g: 0, b: 0, a: 1 },
+        runs: [{ start: 0, end: 2, fontSize: 20 }]
+    }]));
+    var hit = null;
+    for (var i = 0; i < LazyLord.diagnostics.length; i++) {
+        if (/Mixed character styles/.test(LazyLord.diagnostics[i].reason)) hit = LazyLord.diagnostics[i];
+    }
+    ok("runs: without splittable text the first style is kept, reported, text still built",
+       hit && hit.object === "Styled" && hit.resolution === "approximated" && !/skipped/.test(JSON.stringify(LazyLord.diagnostics)),
+       JSON.stringify(LazyLord.diagnostics));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

@@ -916,7 +916,17 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
   const any = node as any;
   const mixed = MIXED_TEXT.filter(([key]) => any[key] === figma.mixed).map(([, label]) => label);
 
+  // Mixed styles stay live: each styled stretch becomes a run. Outlines are
+  // only the fallback when Figma cannot list the stretches.
+  let segs: any[] | null = null;
   if (mixed.length) {
+    try {
+      segs = any.getStyledTextSegments(["fontName", "fontSize", "fills", "letterSpacing", "lineHeight", "textCase", "textDecoration"]);
+    } catch {
+      segs = null;
+    }
+  }
+  if (mixed.length && (!segs || !segs.length)) {
     // Preserve appearance by sending outlines instead of live text.
     const mixedFills = any.fills === figma.mixed;
     const vec = vectorLayer(node, ctx, {
@@ -934,8 +944,11 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
     return img;
   }
 
-  const fn = node.fontName as FontName;
-  const fontSize = node.fontSize as number;
+  // The base style is the text's own, or its first stretch's where it mixes.
+  const first = segs && segs.length ? segs[0] : null;
+  const pick = (key: string) => (any[key] === figma.mixed && first ? first[key] : any[key]);
+  const fn = pick("fontName") as FontName;
+  const fontSize = pick("fontSize") as number;
   const w = num(any.width, 0);
   const h = num(any.height, 0);
 
@@ -954,11 +967,13 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
     opacity: num(any.opacity, 1),
   };
 
-  const color = textColour(node, ctx);
+  const color = any.fills === figma.mixed && first ? paintsColour(first.fills, node.name, ctx) : textColour(node, ctx);
   if (visiblePaints(any.strokes).length) warn(ctx, node.name, "Text stroke is not transferred", "skipped");
 
-  const letterSpacing = spacingToPx(node.letterSpacing as LetterSpacing, fontSize);
-  const lineHeight = lineHeightToPx(node.lineHeight as LineHeight, fontSize);
+  const letterSpacing = spacingToPx(pick("letterSpacing") as LetterSpacing, fontSize);
+  const lineHeight = lineHeightToPx(pick("lineHeight") as LineHeight, fontSize);
+  if (any.lineHeight === figma.mixed) warn(ctx, node.name, "Line height varies within the text; its first line height is used throughout", "approximated");
+  if (any.textCase === figma.mixed) warn(ctx, node.name, "Letter case varies within the text; its first case is used throughout", "approximated");
 
   const align = (node.textAlignHorizontal || "LEFT").toLowerCase() as TextLayer["textAlignHorizontal"];
   const valign = (node.textAlignVertical || "TOP").toLowerCase() as TextLayer["textAlignVertical"];
@@ -993,9 +1008,21 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
     lineHeight,
     textAlignHorizontal: align,
     textAlignVertical: valign,
-    textCase: caseMap[node.textCase as string] || "original",
-    decoration: decoMap[node.textDecoration as string] || "none",
+    textCase: caseMap[pick("textCase") as string] || "original",
+    decoration: decoMap[pick("textDecoration") as string] || "none",
   };
+  if (segs && segs.length > 1) {
+    layer.runs = segs.map((s) => ({
+      start: s.start,
+      end: s.end,
+      fontFamily: s.fontName && s.fontName.family,
+      fontStyle: s.fontName && s.fontName.style,
+      fontSize: s.fontSize,
+      color: paintsColour(s.fills, node.name, ctx),
+      letterSpacing: spacingToPx(s.letterSpacing as LetterSpacing, s.fontSize),
+      decoration: decoMap[s.textDecoration as string] || "none",
+    }));
+  }
   // Glyphs can spill out of a fixed-size text box: count their render bounds too.
   const rb = any.absoluteRenderBounds as Box | null;
   const ext = rotatedBoxBounds(frame);
@@ -1005,19 +1032,24 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
 
 /** Live text carries one colour: the first solid fill, else a gradient's first stop. */
 function textColour(node: TextNode, ctx: Ctx): RGBA {
-  const fills = visiblePaints((node as any).fills);
-  if (fills.length > 1) warn(ctx, node.name, `Text has ${fills.length} visible fills; only one colour is used`, "approximated");
+  return paintsColour((node as any).fills, node.name, ctx);
+}
+
+/** One colour from a text's (or a stretch of it's) paints. */
+function paintsColour(paints: any, name: string, ctx: Ctx): RGBA {
+  const fills = visiblePaints(paints);
+  if (fills.length > 1) warn(ctx, name, `Text has ${fills.length} visible fills; only one colour is used`, "approximated");
   for (const f of fills) {
     if (f.type === "SOLID") return rgba(f.color, f.opacity == null ? 1 : f.opacity);
   }
   for (const f of fills) {
     if (Array.isArray(f.gradientStops) && f.gradientStops.length) {
-      warn(ctx, node.name, "Gradient text fill sent as a flat colour from its first stop", "approximated");
+      warn(ctx, name, "Gradient text fill sent as a flat colour from its first stop", "approximated");
       const s = f.gradientStops[0];
       return rgba(s.color, (s.color && s.color.a != null ? s.color.a : 1) * (f.opacity == null ? 1 : f.opacity));
     }
   }
-  if (fills.length) warn(ctx, node.name, "Text fill is not a colour or gradient; sent as black", "approximated");
+  if (fills.length) warn(ctx, name, "Text fill is not a colour or gradient; sent as black", "approximated");
   return { r: 0, g: 0, b: 0, a: 1 };
 }
 

@@ -1096,6 +1096,33 @@ WScript.Echo("");
        tdoc(api.comp.list[0]).font === "BrandSansWeb-Bd" && api.diags.length === 0, dump(api.diags));
 })();
 
+// 20b) Mixed character styles: characterRange on After Effects 24.3+, one style before.
+(function () {
+    function tdoc(l) { return l.property("ADBE Text Properties").property("ADBE Text Document").value; }
+    var box = { x: 0, y: 0, width: 100, height: 20 };
+    var styled = textLayer("Styled", box); // "Hello", 20 px, black
+    styled.runs = [{ start: 0, end: 2, fontSize: 30, color: rgba(1, 0, 0) }];
+
+    var r = build(irDoc([styled]));
+    ok("runs: older After Effects says the first style is used",
+       diagsMatching(r.diags, /24\.3 or newer/).length === 1 && r.res.layersCreated === 1, dump(r.diags));
+
+    TextDocument.prototype.characterRange = function (s, e) {
+        var cr = { start: s, end: e };
+        (this.ranges = this.ranges || []).push(cr);
+        return cr;
+    };
+    try { r = build(irDoc([styled])); } finally { delete TextDocument.prototype.characterRange; }
+    var td = tdoc(r.comp.list[0]);
+    ok("runs: one range per stretch, covering the whole text",
+       td.ranges && td.ranges.length === 2 && td.ranges[0].start === 0 && td.ranges[0].end === 2 &&
+       td.ranges[1].start === 2 && td.ranges[1].end === 5, dump(td.ranges));
+    ok("runs: each range takes its run's size and colour, the gap the base style",
+       td.ranges[0].fontSize === 30 && nearArr(td.ranges[0].fillColor, [1, 0, 0]) &&
+       td.ranges[1].fontSize === 20 && nearArr(td.ranges[1].fillColor, [0, 0, 0]), dump(td.ranges));
+    ok("runs: nothing reported when every style applied", diagsMatching(r.diags, /character styles/).length === 0, dump(r.diags));
+})();
+
 // 21) Paragraph alignment, and a host that cannot set it.
 (function () {
     function tdoc(l) { return l.property("ADBE Text Properties").property("ADBE Text Document").value; }

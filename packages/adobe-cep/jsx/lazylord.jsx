@@ -275,6 +275,43 @@ LazyLord.rotatedTextAnchor = function (layer) {
   return LazyLord.rotatePoint(a, LazyLord.frameCenter(layer.frame), layer.frame.rotation || 0);
 };
 
+/**
+ * A text layer's runs expanded to cover every character, in order, each with
+ * every style field set: the layer's own style fills gaps and unset fields.
+ * [] when the text has fewer than two distinct stretches (nothing to apply).
+ */
+LazyLord.fullTextRuns = function (layer) {
+  var text = String(layer.characters || "");
+  var runs = layer.runs;
+  if (!runs || !runs.length || !text.length) return [];
+  var sorted = runs.slice().sort(function (a, b) { return (a.start || 0) - (b.start || 0); });
+  var base = {
+    fontFamily: layer.fontFamily, fontStyle: layer.fontStyle || "Regular", fontSize: layer.fontSize || 24,
+    color: layer.color || { r: 0, g: 0, b: 0, a: 1 }, letterSpacing: layer.letterSpacing || 0,
+    decoration: layer.decoration || "none"
+  };
+  function full(start, end, r) {
+    var o = { start: start, end: end };
+    for (var k in base) {
+      if (!base.hasOwnProperty(k)) continue;
+      o[k] = (r && r[k] !== undefined && r[k] !== null) ? r[k] : base[k];
+    }
+    return o;
+  }
+  var out = [], at = 0;
+  for (var i = 0; i < sorted.length; i++) {
+    var r = sorted[i];
+    var s = Math.max(at, r.start || 0);
+    var e = Math.min(text.length, r.end || 0);
+    if (e <= s) continue;
+    if (s > at) out.push(full(at, s, null));
+    out.push(full(s, e, r));
+    at = e;
+  }
+  if (at < text.length) out.push(full(at, text.length, null));
+  return out.length > 1 ? out : [];
+};
+
 /** Absolute path of a layer's image file, whichever field carries it. */
 LazyLord.imagePath = function (layer) {
   return layer.filePath || layer.pngPath || null;

@@ -176,9 +176,28 @@ export type VectorLayer = BaseLayer & {
   primitive?: Primitive;
 };
 
+/**
+ * A stretch of a text layer's characters with its own style. `start` / `end`
+ * are UTF-16 offsets into `characters` (end exclusive). Runs are in order and
+ * never overlap; a field left unset — and any character no run covers — takes
+ * the layer's own style. Line height, case and alignment stay per layer.
+ */
+export type TextRun = {
+  start: number;
+  end: number;
+  fontFamily?: string;
+  fontStyle?: string;
+  fontSize?: number; // px
+  color?: RGBA;
+  letterSpacing?: number; // px
+  decoration?: "none" | "underline" | "strikethrough";
+};
+
 export type TextLayer = BaseLayer & {
   type: "text";
   characters: string;
+  /** Per-character styles, when the text mixes them; the fields below are the base style. */
+  runs?: TextRun[];
   fontFamily: string;
   fontStyle: string; // e.g. "Regular", "Bold", "Bold Italic"
   fontSize: number; // px

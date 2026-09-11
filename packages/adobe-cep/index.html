@@ -19,30 +19,47 @@
     */
     :root {
       color-scheme: dark;
-      --bg: #262626;
-      --fg: #e8e8e8;
-      --muted: #9a9a9a;
-      --border: #1c1c1c;
-      --accent: #6c4cff;
+      --bg: #161616;
+      --chrome: #111;
+      --fg: #f0f0f0;
+      --fg-2: #c0c0c0;
+      --muted: #888;
+      --faint: #5c5c5c;
+      --label: #555;
+      --border: rgba(255, 255, 255, .07);
+      --border-strong: rgba(255, 255, 255, .14);
+      --surface: #1c1c1c;
+      --surface-hover: #252525;
+      --sunken: #0d0d0d;
+      --hover-tint: rgba(255, 255, 255, .04);
+      --accent: #7c3aed;
+      --accent-hover: #6d28d9;
       --accent-fg: #fff;
-      --ok: #45c26a;
-      --err: #e5484d;
+      --accent-soft: rgba(124, 58, 237, .22);
+      --ok: #22c55e;
+      --err: #ef4444;
       --warn: #e0a23c;
-      --chip: #2f2f2f;
-      /* A docked panel is narrower than a plugin window, so chips wrap sooner,
-         and the four scales still fit one row at the 240px minimum width. */
-      --chip-min: 104px;
+      --log-fg: #44aa99;
+      --chip: #222;
+      --scroll: #333;
+      --menu-bg: #222;
+      --menu-border: rgba(255, 255, 255, .1);
+      --menu-hover: rgba(124, 58, 237, .12);
+      --menu-hover-fg: #e4dcff;
+      --menu-selected-bg: rgba(124, 58, 237, .2);
+      --menu-selected-fg: #c4b5fd;
+      /* A docked panel is narrower than a plugin window, so the switch wraps
+         sooner, and the four scales still fit one row at the 240px minimum. */
+      --chip-min: 84px;
       --scale-min: 44px;
     }
-    /* The chips sit on the panel's own surface rather than the window ground. */
-    .a-target, .a-scale, .a-place, .a-opt select, .a-ghost { background: #1f1f1f; }
   </style>
 </head>
 <body>
   <div id="app">
     <header class="a-head">
       <div class="a-logo">
-        <span class="a-mark">◆</span>
+        <svg class="a-mark" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="M7 1L13 7L7 13L1 7Z" fill="currentColor"></path></svg>
         <span class="a-title">LazyLord</span>
       </div>
       <div id="conn" class="a-conn a-conn--off"><span class="dot"></span><span id="conn-text">Offline</span></div>
@@ -151,12 +168,12 @@
 
       <section class="a-block" id="ae-tools" hidden>
         <label class="a-label">Precomps</label>
-        <div class="a-row">
+        <div class="a-row a-tools">
           <button id="ae-precompose" class="a-ghost" title="Move the selected layers into one precomp, keeping their attributes.">Precompose selected</button>
           <button id="ae-decompose" class="a-ghost" title="Move a selected precomp's layers into this comp, where they showed, and remove the precomp layer.">Decompose precomp</button>
         </div>
         <div class="a-row">
-          <button id="ae-import-psd" class="a-ghost" title="Import the document open in Photoshop (its last saved version) as a composition with layer sizes kept. Without Photoshop connected, choose a file.">Import PSD from Photoshop</button>
+          <button id="ae-import-psd" class="a-ghost a-wide" title="Import the document open in Photoshop (its last saved version) as a composition with layer sizes kept. Without Photoshop connected, choose a file.">Import PSD from Photoshop</button>
         </div>
       </section>
 
@@ -198,6 +215,8 @@
   </div>
 
   <script src="./js/csinterface.js"></script>
+  <!-- The dropdowns, shared with the Figma plugin (synced from packages/ui-kit). -->
+  <script src="./js/select.js"></script>
   <script src="./js/main.js"></script>
 </body>
 </html>

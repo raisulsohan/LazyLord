@@ -11,6 +11,10 @@
  * of its own (the CEP panel, which Adobe expects to be dark) re-declares the
  * same tokens after loading this file.
  *
+ * The look follows the "Improve UI for Plugins" design (Figma Make): quiet
+ * surfaces, a segmented target switch, soft hover states on everything that
+ * can be pressed, and short transitions.
+ *
  * Class names are prefixed `a-` for historical reasons — they began in the
  * Figma plugin — and are kept because the plugin's code and tests address them.
  */
@@ -18,28 +22,56 @@
 :root {
   color-scheme: light dark;
   --bg: var(--figma-color-bg, #fff);
+  /* Head and foot sit on a slightly deeper tone than the body. */
+  --chrome: var(--figma-color-bg-secondary, #fafafa);
   --fg: var(--figma-color-text, #1a1a1a);
+  /* Text inside controls, a step below the headings. */
+  --fg-2: var(--figma-color-text, #333);
   --muted: var(--figma-color-text-secondary, #7a7a7a);
+  --faint: var(--figma-color-text-tertiary, #a0a0a0);
+  /* Section labels: SEND TO, IMAGE SCALE, … */
+  --label: var(--figma-color-text-secondary, #8c8c8c);
   --border: var(--figma-color-border, #e6e6e6);
+  --border-strong: var(--figma-color-border-strong, #cfcfcf);
+  /* Controls, their hover, and the sunken wells (target switch, log). */
+  --surface: var(--figma-color-bg, #fff);
+  --surface-hover: var(--figma-color-bg-hover, #f2f2f2);
+  --sunken: var(--figma-color-bg-secondary, #f5f5f5);
+  --hover-tint: rgba(0, 0, 0, .04);
   --accent: var(--figma-color-bg-brand, #6c4cff);
+  --accent-hover: var(--figma-color-bg-brand-hover, #5a3be0);
   --accent-fg: var(--figma-color-text-onbrand, #fff);
+  --accent-soft: rgba(108, 76, 255, .16);
   --ok: #2ea043;
   --err: #e5484d;
   --warn: #c98a00;
+  --log-fg: #2f7d6b;
   --chip: var(--figma-color-bg-secondary, #f5f5f5);
+  --scroll: rgba(0, 0, 0, .2);
+  /* The dropdown menus (select.js). */
+  --menu-bg: var(--figma-color-bg, #fff);
+  --menu-border: var(--figma-color-border, #e6e6e6);
+  --menu-hover: rgba(108, 76, 255, .08);
+  --menu-hover-fg: var(--figma-color-text, #1a1a1a);
+  --menu-selected-bg: rgba(108, 76, 255, .12);
+  --menu-selected-fg: var(--figma-color-text-brand, #5a3be0);
+
+  --mono: "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
+  --ease: .15s ease;
 
   /* The narrowest a chip may get before its row wraps to fewer columns. */
-  --chip-min: 120px;
-  --scale-min: 52px;
+  --chip-min: 96px;
+  --scale-min: 48px;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 
 body {
-  font: 12px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 12px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   color: var(--fg);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
 }
 
 /* The shell fills the window, and only the body between head and foot scrolls. */
@@ -50,6 +82,12 @@ body {
   min-height: 0;
 }
 
+/* Thin scrollbars that stay out of the way until needed. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scroll); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--faint); }
+
 /* --- Head and foot ------------------------------------------------------- */
 
 .a-head {
@@ -59,15 +97,17 @@ body {
   gap: 8px;
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
+  background: var(--chrome);
   flex: none;
 }
 .a-logo { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.a-mark { color: var(--accent); font-size: 15px; }
-.a-title { font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
+.a-mark { color: var(--accent); width: 14px; height: 14px; flex: none; display: block; }
+.a-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
 
-.a-conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); white-space: nowrap; }
-.a-conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
-.a-conn--on .dot { background: var(--ok); }
+.a-conn { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--muted); white-space: nowrap; }
+.a-conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; transition: background var(--ease), box-shadow var(--ease); }
+.a-conn--on { color: var(--ok); }
+.a-conn--on .dot { background: var(--ok); box-shadow: 0 0 0 3px rgba(34, 197, 94, .15); }
 .a-conn--off .dot { background: var(--err); }
 
 .a-foot {
@@ -80,13 +120,14 @@ body {
   gap: 2px 8px;
   padding: 8px 14px;
   border-top: 1px solid var(--border);
-  color: var(--muted);
+  background: var(--chrome);
+  color: var(--faint);
   font-size: 10px;
   flex: none;
 }
-.a-foot code { font-size: 10px; }
-.a-foot a { color: var(--accent); text-decoration: none; }
-.a-foot a:hover { text-decoration: underline; }
+.a-foot code { font-family: var(--mono); font-size: 9.5px; }
+.a-foot a { color: var(--muted); text-decoration: none; transition: color var(--ease); }
+.a-foot a:hover { color: var(--accent); }
 
 /* --- Body and sections --------------------------------------------------- */
 
@@ -96,123 +137,284 @@ body {
   padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   overflow: auto;
 }
 
-.a-block { display: flex; flex-direction: column; gap: 8px; }
+.a-block { display: flex; flex-direction: column; gap: 6px; }
 .a-block[hidden] { display: none; }
 
 .a-label {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  color: var(--muted);
+  color: var(--label);
   text-transform: uppercase;
-  letter-spacing: .4px;
+  letter-spacing: .08em;
 }
 
-.a-peers { margin: 0; color: var(--muted); font-size: 11px; }
+.a-peers { margin: 0; color: var(--faint); font-size: 11px; line-height: 1.5; }
 .a-count { font-weight: 400; text-transform: none; letter-spacing: 0; }
 
-/* --- Chip rows ------------------------------------------------------------
- * auto-fit rather than a fixed column count, so the rows reflow to whatever
- * width the window is dragged to instead of overflowing it.
+/* --- Send to: a segmented switch ------------------------------------------
+ * auto-fit rather than a fixed column count, so the switch reflows to
+ * whatever width the window is dragged to instead of overflowing it.
  */
 
 .a-targets, .a-scales {
   display: grid;
-  gap: 6px;
+  gap: 4px;
   /* Dragged wide, a handful of chips should not stretch across the whole
      window; past this the row simply stops growing. */
   max-width: 520px;
 }
-.a-targets { grid-template-columns: repeat(auto-fit, minmax(var(--chip-min), 1fr)); }
+.a-targets {
+  grid-template-columns: repeat(auto-fit, minmax(var(--chip-min), 1fr));
+  padding: 3px;
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
 .a-scales { grid-template-columns: repeat(auto-fit, minmax(var(--scale-min), 1fr)); }
 
 .a-target, .a-scale {
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-  cursor: pointer;
   font: inherit;
-  font-size: 12px;
-  transition: background .12s, border-color .12s, color .12s;
+  cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: background var(--ease), border-color var(--ease), color var(--ease), box-shadow var(--ease);
 }
-.a-scale { padding: 6px; }
-.a-target:hover, .a-scale:hover { border-color: var(--accent); }
-.a-target:focus-visible, .a-scale:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.a-target.is-active, .a-scale.is-active {
+
+.a-target {
+  padding: 6px 4px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  letter-spacing: -.01em;
+}
+.a-target:hover { color: var(--fg-2); background: var(--hover-tint); }
+.a-target.is-active {
   background: var(--accent);
   color: var(--accent-fg);
-  border-color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
-.a-target:disabled, .a-scale:disabled { opacity: .45; cursor: not-allowed; }
-.a-target:disabled:hover, .a-scale:disabled:hover { border-color: var(--border); }
 
-/* --- Selects ------------------------------------------------------------- */
+.a-scale {
+  padding: 7px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+.a-scale:hover { background: var(--surface-hover); border-color: var(--border-strong); color: var(--fg-2); }
+.a-scale.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-fg);
+  font-weight: 600;
+}
+
+.a-target:focus-visible, .a-scale:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.a-target.is-active:hover { background: var(--accent-hover); color: var(--accent-fg); }
+.a-scale.is-active:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+.a-target:disabled, .a-scale:disabled { opacity: .45; cursor: not-allowed; }
+.a-target:disabled:hover { background: transparent; color: var(--muted); }
+.a-scale:disabled:hover { background: var(--surface); border-color: var(--border); color: var(--muted); }
+
+/* --- Selects --------------------------------------------------------------
+ * The browser's arrow is swapped for the design's chevron (12 x 12), so the
+ * select reads like the rest of the controls. The list that drops down stays
+ * the system's own, coloured by the options below.
+ */
+
+.a-place, .a-opt select {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--border);
+  background-color: var(--surface);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%23808080' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-size: 12px 12px;
+  color: var(--fg-2);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color var(--ease), background-color var(--ease), box-shadow var(--ease);
+}
+.a-place option, .a-opt select option { background: var(--surface); color: var(--fg); }
 
 .a-place {
   width: 100%;
   max-width: 520px;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
-  font: inherit;
-  cursor: pointer;
+  padding: 8px 30px 8px 10px;
+  border-radius: 7px;
+  background-position: right 10px center;
+  font-size: 12px;
 }
-.a-place:hover, .a-place:focus { border-color: var(--accent); outline: none; }
 
-/* --- The Options disclosure ---------------------------------------------- */
+.a-place:hover, .a-opt select:hover { border-color: var(--border-strong); }
+.a-place:focus, .a-opt select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+  outline: none;
+}
 
-.a-opts summary { cursor: pointer; list-style-position: inside; }
-.a-opts[open] summary { margin-bottom: 8px; }
-.a-opts-note { margin-left: 4px; color: var(--accent); }
-.a-opts .a-peers { margin-top: 2px; }
+/* --- Dropdowns ------------------------------------------------------------
+ * select.js puts a button and a menu of its own in front of each select (the
+ * system list cannot be styled, and in a CEP panel it is small and cramped).
+ * The select stays underneath, hidden; the rules above still dress it when
+ * the script is absent.
+ */
 
-.a-opt {
+.a-select { position: relative; display: block; min-width: 0; }
+.a-opt .a-select { flex: 1 1 auto; }
+.a-block > .a-select { max-width: 520px; }
+.a-select-native {
+  position: absolute !important;
+  top: 0; left: 0;
+  width: 100% !important;
+  height: 100%;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.a-select-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 6px;
-}
-.a-opt[hidden] { display: none; }
-.a-opt label { font-size: 12px; }
-.a-opt select {
-  min-width: 0;
-  flex: 1 1 120px;
-  max-width: 60%;
-  padding: 5px 6px;
+  width: 100%;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--surface);
+  color: var(--fg-2);
   font: inherit;
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
+  transition: border-color var(--ease), background var(--ease), box-shadow var(--ease);
 }
-.a-opt select:hover, .a-opt select:focus { border-color: var(--accent); outline: none; }
+.a-select-btn.is-place { padding: 8px 10px; border-radius: 7px; font-size: 12px; }
+.a-select-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-select-chev { flex: none; color: var(--faint); transition: transform var(--ease), color var(--ease); }
+.a-select-btn:hover:not(:disabled) { border-color: var(--border-strong); background: var(--surface-hover); }
+.a-select-btn:hover .a-select-chev { color: var(--muted); }
+.a-select-btn:focus-visible,
+.a-select.is-open .a-select-btn { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); outline: none; }
+.a-select.is-open .a-select-chev { transform: rotate(180deg); color: var(--accent); }
+.a-select-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+.a-menu {
+  position: fixed;
+  z-index: 1000;
+  padding: 4px;
+  overflow-y: auto;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .35), 0 2px 6px rgba(0, 0, 0, .2);
+  opacity: 0;
+  transform: translateY(-4px) scale(.98);
+  transform-origin: top center;
+  transition: opacity .12s ease, transform .12s ease;
+}
+.a-menu[hidden] { display: none; }
+.a-menu.is-open { opacity: 1; transform: none; }
+
+.a-menu-item {
+  position: relative;
+  padding: 8px 12px 8px 28px;
+  border-radius: 5px;
+  color: var(--fg-2);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .1s ease, color .1s ease;
+}
+.a-menu-item + .a-menu-item { margin-top: 1px; }
+.a-menu-item.is-selected { background: var(--menu-selected-bg); color: var(--menu-selected-fg); font-weight: 500; }
+.a-menu-item.is-focus { background: var(--menu-hover); color: var(--menu-hover-fg); }
+.a-menu-item.is-selected.is-focus { background: var(--menu-selected-bg); color: var(--menu-selected-fg); }
+/* The chosen one carries a tick, drawn from two borders. */
+.a-menu-item.is-selected::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  width: 8px;
+  height: 4px;
+  margin-top: -4px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+.a-menu-item.is-disabled { opacity: .45; cursor: default; }
+
+/* --- The Options, History and Log disclosures ----------------------------- */
+
+.a-opts summary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--ease);
+}
+.a-opts summary::-webkit-details-marker { display: none; }
+.a-opts summary::before {
+  content: "\25B6";
+  font-size: 8px;
+  color: var(--faint);
+  transition: transform var(--ease);
+}
+.a-opts[open] summary::before { transform: rotate(90deg); }
+.a-opts summary:hover { color: var(--muted); }
+.a-opts[open] summary { margin-bottom: 8px; }
+.a-opts-note { margin-left: 2px; color: var(--accent); font-weight: 600; }
+.a-opts .a-peers { margin: 2px 0 8px; font-style: italic; font-size: 10.5px; }
+
+.a-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+.a-opt[hidden] { display: none; }
+.a-opt label { width: 68px; flex: none; font-size: 11.5px; color: var(--muted); }
+.a-opt select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 26px 6px 8px;
+  border-radius: 6px;
+  background-position: right 8px center;
+  font-size: 11.5px;
+}
 
 /* --- The primary action and its status ----------------------------------- */
 
 .a-send {
-  padding: 11px;
+  padding: 10px;
   border: none;
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--accent);
   color: var(--accent-fg);
+  font: inherit;
   font-weight: 600;
   font-size: 13px;
+  letter-spacing: -.01em;
   cursor: pointer;
+  transition: background var(--ease), box-shadow var(--ease), transform .08s ease;
 }
-.a-send:hover:not(:disabled) { filter: brightness(1.08); }
-.a-send:disabled { background: var(--chip); color: var(--muted); cursor: not-allowed; }
+.a-send:hover:not(:disabled) { background: var(--accent-hover); box-shadow: 0 4px 14px var(--accent-soft); }
+.a-send:active:not(:disabled) { transform: translateY(1px); box-shadow: none; }
+.a-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.a-send:disabled { background: var(--chip); color: var(--faint); cursor: not-allowed; }
 
 .a-status { margin: 0; min-height: 15px; font-size: 11px; overflow-wrap: anywhere; }
 .a-status.ok { color: var(--ok); }
@@ -223,18 +425,18 @@ body {
 
 .a-diags {
   margin: 0;
-  padding: 6px 8px;
+  padding: 6px 10px;
   list-style: none;
   font-size: 11px;
   max-height: 140px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--chip);
+  border-radius: 7px;
+  background: var(--sunken);
 }
-.a-diag { padding: 3px 0; overflow-wrap: anywhere; }
+.a-diag { padding: 4px 0; overflow-wrap: anywhere; }
 .a-diag + .a-diag { border-top: 1px solid var(--border); }
-.a-diag-src { color: var(--muted); margin-right: 4px; }
+.a-diag-src { color: var(--faint); margin-right: 4px; }
 .a-diag-obj { font-weight: 600; }
 .a-diag-res { color: var(--warn); white-space: nowrap; }
 .a-diag-res.skipped { color: var(--err); }
@@ -244,23 +446,24 @@ body {
  * running in, a running log, and the auto-receive switch.
  */
 
-.a-host { display: flex; flex-direction: column; gap: 2px; }
-.a-host-name { font-size: 13px; font-weight: 600; }
-.a-host-sub { color: var(--muted); font-size: 11px; }
+.a-host { display: flex; flex-direction: column; gap: 1px; }
+.a-host-name { font-size: 15px; font-weight: 600; letter-spacing: -.02em; }
+.a-host-sub { color: var(--faint); font-size: 11px; font-family: var(--mono); }
 
 .a-log {
   margin: 0;
-  padding: 6px 8px;
-  font-family: Consolas, "SF Mono", monospace;
-  font-size: 11px;
-  color: var(--muted);
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: var(--log-fg);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 140px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--chip);
+  border-radius: 7px;
+  background: var(--sunken);
 }
 .a-log .ok { color: var(--ok); }
 .a-log .err { color: var(--err); }
@@ -268,41 +471,55 @@ body {
 
 .a-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 
-.a-check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; cursor: pointer; }
-.a-check input { margin: 0; }
+.a-check { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11.5px; cursor: pointer; transition: color var(--ease); }
+.a-check:hover { color: var(--fg-2); }
+.a-check input { margin: 0; width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; }
 
 .a-ghost {
-  padding: 7px 12px;
-  border: 1px solid var(--border);
+  padding: 6px 11px;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--surface);
+  color: var(--fg-2);
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background var(--ease), color var(--ease), border-color var(--ease);
 }
-.a-ghost:hover { border-color: var(--accent); }
-.a-ghost:disabled { color: var(--muted); border-color: var(--border); cursor: not-allowed; }
+.a-ghost:hover:not(:disabled) { background: var(--surface-hover); color: var(--fg); }
+.a-ghost:active:not(:disabled) { transform: translateY(1px); }
+.a-ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.a-ghost:disabled { color: var(--faint); border-color: var(--border); cursor: not-allowed; }
+
+/* Tool buttons (After Effects precomps): two to a row, and one full width. */
+.a-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.a-tools .a-ghost, .a-wide { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.a-wide { width: 100%; text-align: left; }
 
 /* --- Presets and transfer history ----------------------------------------- */
 
 .a-input {
   flex: 1 1 120px;
   min-width: 0;
-  padding: 5px 6px;
+  padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--surface);
+  color: var(--fg-2);
   font: inherit;
+  font-size: 11.5px;
+  transition: border-color var(--ease), box-shadow var(--ease);
 }
-.a-input:focus { border-color: var(--accent); outline: none; }
-.a-history-item { padding: 3px 0; overflow-wrap: anywhere; }
+.a-input::placeholder { color: var(--faint); }
+.a-input:hover { border-color: var(--border-strong); }
+.a-input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); outline: none; }
+.a-history-item { padding: 4px 0; overflow-wrap: anywhere; }
 .a-history-item + .a-history-item { border-top: 1px solid var(--border); }
-.a-history-time { color: var(--muted); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.a-history-time { color: var(--faint); margin-right: 4px; font-variant-numeric: tabular-nums; }
 .a-history-item.err { color: var(--err); }
 .a-history-fb { color: var(--warn); }
-.a-history-empty { color: var(--muted); }
+.a-history-empty { color: var(--faint); }
 
 /* --- The resize grip ------------------------------------------------------
  * A Figma plugin window is whatever size the plugin asks for; there is no
@@ -318,12 +535,13 @@ body {
   height: 16px;
   cursor: nwse-resize;
   z-index: 10;
-  color: var(--muted);
+  color: var(--faint);
   opacity: .6;
+  transition: opacity var(--ease), color var(--ease);
 }
 .a-grip:hover { opacity: 1; color: var(--accent); }
 .a-grip svg { display: block; }
 
 @media (prefers-reduced-motion: reduce) {
-  .a-target, .a-scale { transition: none; }
+  * { transition: none !important; }
 }

@@ -998,4 +998,7 @@ function uuid(): string {
 connect();
 renderDiagnostics();
 updateOptionsNote();
+// The dropdowns drawn like the rest of the UI (packages/ui-kit/select.js, inlined ahead of this script).
+const lazySelect = (window as unknown as { LazyLordSelect?: { enhance(doc: unknown): void } }).LazyLordSelect;
+if (lazySelect) lazySelect.enhance(document);
 parent.postMessage({ pluginMessage: { type: "ready" } }, "*");

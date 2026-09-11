@@ -27,6 +27,8 @@ const uiHtmlTemplate = readFileSync(resolve(root, "src/ui.html"), "utf8");
 // The one stylesheet both front ends wear. Figma only loads a single HTML
 // file, so it is inlined here; the CEP panel links a synced copy.
 const sharedCss = readFileSync(resolve(root, "../ui-kit/lazylord.css"), "utf8");
+// The dropdowns, shared with the panel the same way.
+const sharedSelect = readFileSync(resolve(root, "../ui-kit/select.js"), "utf8");
 
 async function buildUi() {
   const result = await build({
@@ -40,6 +42,7 @@ async function buildUi() {
   const js = result.outputFiles[0].text;
   const html = uiHtmlTemplate
     .replace("/*__LAZYLORD_UI_CSS__*/", () => sharedCss)
+    .replace("/*__LAZYLORD_UI_SELECT__*/", () => sharedSelect)
     .replace("/*__LAZYLORD_UI_JS__*/", () => js);
   writeFileSync(resolve(dist, "ui.html"), html);
   console.log("built dist/ui.html");

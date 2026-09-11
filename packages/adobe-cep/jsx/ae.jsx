@@ -1237,6 +1237,48 @@ LazyLord._ae_font = function (prop, layer) {
   return false;
 };
 
+/**
+ * Per-character styles, through TextDocument.characterRange (After Effects
+ * 24.3 and newer): each run's size, colour, tracking and font are set on its
+ * range, and the document is written back once.
+ */
+LazyLord._ae_textRuns = function (prop, layer) {
+  var runs = LazyLord.fullTextRuns(layer);
+  if (!runs.length) return;
+  var name = layer.name || "Text";
+  var td = prop.value;
+  if (typeof td.characterRange !== "function") {
+    LazyLord.warn(name, "Mixed character styles need After Effects 24.3 or newer, so the whole text uses its first style", "approximated");
+    return;
+  }
+  var lost = [], deco = false;
+  for (var i = 0; i < runs.length; i++) {
+    var r = runs[i];
+    var cr;
+    try { cr = td.characterRange(r.start, r.end); } catch (e) { lost.push("a character range"); continue; }
+    try { cr.fontSize = r.fontSize; } catch (e1) { lost.push("sizes"); }
+    try { cr.applyFill = true; cr.fillColor = [r.color.r || 0, r.color.g || 0, r.color.b || 0]; } catch (e2) { lost.push("colours"); }
+    try { cr.tracking = (r.letterSpacing / (r.fontSize || 24)) * 1000; } catch (e3) { lost.push("letter spacing"); }
+    if (r.fontFamily) {
+      var names = LazyLord._ae_fontNames(r.fontFamily, r.fontStyle);
+      try { if (names.length) cr.font = names[0]; } catch (e4) { lost.push("fonts"); }
+    }
+    if (r.decoration !== (layer.decoration || "none")) deco = true;
+  }
+  prop.setValue(td);
+  if (lost.length) {
+    LazyLord.warn(name, "Some mixed character styles could not be applied (" + LazyLord._ae_unique(lost).join(", ") + ")", "approximated");
+  }
+  if (deco) LazyLord.warn(name, "Underline and strikethrough on part of the text are not rebuilt in After Effects", "approximated");
+};
+
+/** A list without repeats, first occurrence kept. */
+LazyLord._ae_unique = function (list) {
+  var out = [], seen = {};
+  for (var i = 0; i < list.length; i++) if (!seen[list[i]]) { seen[list[i]] = true; out.push(list[i]); }
+  return out;
+};
+
 LazyLord._ae_text = function (comp, layer) {
   var name = layer.name || "Text";
   var tl = comp.layers.addText(layer.characters || "");
@@ -1271,6 +1313,7 @@ LazyLord._ae_text = function (comp, layer) {
     prop.setValue(td);
     // The font goes last: it is set by PostScript name and checked by reading back.
     LazyLord._ae_font(prop, layer);
+    LazyLord._ae_textRuns(prop, layer);
 
     // fillColor has no alpha, so the colour's alpha joins the layer opacity:
     // exact, as the text has no stroke.

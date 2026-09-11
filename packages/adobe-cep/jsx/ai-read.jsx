@@ -1602,11 +1602,7 @@ LazyLord._air_text = function (ctx, tf) {
     baseline = anchor[1];
   }
 
-  if (LazyLord._air_mixedStyle(tf)) {
-    LazyLord.warn(name, "Mixed character styling flattened to the first character's style", "approximated");
-  }
-
-  return {
+  var out = {
     id: LazyLord._air_id(ctx, tf),
     name: name,
     type: "text",
@@ -1622,6 +1618,57 @@ LazyLord._air_text = function (ctx, tf) {
     baseline: baseline,
     anchorX: anchorX
   };
+  // Mixed character styles travel as runs rather than being flattened.
+  var runs = LazyLord._air_textRuns(tf, name, size);
+  if (runs) out.runs = runs;
+  return out;
+};
+
+/**
+ * Per-character styles: consecutive characters sharing font, size, colour,
+ * tracking and decoration become one run, in the IR's units. Sizes follow the
+ * same scale as the text's own (a scaled frame scales its characters). null
+ * when the whole text has one style, or its characters cannot be read.
+ */
+LazyLord._air_textRuns = function (tf, name, size) {
+  var chars = null;
+  try { chars = tf.textRange.characters; } catch (e) {}
+  if (!chars || typeof chars.length !== "number" || chars.length < 2) return null;
+  var raw = 0;
+  try { raw = tf.textRange.characterAttributes.size; } catch (e0) {}
+  var factor = (LazyLord._air_num(raw) && raw > 0) ? size / raw : 1;
+
+  var runs = [], cur = null;
+  for (var i = 0; i < chars.length; i++) {
+    var st = {};
+    try {
+      var a = chars[i].characterAttributes;
+      st.fontSize = a.size * factor;
+      try { st.fontFamily = a.textFont.family; st.fontStyle = a.textFont.style; } catch (eF) {}
+      var p = null;
+      try { p = LazyLord._air_color(a.fillColor, 100, name); } catch (eC) {}
+      if (p && p.color) st.color = p.color;
+      st.letterSpacing = ((a.tracking || 0) / 1000) * st.fontSize;
+      st.decoration = a.underline ? "underline" : (a.strikeThrough ? "strikethrough" : "none");
+    } catch (eA) {
+      LazyLord.warn(name, "The text's character styles could not be read, so it keeps one style", "approximated");
+      return null;
+    }
+    var c = st.color;
+    var key = [st.fontFamily, st.fontStyle, st.fontSize, c ? [c.r, c.g, c.b, c.a].join(",") : "", st.letterSpacing, st.decoration].join("|");
+    if (cur && cur.key === key) { cur.end = i + 1; continue; }
+    cur = { key: key, start: i, end: i + 1, st: st };
+    runs.push(cur);
+  }
+  if (runs.length < 2) return null;
+
+  var out = [];
+  for (var r = 0; r < runs.length; r++) {
+    var run = { start: runs[r].start, end: runs[r].end };
+    for (var k in runs[r].st) if (runs[r].st.hasOwnProperty(k)) run[k] = runs[r].st[k];
+    out.push(run);
+  }
+  return out;
 };
 
 /** Auto leading as a percentage of the font size: the paragraph's own, else Illustrator's default 120. */
@@ -1632,19 +1679,6 @@ LazyLord._air_autoLeading = function (tf) {
     if (LazyLord._air_num(v) && v > 0) pct = v;
   } catch (e) {}
   return pct;
-};
-
-/** Cheap check: do the first and last characters share size, font and colour? */
-LazyLord._air_mixedStyle = function (tf) {
-  try {
-    var chars = tf.textRange.characters;
-    if (chars.length < 2) return false;
-    var a = chars[0].characterAttributes;
-    var b = chars[chars.length - 1].characterAttributes;
-    if (a.size !== b.size) return true;
-    if (a.textFont.name !== b.textFont.name) return true;
-  } catch (e) {}
-  return false;
 };
 
 /* -------------------------------------------------------------------------

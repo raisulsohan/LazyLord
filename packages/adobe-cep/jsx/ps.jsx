@@ -1118,6 +1118,54 @@ LazyLord._ps_rotate = function (lyr, frame, name) {
  * Text and images
  * ---------------------------------------------------------------------- */
 
+/**
+ * Per-character styles. The DOM's textItem holds one style, so the text
+ * layer's descriptor is read back and its textStyleRange list replaced — one
+ * range per run, covering every character — through ActionManager.
+ */
+LazyLord._ps_textRuns = function (psDoc, artLayer, layer) {
+  var runs = LazyLord.fullTextRuns(layer);
+  if (!runs.length) return;
+  var name = layer.name || "Text";
+  try {
+    var s2t = stringIDToTypeID, c2t = charIDToTypeID;
+    psDoc.activeLayer = artLayer;
+    var ref = new ActionReference();
+    ref.putEnumerated(c2t("Lyr "), c2t("Ordn"), c2t("Trgt"));
+    var textKey = executeActionGet(ref).getObjectValue(s2t("textKey"));
+    // Text sizes are points; the IR's are pixels.
+    var toPt = 72 / (Number(psDoc.resolution) || 72);
+    var list = new ActionList();
+    for (var i = 0; i < runs.length; i++) {
+      var r = runs[i];
+      var st = new ActionDescriptor();
+      if (r.fontFamily) st.putString(s2t("fontPostScriptName"), LazyLord._ps_font(r.fontFamily, r.fontStyle));
+      st.putUnitDouble(s2t("size"), c2t("#Pnt"), r.fontSize * toPt);
+      var cd = new ActionDescriptor();
+      cd.putDouble(c2t("Rd  "), Math.round((r.color.r || 0) * 255));
+      cd.putDouble(c2t("Grn "), Math.round((r.color.g || 0) * 255));
+      cd.putDouble(c2t("Bl  "), Math.round((r.color.b || 0) * 255));
+      st.putObject(s2t("color"), c2t("RGBC"), cd);
+      st.putInteger(s2t("tracking"), Math.round((r.letterSpacing / (r.fontSize || 24)) * 1000));
+      if (r.decoration === "underline") st.putEnumerated(s2t("underline"), s2t("underline"), s2t("underlineOnLeftInHorizontalText"));
+      if (r.decoration === "strikethrough") st.putEnumerated(s2t("strikethrough"), s2t("strikethrough"), s2t("xHeightStrikethroughOn"));
+      var range = new ActionDescriptor();
+      range.putInteger(s2t("from"), r.start);
+      range.putInteger(s2t("to"), r.end);
+      range.putObject(s2t("textStyle"), s2t("textStyle"), st);
+      list.putObject(s2t("textStyleRange"), range);
+    }
+    textKey.putList(s2t("textStyleRange"), list);
+    var set = new ActionDescriptor();
+    set.putReference(c2t("null"), ref);
+    set.putObject(c2t("T   "), s2t("textLayer"), textKey);
+    executeAction(c2t("setd"), set, DialogModes.NO);
+  } catch (e) {
+    LazyLord.warn(name, "Mixed character styles could not be applied (" + LazyLord._ps_msg(e) +
+      "), so the whole text uses its first style", "approximated");
+  }
+};
+
 LazyLord._ps_text = function (psDoc, layer) {
   var name = layer.name || "Text";
   var artLayer = psDoc.artLayers.add();
@@ -1149,6 +1197,8 @@ LazyLord._ps_text = function (psDoc, layer) {
     var jmap = { left: Justification.LEFT, center: Justification.CENTER, right: Justification.RIGHT, justified: Justification.CENTERJUSTIFIED };
     try { ti.justification = jmap[layer.textAlignHorizontal] || Justification.LEFT; }
     catch (eJ) { LazyLord.warn(name, "Text alignment could not be applied", "approximated"); }
+
+    LazyLord._ps_textRuns(psDoc, artLayer, layer);
 
     // Placed unrotated on its baseline; _ps_rotate then turns it about the
     // frame centre.

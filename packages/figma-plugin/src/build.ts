@@ -114,6 +114,11 @@ async function loadFonts(doc: Document, ctx: Ctx) {
       if (l.type === "text") {
         const f = { family: l.fontFamily || FALLBACK_FONT.family, style: l.fontStyle || "Regular" };
         wanted.set(`${f.family}|${f.style}`, f);
+        for (const r of l.runs || []) {
+          if (!r.fontFamily) continue;
+          const rf = { family: r.fontFamily, style: r.fontStyle || "Regular" };
+          wanted.set(`${rf.family}|${rf.style}`, rf);
+        }
       } else if (l.type === "group") {
         collect(l.children || []);
       }
@@ -228,6 +233,29 @@ function buildVector(layer: VectorLayer, ctx: Ctx, parent: BaseNode & ChildrenMi
   return node;
 }
 
+/** Per-character styles: each run's fields set on its range; unset fields keep the text's own. */
+function applyRuns(node: TextNode, layer: TextLayer, ctx: Ctx) {
+  const length = node.characters.length;
+  let missing = false;
+  for (const r of layer.runs || []) {
+    const s = Math.max(0, r.start);
+    const e = Math.min(length, r.end);
+    if (e <= s) continue;
+    if (r.fontFamily) {
+      const f = { family: r.fontFamily, style: r.fontStyle || "Regular" };
+      if (ctx.fonts.has(`${f.family}|${f.style}`)) node.setRangeFontName(s, e, f);
+      else missing = true;
+    }
+    if (typeof r.fontSize === "number" && r.fontSize > 0) node.setRangeFontSize(s, e, r.fontSize);
+    if (r.color) node.setRangeFills(s, e, [solidPaint(r.color)]);
+    if (typeof r.letterSpacing === "number") node.setRangeLetterSpacing(s, e, { unit: "PIXELS", value: r.letterSpacing });
+    if (r.decoration) {
+      node.setRangeTextDecoration(s, e, r.decoration === "underline" ? "UNDERLINE" : r.decoration === "strikethrough" ? "STRIKETHROUGH" : "NONE");
+    }
+  }
+  if (missing) warn(ctx, layer.name, "A font used in part of the text could not be loaded; that part keeps the text's font", "approximated");
+}
+
 function buildText(layer: TextLayer, ctx: Ctx, parent: BaseNode & ChildrenMixin): SceneNode | null {
   const wanted: FontName = {
     family: layer.fontFamily || FALLBACK_FONT.family,
@@ -251,6 +279,7 @@ function buildText(layer: TextLayer, ctx: Ctx, parent: BaseNode & ChildrenMixin)
 
   if (layer.letterSpacing) node.letterSpacing = { unit: "PIXELS", value: layer.letterSpacing };
   if (layer.lineHeight) node.lineHeight = { unit: "PIXELS", value: layer.lineHeight };
+  applyRuns(node, layer, ctx);
 
   const align = layer.textAlignHorizontal;
   if (align === "center") node.textAlignHorizontal = "CENTER";

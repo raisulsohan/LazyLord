@@ -1341,6 +1341,24 @@ const frameNode = (name, w, h, t, props = {}) =>
   ok("diag: inside stroke approximated", diag(doc, "Inside", "approximated", "Inside stroke"));
   ok("diag: extra fills approximated", diag(doc, "Two", "approximated", "2 visible fills"));
   ok("diag: mixed text outlined", diag(doc, "Mixed", "approximated", "outlines") && doc.layers.some((l) => l.name === "Mixed (outlined)" && l.type === "vector"));
+
+  // With Figma's styled-segments API, mixed text stays live, one run per stretch.
+  const seg = (start, end, style, size, fill, spacing, deco) => ({
+    start, end, fontName: { family: "Inter", style }, fontSize: size, fills: [fill],
+    letterSpacing: { unit: "PIXELS", value: spacing }, lineHeight: { unit: "AUTO" }, textCase: "ORIGINAL", textDecoration: deco,
+  });
+  const styled = textNode(100, 20, T(0), {
+    name: "Styled", characters: "Hello World", fontName: figma.mixed, fontSize: figma.mixed, fills: figma.mixed,
+    getStyledTextSegments: () => [seg(0, 6, "Regular", 12, solid(1, 0, 0), 0, "NONE"), seg(6, 11, "Bold", 20, solid(0, 0, 1), 1, "UNDERLINE")],
+  });
+  const sdoc = await docFor([styled]);
+  const st = sdoc.layers.find((l) => l.name === "Styled");
+  ok("runs: mixed text stays live text", st && st.type === "text", st && st.type);
+  ok("runs: the base style is the first stretch's", st && st.fontSize === 12 && st.fontStyle === "Regular" && near(st.color.r, 1));
+  ok("runs: one run per stretch, with its own style",
+    st && st.runs && st.runs.length === 2 && st.runs[1].start === 6 && st.runs[1].end === 11 && st.runs[1].fontStyle === "Bold" &&
+    st.runs[1].fontSize === 20 && near(st.runs[1].color.b, 1) && st.runs[1].decoration === "underline" && st.runs[1].letterSpacing === 1);
+  ok("runs: not reported as outlined", !diag(sdoc, "Styled", "approximated", "outlines"));
   ok(
     "diag: image fill on a frame skipped, nothing drawn for it",
     diag(doc, "Hero", "skipped", "Image fill") && !doc.layers.some((l) => l.id === imageFrame.id || l.id === imageFrame.id + ":fill") && !groupsIn(doc.tree).some((g) => g.id === imageFrame.id)
@@ -2188,6 +2206,18 @@ await block("ui, late prefs", async () => {
     ok("figma build: counted only what was made", r.layersCreated === 1, String(r.layersCreated));
   }
 }
+// Per-character styles: the shared helper every Adobe builder applies runs through.
+{
+  const base = { characters: "abcdef", fontFamily: "Inter", fontStyle: "Regular", fontSize: 10, color: { r: 0, g: 0, b: 0, a: 1 } };
+  const full = LL.fullTextRuns(Object.assign({}, base, { runs: [{ start: 2, end: 4, fontSize: 20 }] }));
+  ok("fullTextRuns: gaps take the base style, every field is set",
+    full.length === 3 && full[0].start === 0 && full[0].end === 2 && full[0].fontSize === 10 &&
+    full[1].fontSize === 20 && full[1].fontFamily === "Inter" && full[2].start === 4 && full[2].end === 6);
+  ok("fullTextRuns: nothing to apply without runs", LL.fullTextRuns(base).length === 0);
+  ok("fullTextRuns: a run past the text is cut to it",
+    LL.fullTextRuns(Object.assign({}, base, { characters: "abc", runs: [{ start: 1, end: 99, fontSize: 5 }] })).map((r) => r.end).join() === "1,3");
+}
+
 // Large transfers travel in chunks the receiver joins back together.
 {
   const big = { type: "transfer", id: "t-big", target: "aftereffects", document: { name: "x".repeat(5000), layers: [] } };

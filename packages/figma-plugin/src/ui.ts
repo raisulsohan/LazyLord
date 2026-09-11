@@ -3,7 +3,15 @@
  * Owns the WebSocket connection to the local bridge and drives the panel.
  */
 
-import { DEFAULT_BRIDGE_PORT, PROTOCOL_VERSION, countLeaves, roleLabel, transferOptions } from "@lazylord/core";
+import {
+  ChunkJoiner,
+  DEFAULT_BRIDGE_PORT,
+  PROTOCOL_VERSION,
+  chunkTransfer,
+  countLeaves,
+  roleLabel,
+  transferOptions,
+} from "@lazylord/core";
 import type { Diagnostic, Document, Message, Role, TransferMessage, TransferOptions } from "@lazylord/core";
 
 // Figma's manifest only accepts host names in allowedDomains (an IP address is
@@ -47,6 +55,28 @@ const pending = new Map<string, number>(); // transfer id -> timestamp
 
 /** Fallbacks for the last transfer, from Figma and from every host that answered. */
 let diagnostics: Array<Diagnostic & { from: string }> = [];
+
+// Presets and history live in figma.clientStorage (a plugin iframe has no
+// usable localStorage); the main thread loads them and saves what we post.
+type Settings = { place: string; scale: number; layout: string; hierarchy: string; existing: string; keyframes: string };
+type HistoryEntry = {
+  t: number; dir: "in" | "out"; peer: string; name: string; ok: boolean;
+  layers: number; updated: number; fallbacks: number; message: string;
+};
+const HISTORY_MAX = 25;
+let presets: Array<{ name: string; values: Settings }> = [];
+let history: HistoryEntry[] = [];
+/** transfer id -> the name it carried, for the history line its ack completes. */
+const sentNames = new Map<string, string>();
+/** incoming transfer id -> who sent what, for the line written once it is built. */
+const incoming = new Map<string, { peer: string; name: string }>();
+const presetSel = $<HTMLSelectElement>("#preset");
+const presetName = $<HTMLInputElement>("#preset-name");
+const presetSave = $<HTMLButtonElement>("#preset-save");
+const presetDelete = $<HTMLButtonElement>("#preset-delete");
+const historyList = $("#history-list");
+const historyCount = $("#history-count");
+const historyClear = $("#history-clear");
 
 // --- Bridge connection ----------------------------------------------------
 
@@ -119,8 +149,15 @@ function send(msg: Message) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
+const chunks = new ChunkJoiner();
+
 function onMessage(msg: Message) {
   switch (msg.type) {
+    case "chunk": {
+      const whole = chunks.add(msg);
+      if (whole) onMessage(whole);
+      break;
+    }
     case "welcome":
       peers = msg.peers.filter((p) => p !== "figma");
       renderPeers();
@@ -132,7 +169,8 @@ function onMessage(msg: Message) {
     case "ack": {
       pending.delete(msg.id);
       addDiagnostics(roleLabel(msg.from), msg.diagnostics);
-      if (batchAck(msg.id, !!msg.ok, msg.layersCreated ?? 0, msg.message || "", roleLabel(msg.from))) {
+      const inBatch = batchAck(msg.id, !!msg.ok, msg.layersCreated ?? 0, msg.message || "", roleLabel(msg.from));
+      if (inBatch) {
         // One frame of several: the batch keeps the status up to date.
       } else if (msg.ok) {
         const n = msg.diagnostics ? msg.diagnostics.length : 0;
@@ -141,6 +179,14 @@ function onMessage(msg: Message) {
       } else {
         setStatus(`${roleLabel(msg.from)}: ${msg.message || "transfer failed"}`, "err");
       }
+      if (!inBatch) {
+        recordHistory({
+          dir: "out", peer: roleLabel(msg.from), name: sentNames.get(msg.id) || "", ok: !!msg.ok,
+          layers: msg.layersCreated ?? 0, updated: (msg as any).layersUpdated ?? 0,
+          fallbacks: msg.diagnostics ? msg.diagnostics.length : 0, message: msg.ok ? "" : msg.message || "",
+        });
+      }
+      sentNames.delete(msg.id);
       updateSendButton();
       break;
     }
@@ -149,6 +195,7 @@ function onMessage(msg: Message) {
       addDiagnostics(roleLabel((msg.document && msg.document.source) as Role), msg.document && msg.document.diagnostics);
       const n = countLeaves(msg.document && msg.document.layers);
       setStatus(`Receiving ${n} layer${n === 1 ? "" : "s"} from ${roleLabel((msg.document && msg.document.source) as Role)}…`, "");
+      incoming.set(msg.id, { peer: roleLabel((msg.document && msg.document.source) as Role), name: (msg.document && msg.document.name) || "" });
       parent.postMessage({ pluginMessage: { type: "receive", id: msg.id, document: msg.document } }, "*");
       break;
     }
@@ -333,6 +380,144 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
   updateSendButton();
 }
 
+// --- Presets --------------------------------------------------------------
+
+function currentSettings(): Settings {
+  const o = currentOptions();
+  return { place: placeSel.value, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes };
+}
+
+function setSelect(sel: HTMLSelectElement, value: unknown) {
+  for (const opt of Array.from(sel.options)) if (opt.value === value) sel.value = String(value);
+}
+
+function applySettings(s: Partial<Settings>) {
+  setSelect(placeSel, s.place);
+  setSelect(layoutSel, s.layout);
+  setSelect(hierarchySel, s.hierarchy);
+  setSelect(existingSel, s.existing);
+  setSelect(keyframesSel, s.keyframes);
+  if (SCALES.indexOf(Number(s.scale)) >= 0) {
+    scale = Number(s.scale);
+    selectButton(scalesEl, ".a-scale", "scale", String(scale));
+  }
+  prefsApplied = true;
+  updatePlaceNote();
+  updateOptionsNote();
+  savePrefs();
+}
+
+function renderPresets(selected: string) {
+  presetSel.textContent = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = presets.length ? "—" : "No presets yet";
+  presetSel.appendChild(none);
+  for (const p of presets) {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.name;
+    presetSel.appendChild(opt);
+  }
+  presetSel.value = presets.some((p) => p.name === selected) ? selected : "";
+  presetDelete.disabled = !presetSel.value;
+}
+
+function saveList(kind: "presets" | "history", list: unknown[]) {
+  parent.postMessage({ pluginMessage: { type: "save-list", kind, list } }, "*");
+}
+
+// --- History ----------------------------------------------------------------
+
+function recordHistory(e: Omit<HistoryEntry, "t">) {
+  history.unshift(Object.assign({ t: Date.now() }, e));
+  if (history.length > HISTORY_MAX) history.length = HISTORY_MAX;
+  saveList("history", history);
+  renderHistory();
+}
+
+function historyTime(t: number): string {
+  const d = new Date(t);
+  const two = (n: number) => (n < 10 ? "0" : "") + n;
+  const time = `${two(d.getHours())}:${two(d.getMinutes())}`;
+  return d.toDateString() === new Date().toDateString() ? time : `${two(d.getDate())}/${two(d.getMonth() + 1)} ${time}`;
+}
+
+function renderHistory() {
+  historyList.textContent = "";
+  historyCount.textContent = history.length ? String(history.length) : "";
+  if (!history.length) {
+    const li = document.createElement("li");
+    li.className = "a-history-item a-history-empty";
+    li.textContent = "Nothing sent or received yet.";
+    historyList.appendChild(li);
+    return;
+  }
+  for (const e of history) {
+    const li = document.createElement("li");
+    li.className = "a-history-item" + (e.ok ? "" : " err");
+    const time = document.createElement("span");
+    time.className = "a-history-time";
+    time.textContent = historyTime(e.t);
+    li.appendChild(time);
+    const parts = [e.dir === "in" ? `${e.peer} → Figma` : `Figma → ${e.peer}`];
+    if (e.name) parts.push(`"${e.name}"`);
+    if (!e.ok) parts.push("failed" + (e.message ? `: ${e.message}` : ""));
+    else parts.push(`${e.layers} layer${e.layers === 1 ? "" : "s"}` + (e.updated ? ` (${e.updated} updated)` : ""));
+    li.appendChild(document.createTextNode(parts.join(" · ")));
+    if (e.ok && e.fallbacks) {
+      const fb = document.createElement("span");
+      fb.className = "a-history-fb";
+      fb.textContent = ` · ${e.fallbacks} fallback${e.fallbacks === 1 ? "" : "s"}`;
+      li.appendChild(fb);
+    }
+    historyList.appendChild(li);
+  }
+}
+
+presetSel.addEventListener("change", () => {
+  presetDelete.disabled = !presetSel.value;
+  const p = presets.find((x) => x.name === presetSel.value);
+  if (p) {
+    applySettings(p.values);
+    setStatus(`Preset "${p.name}" applied.`, "");
+  }
+});
+
+presetSave.addEventListener("click", () => {
+  const name = presetName.value.trim() || presetSel.value;
+  if (!name) {
+    setStatus("Type a name for the preset first.", "err");
+    return;
+  }
+  const entry = { name, values: currentSettings() };
+  const at = presets.findIndex((p) => p.name === name);
+  if (at >= 0) presets[at] = entry;
+  else presets.push(entry);
+  saveList("presets", presets);
+  presetName.value = "";
+  renderPresets(name);
+  setStatus(`${at >= 0 ? "Updated" : "Saved"} preset "${name}".`, "ok");
+});
+
+presetDelete.addEventListener("click", () => {
+  const name = presetSel.value;
+  if (!name) return;
+  presets = presets.filter((p) => p.name !== name);
+  saveList("presets", presets);
+  renderPresets("");
+  setStatus(`Deleted preset "${name}".`, "");
+});
+
+historyClear.addEventListener("click", () => {
+  history = [];
+  saveList("history", history);
+  renderHistory();
+});
+
+renderPresets("");
+renderHistory();
+
 // --- Events ---------------------------------------------------------------
 
 targetsEl.addEventListener("click", (e) => {
@@ -384,6 +569,12 @@ window.onmessage = (event: MessageEvent) => {
   if (msg.type === "selection") {
     selectionCount = msg.count;
     updateSendButton();
+  } else if (msg.type === "presets") {
+    presets = (Array.isArray(msg.list) ? msg.list : []).filter((p: any) => p && typeof p.name === "string" && p.values);
+    renderPresets(presetSel.value);
+  } else if (msg.type === "history") {
+    history = (Array.isArray(msg.list) ? msg.list : []).filter((e: any) => e && typeof e.t === "number").slice(0, HISTORY_MAX);
+    renderHistory();
   } else if (msg.type === "prefs") {
     // Saved choices arrive once at start-up; never override one the user has made since.
     if (!prefsApplied) {
@@ -406,6 +597,12 @@ window.onmessage = (event: MessageEvent) => {
     // The main thread finished rebuilding a transfer: tell the sender.
     const r = msg.result || { ok: false, layersCreated: 0, message: "", diagnostics: [] };
     addDiagnostics("Figma", r.diagnostics);
+    const from = incoming.get(msg.id) || { peer: "Another app", name: "" };
+    incoming.delete(msg.id);
+    recordHistory({
+      dir: "in", peer: from.peer, name: from.name, ok: !!r.ok, layers: r.layersCreated || 0,
+      updated: r.layersUpdated || 0, fallbacks: r.diagnostics ? r.diagnostics.length : 0, message: r.ok ? "" : r.message || "",
+    });
     if (r.ok) {
       const extra = r.message ? ` ${r.message}` : "";
       setStatus(`Rebuilt ${r.layersCreated} layer${r.layersCreated === 1 ? "" : "s"}.${extra}`, "ok");
@@ -431,8 +628,10 @@ function dispatchTransfer(document: Document, tgt?: Role, index = 0) {
   const id = uuid();
   const transfer: TransferMessage = { type: "transfer", id, target: tgt, document };
   pending.set(id, Date.now());
+  sentNames.set(id, document.name || "");
   if (batch) batch.ids.add(id);
-  send(transfer);
+  // A large transfer (images travel as base64) goes in pieces the receiver joins.
+  for (const part of chunkTransfer(transfer)) send(part);
   // Leaves are what a target builds; the groups around them are not counted.
   const n = countLeaves(document.layers);
   setStatus(`Sent ${n} layer${n === 1 ? "" : "s"}…`, "");
@@ -483,6 +682,10 @@ function batchAck(id: string, ok: boolean, layers: number, message: string, from
     const text = `${who}: ${built} of ${batch.total} frames built as separate ${frameUnit()}s, ${batch.layers} layer(s).` +
       (batch.failures.length ? ` Failed: ${batch.failures.join("; ")}` : "");
     setStatus(text, batch.failures.length ? "err" : "ok");
+    recordHistory({
+      dir: "out", peer: who, name: `${batch.total} frames`, ok: batch.failures.length === 0,
+      layers: batch.layers, updated: 0, fallbacks: 0, message: batch.failures.join("; "),
+    });
     batch = null;
   }
   return true;

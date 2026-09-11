@@ -282,6 +282,27 @@ body {
   cursor: pointer;
 }
 .a-ghost:hover { border-color: var(--accent); }
+.a-ghost:disabled { color: var(--muted); border-color: var(--border); cursor: not-allowed; }
+
+/* --- Presets and transfer history ----------------------------------------- */
+
+.a-input {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+.a-input:focus { border-color: var(--accent); outline: none; }
+.a-history-item { padding: 3px 0; overflow-wrap: anywhere; }
+.a-history-item + .a-history-item { border-top: 1px solid var(--border); }
+.a-history-time { color: var(--muted); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.a-history-item.err { color: var(--err); }
+.a-history-fb { color: var(--warn); }
+.a-history-empty { color: var(--muted); }
 
 /* --- The resize grip ------------------------------------------------------
  * A Figma plugin window is whatever size the plugin asks for; there is no

@@ -71,6 +71,13 @@
   var scalesEl = document.getElementById("push-scales");
   var optsNote = document.getElementById("push-opts-note");
   var diagCard = document.getElementById("diag-card");
+  var presetSel = document.getElementById("push-preset");
+  var presetName = document.getElementById("push-preset-name");
+  var presetSave = document.getElementById("push-preset-save");
+  var presetDelete = document.getElementById("push-preset-delete");
+  var historyList = document.getElementById("history-list");
+  var historyCount = document.getElementById("history-count");
+  var historyClear = document.getElementById("history-clear");
   var diagHead = document.getElementById("diag-head");
   var diagTitle = document.getElementById("diag-title") || diagHead;
   var diagCounts = document.getElementById("diag-counts");
@@ -229,6 +236,191 @@
     if (scalesEl && contains(SCALES, String(prefs.scale))) selectChip(scalesEl, "scale", prefs.scale);
     updateDestNote();
     updateOptionsNote();
+  }
+
+  // --- Presets and history -------------------------------------------------
+  // Both are lists kept per host role next to the preferences, in the same
+  // storage and with the same tolerance for a profile that refuses to store.
+
+  var PRESETS_KEY = "lazylord.presets." + role;
+  var HISTORY_KEY = "lazylord.history." + role;
+  var HISTORY_MAX = 25;
+
+  function loadList(key) {
+    var st = prefsStore();
+    if (!st) return [];
+    try {
+      var parsed = JSON.parse(st.getItem(key) || "[]");
+      return isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function saveList(key, list) {
+    var st = prefsStore();
+    if (!st) {
+      prefsProblem("Preferences cannot be stored here; they will reset when the panel closes.");
+      return;
+    }
+    try { st.setItem(key, JSON.stringify(list)); } catch (e) {
+      prefsProblem("Preferences could not be saved; they will reset when the panel closes.");
+    }
+  }
+
+  function trimText(s) {
+    return String(s || "").replace(/^\s+|\s+$/g, "");
+  }
+
+  /** Everything a preset holds: the Destination, Image scale and Options shown now. */
+  function currentSettings() {
+    var o = pushOptions();
+    return {
+      destination: destinationSel ? destinationSel.value : "active",
+      scale: Number(activeChip(scalesEl, "scale") || 2),
+      layout: o.layout,
+      hierarchy: o.hierarchy,
+      existing: o.existing,
+      keyframes: o.keyframes
+    };
+  }
+
+  /** Put a preset's values into the card and remember them as the current choices. */
+  function applySettings(s) {
+    if (destinationSel && contains(DESTINATIONS, s.destination)) { destinationSel.value = s.destination; savePref("destination", s.destination); }
+    if (scalesEl && contains(SCALES, String(s.scale))) { selectChip(scalesEl, "scale", s.scale); savePref("scale", Number(s.scale)); }
+    if (layoutSel && contains(LAYOUTS, s.layout)) { layoutSel.value = s.layout; savePref("layout", s.layout); }
+    if (hierarchySel && contains(HIERARCHIES, s.hierarchy)) { hierarchySel.value = s.hierarchy; savePref("hierarchy", s.hierarchy); }
+    if (existingSel && contains(EXISTING, s.existing)) { existingSel.value = s.existing; savePref("existing", s.existing); }
+    if (keyframesSel && contains(KEYFRAMES, s.keyframes)) { keyframesSel.value = s.keyframes; savePref("keyframes", s.keyframes); }
+    updateDestNote();
+    updateOptionsNote();
+  }
+
+  function findPreset(list, name) {
+    for (var i = 0; i < list.length; i++) if (list[i] && list[i].name === name) return i;
+    return -1;
+  }
+
+  function renderPresets(selected) {
+    if (!presetSel) return;
+    var list = loadList(PRESETS_KEY);
+    clearChildren(presetSel);
+    var none = document.createElement("option");
+    none.value = "";
+    none.textContent = list.length ? "—" : "No presets yet";
+    presetSel.appendChild(none);
+    for (var i = 0; i < list.length; i++) {
+      if (!list[i] || typeof list[i].name !== "string") continue;
+      var opt = document.createElement("option");
+      opt.value = list[i].name;
+      opt.textContent = list[i].name;
+      presetSel.appendChild(opt);
+    }
+    presetSel.value = selected && findPreset(list, selected) >= 0 ? selected : "";
+    if (presetDelete) presetDelete.disabled = !presetSel.value;
+  }
+
+  function savePreset() {
+    var name = trimText(presetName && presetName.value) || trimText(presetSel && presetSel.value);
+    if (!name) { log("Type a name for the preset first.", "warn"); return; }
+    var list = loadList(PRESETS_KEY);
+    var entry = { name: name, values: currentSettings() };
+    var at = findPreset(list, name);
+    if (at >= 0) list[at] = entry; else list.push(entry);
+    saveList(PRESETS_KEY, list);
+    if (presetName) presetName.value = "";
+    renderPresets(name);
+    log((at >= 0 ? "Updated" : "Saved") + " preset \"" + name + "\".");
+  }
+
+  function usePreset(name) {
+    if (presetDelete) presetDelete.disabled = !name;
+    if (!name) return;
+    var list = loadList(PRESETS_KEY);
+    var at = findPreset(list, name);
+    if (at < 0) return;
+    applySettings(list[at].values || {});
+    log("Preset \"" + name + "\" applied.");
+  }
+
+  function deletePreset() {
+    var name = presetSel ? presetSel.value : "";
+    if (!name) return;
+    var list = loadList(PRESETS_KEY);
+    var at = findPreset(list, name);
+    if (at >= 0) list.splice(at, 1);
+    saveList(PRESETS_KEY, list);
+    renderPresets("");
+    log("Deleted preset \"" + name + "\".");
+  }
+
+  /**
+   * One finished transfer, newest first: { dir: "in" | "out", peer, name, ok,
+   * layers, updated, fallbacks, message }. Only counts and names are kept.
+   */
+  function recordHistory(entry) {
+    entry.t = new Date().getTime();
+    var list = loadList(HISTORY_KEY);
+    list.unshift(entry);
+    if (list.length > HISTORY_MAX) list.length = HISTORY_MAX;
+    saveList(HISTORY_KEY, list);
+    renderHistory();
+  }
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  function historyTime(t) {
+    var d = new Date(t);
+    var now = new Date();
+    var time = pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+    if (d.toDateString() === now.toDateString()) return time;
+    return pad2(d.getDate()) + "/" + pad2(d.getMonth() + 1) + " " + time;
+  }
+
+  function historyText(e) {
+    var route = e.dir === "in" ? e.peer + " → here" : "here → " + e.peer;
+    var parts = [route];
+    if (e.name) parts.push("\"" + e.name + "\"");
+    if (!e.ok) {
+      parts.push("failed" + (e.message ? ": " + e.message : ""));
+      return parts.join(" · ");
+    }
+    var built = plural(e.layers || 0, "layer");
+    if (e.updated) built += " (" + e.updated + " updated)";
+    parts.push(built);
+    return parts.join(" · ");
+  }
+
+  function renderHistory() {
+    if (!historyList) return;
+    var list = loadList(HISTORY_KEY);
+    clearChildren(historyList);
+    if (historyCount) historyCount.textContent = list.length ? String(list.length) : "";
+    if (!list.length) {
+      var empty = document.createElement("li");
+      empty.className = "a-history-item a-history-empty";
+      empty.textContent = "Nothing sent or received yet.";
+      historyList.appendChild(empty);
+      return;
+    }
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i] || {};
+      var li = document.createElement("li");
+      li.className = "a-history-item" + (e.ok ? "" : " err");
+      var time = document.createElement("span");
+      time.className = "a-history-time";
+      time.textContent = historyTime(e.t || 0);
+      li.appendChild(time);
+      li.appendChild(document.createTextNode(historyText(e)));
+      if (e.ok && e.fallbacks) {
+        var fb = document.createElement("span");
+        fb.className = "a-history-fb";
+        fb.textContent = " · " + plural(e.fallbacks, "fallback");
+        li.appendChild(fb);
+      }
+      historyList.appendChild(li);
+    }
   }
 
   // --- Transfer options ---------------------------------------------------
@@ -471,8 +663,55 @@
     if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
   }
 
+  // --- Large transfers -----------------------------------------------------
+  // Mirrors chunkTransfer / ChunkJoiner in packages/core/src/protocol.ts: a
+  // transfer longer than CHUNK_THRESHOLD characters travels as CHUNK_SIZE
+  // pieces the receiver joins back together.
+
+  var CHUNK_THRESHOLD = 4 * 1024 * 1024;
+  var CHUNK_SIZE = 1024 * 1024;
+  var CHUNK_TIMEOUT_MS = 2 * 60 * 1000;
+  var chunksOpen = {};
+
+  function sendTransfer(msg) {
+    var text = JSON.stringify(msg);
+    if (text.length <= CHUNK_THRESHOLD) { send(msg); return 1; }
+    var total = Math.ceil(text.length / CHUNK_SIZE);
+    for (var i = 0; i < total; i++) {
+      send({ type: "chunk", id: msg.id, target: msg.target, index: i, total: total,
+        data: text.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
+    }
+    return total;
+  }
+
+  /** Add one chunk; the whole transfer once its last piece is in, else null. */
+  function joinChunk(c, now) {
+    now = now || new Date().getTime();
+    for (var k in chunksOpen) {
+      if (Object.prototype.hasOwnProperty.call(chunksOpen, k) && now - chunksOpen[k].at > CHUNK_TIMEOUT_MS) delete chunksOpen[k];
+    }
+    if (!c || typeof c.id !== "string" || !(c.total > 0) || !(c.index >= 0 && c.index < c.total)) return null;
+    var rec = Object.prototype.hasOwnProperty.call(chunksOpen, c.id) ? chunksOpen[c.id] : null;
+    if (!rec || rec.total !== c.total) rec = chunksOpen[c.id] = { total: c.total, got: 0, data: [], at: now };
+    rec.at = now;
+    if (rec.data[c.index] === undefined) rec.got++;
+    rec.data[c.index] = String(c.data || "");
+    if (rec.got < rec.total) return null;
+    delete chunksOpen[c.id];
+    try {
+      var whole = JSON.parse(rec.data.join(""));
+      return whole && whole.type === "transfer" ? whole : null;
+    } catch (e) {
+      log("A large transfer arrived damaged and was dropped.", "err");
+      return null;
+    }
+  }
+
   function onMessage(msg) {
-    if (msg.type === "transfer") {
+    if (msg.type === "chunk") {
+      var joined = joinChunk(msg);
+      if (joined) onMessage(joined);
+    } else if (msg.type === "transfer") {
       if (!autoEl.checked) { declineTransfer(msg); return; }
       handleTransfer(msg);
     } else if (msg.type === "welcome" || msg.type === "peers") {
@@ -594,9 +833,59 @@
 
   // --- Filesystem ---------------------------------------------------------
 
+  // --- Temporary files ----------------------------------------------------
+  // Every transfer writes its IR and images into <temp>/lazylord/<id>. Once it
+  // is built nothing needs them — After Effects copies generated images next
+  // to a saved project, Illustrator embeds them, Photoshop places them as smart
+  // objects — except footage in an After Effects project that was never saved,
+  // which still links there. So only folders older than a week are removed, at
+  // start-up, and the panel says how many.
+
+  var TEMP_KEEP_DAYS = 7;
+
+  function tempBase() {
+    var sep = nodePath ? nodePath.sep : "/";
+    return (os ? os.tmpdir() : cs.getSystemPath(SystemPath.USER_DATA)) + sep + "lazylord";
+  }
+
+  /** Delete a file or folder tree; links are removed, never followed. */
+  function removeTree(p) {
+    var st = fs.lstatSync(p);
+    if (st.isDirectory() && !st.isSymbolicLink()) {
+      var kids = fs.readdirSync(p);
+      for (var i = 0; i < kids.length; i++) removeTree(nodePath.join(p, kids[i]));
+      fs.rmdirSync(p);
+    } else {
+      fs.unlinkSync(p);
+    }
+  }
+
+  function cleanTempFiles(now) {
+    if (!fs || !nodePath) return 0;
+    var base = tempBase();
+    var names;
+    try { names = fs.readdirSync(base); } catch (e) { return 0; } // nothing written yet
+    var cutoff = (now || new Date().getTime()) - TEMP_KEEP_DAYS * 24 * 3600 * 1000;
+    var removed = 0;
+    for (var i = 0; i < names.length; i++) {
+      var dir = nodePath.join(base, names[i]);
+      try {
+        var st = fs.statSync(dir);
+        if (!st.isDirectory() || st.mtime.getTime() >= cutoff) continue;
+        removeTree(dir);
+        removed++;
+      } catch (e) {} // in use by another panel, or already gone: next start-up tries again
+    }
+    if (removed) {
+      log("Removed " + plural(removed, "transfer folder") + " older than " + TEMP_KEEP_DAYS +
+        " days from the temp folder.");
+    }
+    return removed;
+  }
+
   function tempDir(id) {
     var sep = nodePath ? nodePath.sep : "/";
-    var base = (os ? os.tmpdir() : cs.getSystemPath(SystemPath.USER_DATA)) + sep + "lazylord";
+    var base = tempBase();
     var dir = base + sep + id;
     if (fs) {
       try { fs.mkdirSync(base, { recursive: true }); } catch (e) {}
@@ -727,10 +1016,12 @@
 
       pendingPush = id;
       pendingPushInfo = {
+        name: doc.name || "",
         images: imageStats(doc),
         diagnostics: doc.diagnostics || r.diagnostics || []
       };
-      send({ type: "transfer", id: id, target: target, document: doc });
+      var parts = sendTransfer({ type: "transfer", id: id, target: target, document: doc });
+      if (parts > 1) log("Large transfer: sent in " + parts + " pieces.");
       // Counted here, not taken from the reader's layerCount, which only sees
       // the top level: layers inside groups count too.
       var note = optionsNote(options);
@@ -783,6 +1074,11 @@
       log((late ? "Late reply from " + roleLabel(msg.from) + ": " : "") +
         (msg.message || "The transfer failed."), "err");
     }
+    recordHistory({
+      dir: "out", peer: roleLabel(msg.from), name: info.name || "", ok: !!msg.ok,
+      layers: msg.layersCreated || 0, updated: msg.layersUpdated || 0,
+      fallbacks: info.diagnostics.length + hostDiags.length, message: msg.ok ? "" : (msg.message || "")
+    });
   }
 
   /** Hand back (once) what a timed-out push sent, or null. */
@@ -886,10 +1182,16 @@
         } else {
           log("Build failed: " + (result.message || "unknown error"), "err");
         }
+        recordHistory({
+          dir: "in", peer: roleLabel(doc.source), name: doc.name || "", ok: !!result.ok,
+          layers: result.layersCreated || 0, updated: result.layersUpdated || 0,
+          fallbacks: shownDiags.length + buildDiags.length, message: result.ok ? "" : (result.message || "unknown error")
+        });
         ack(msg.id, !!result.ok, result.message, result.layersCreated, recvDiags.concat(buildDiags), result.layersUpdated);
       });
     } catch (e) {
       log("Transfer error: " + e.message, "err");
+      recordHistory({ dir: "in", peer: roleLabel(doc && doc.source), name: (doc && doc.name) || "", ok: false, message: e.message });
       ack(msg.id, false, e.message, 0, recvDiags, 0);
     }
   }
@@ -1205,7 +1507,18 @@
     });
   }
 
+  if (presetSel) presetSel.addEventListener("change", function () { usePreset(presetSel.value); });
+  if (presetSave) presetSave.addEventListener("click", savePreset);
+  if (presetDelete) presetDelete.addEventListener("click", deletePreset);
+  if (historyClear) historyClear.addEventListener("click", function () {
+    saveList(HISTORY_KEY, []);
+    renderHistory();
+  });
+
   restorePrefs();
+  renderPresets("");
+  renderHistory();
+  cleanTempFiles();
   loadJsx();
   connect();
 })();

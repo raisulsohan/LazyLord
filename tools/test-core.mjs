@@ -49,6 +49,7 @@ for (const f of ["code.ts", "ui.ts", "build.ts"]) {
 const G = await import(pathToFileURL(join(coreEsm, "geometry.ts")).href);
 const P = await import(pathToFileURL(join(coreEsm, "svg-path.ts")).href);
 const IR = await import(pathToFileURL(join(coreEsm, "ir.ts")).href);
+const PR = await import(pathToFileURL(join(coreEsm, "protocol.ts")).href);
 
 // The shared ExtendScript helpers, minus the #target directive (not JavaScript).
 // Only pure helpers are called; none of them touches a host.
@@ -1743,8 +1744,12 @@ class El {
   get options() {
     return this.querySelectorAll("option");
   }
-  /** A select's value: the chosen option's, as a browser keeps it ("" when set to no option). */
+  /**
+   * A select's value: the chosen option's, as a browser keeps it ("" when set
+   * to no option). Anything else (an input, an option) keeps its own.
+   */
   get value() {
+    if (this.tagName !== "SELECT") return this.attrs.value === undefined ? "" : String(this.attrs.value);
     if (this.chosen === undefined) {
       const opts = this.options;
       this.chosen = (opts.find((o) => "selected" in o.attrs) || opts[0] || { attrs: { value: "" } }).attrs.value;
@@ -1752,6 +1757,10 @@ class El {
     return this.chosen;
   }
   set value(v) {
+    if (this.tagName !== "SELECT") {
+      this.attrs.value = String(v);
+      return;
+    }
     this.chosen = this.options.some((o) => o.attrs.value === String(v)) ? String(v) : "";
   }
 }
@@ -1882,6 +1891,23 @@ await block("ui", async () => {
   ui.fromPlugin({ type: "ir", document: groupedDoc(), target: null });
   const t3 = ws.sent.find((m) => m.type === "transfer");
   ok("ui: an unknown choice falls back to the defaults", t3 && !!t3.document.options && t3.document.options.hierarchy === "flatten");
+
+  // History: the acknowledged send above is listed and saved through the main thread.
+  const hist = ui.toPlugin.filter((m) => m.type === "save-list" && m.kind === "history").pop();
+  ok("ui: a finished send is kept in the history, saved by the main thread",
+    hist && hist.list.length === 1 && hist.list[0].dir === "out" && hist.list[0].peer === "Illustrator" && hist.list[0].layers === 3);
+  ok("ui: the history card lists it", ui.$("#history-count").textContent === "1");
+
+  // Presets: save the current settings, change them, bring them back.
+  ui.choose("#layout", "combine");
+  ui.$("#preset-name").value = "Motion";
+  ui.$("#preset-save").fire("click");
+  const pre = ui.toPlugin.filter((m) => m.type === "save-list" && m.kind === "presets").pop();
+  ok("ui: a preset is saved with every setting", pre && pre.list.length === 1 && pre.list[0].name === "Motion" &&
+    pre.list[0].values.layout === "combine" && pre.list[0].values.scale === 3);
+  ui.choose("#layout", "split");
+  ui.choose("#preset", "Motion");
+  ok("ui: choosing a preset brings its settings back", ui.$("#layout").value === "combine");
 });
 
 // A choice made before the saved prefs arrive is not overridden by them.
@@ -2162,6 +2188,35 @@ await block("ui, late prefs", async () => {
     ok("figma build: counted only what was made", r.layersCreated === 1, String(r.layersCreated));
   }
 }
+// Large transfers travel in chunks the receiver joins back together.
+{
+  const big = { type: "transfer", id: "t-big", target: "aftereffects", document: { name: "x".repeat(5000), layers: [] } };
+  const small = { type: "transfer", id: "t-small", document: { name: "s", layers: [] } };
+  ok("chunks: a small transfer goes whole", PR.chunkTransfer(small, 1000, 2000).length === 1 && PR.chunkTransfer(small, 1000, 2000)[0] === small);
+  const parts = PR.chunkTransfer(big, 1000, 2000);
+  ok("chunks: a large one is split, every piece carries id, target and count",
+    parts.length === Math.ceil(JSON.stringify(big).length / 1000) &&
+    parts.every((p, i) => p.type === "chunk" && p.id === "t-big" && p.target === "aftereffects" && p.index === i && p.total === parts.length));
+  const joiner = new PR.ChunkJoiner();
+  const shuffled = parts.slice().reverse();
+  let whole = null;
+  for (let i = 0; i < shuffled.length; i++) {
+    const r = joiner.add(shuffled[i], 1000);
+    if (i < shuffled.length - 1 && r) whole = "early";
+    if (i === shuffled.length - 1) whole = whole === "early" ? whole : r;
+  }
+  ok("chunks: joined in any order, only once the last piece is in", whole && whole !== "early" && JSON.stringify(whole) === JSON.stringify(big));
+  const again = new PR.ChunkJoiner();
+  again.add(parts[0], 1000);
+  again.add(parts[0], 1000); // a repeat does not count twice
+  for (let i = 2; i < parts.length; i++) again.add(parts[i], 1000);
+  ok("chunks: a missing piece yields nothing, a repeated one is not counted twice", again.add(parts[2], 1000) === null);
+  const stale = new PR.ChunkJoiner();
+  for (let i = 0; i < parts.length - 1; i++) stale.add(parts[i], 0);
+  ok("chunks: pieces left waiting past the timeout are dropped",
+    stale.add(parts[parts.length - 1], PR.CHUNK_TIMEOUT_MS + 1) === null);
+}
+
 if (knownIssues.length) {
   console.log(`\nKnown issues outside this suite's files (not counted as failures):`);
   for (const k of knownIssues) console.log("  - " + k);

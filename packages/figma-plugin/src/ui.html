@@ -73,6 +73,15 @@
           </select>
         </div>
         <p id="opts-hint" class="a-peers">Applied by the app that receives the transfer.</p>
+        <div class="a-opt" title="Destination, Image scale and the options above, saved under a name and brought back in one step.">
+          <label for="preset">Preset</label>
+          <select id="preset"><option value="">No presets yet</option></select>
+        </div>
+        <div class="a-row">
+          <input type="text" id="preset-name" class="a-input" placeholder="Name these settings" maxlength="40" />
+          <button id="preset-save" class="a-ghost">Save</button>
+          <button id="preset-delete" class="a-ghost" disabled>Delete</button>
+        </div>
       </details>
     </section>
 
@@ -84,6 +93,14 @@
     <section id="diag-block" class="a-block" hidden>
       <label class="a-label">Fallbacks <span id="diag-count" class="a-count"></span></label>
       <ul id="diags" class="a-diags"></ul>
+    </section>
+
+    <section class="a-block">
+      <details id="history" class="a-opts">
+        <summary class="a-label">History <span id="history-count" class="a-count"></span></summary>
+        <ul id="history-list" class="a-diags"></ul>
+        <div class="a-row"><span></span><button id="history-clear" class="a-ghost">Clear history</button></div>
+      </details>
     </section>
   </main>
 

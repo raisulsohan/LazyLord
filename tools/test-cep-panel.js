@@ -170,8 +170,11 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "options-card", "send-card", "diag-card", "diag-head", "diag-title",
            "diag-counts", "diag-list", "reconnect", "push-options", "push-opts-note", "push-layout",
            "push-hierarchy", "push-existing", "push-keyframes", "push-keyframes-row", "push-opts-hint",
-           "push-destination", "push-dest-note"];
+           "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
+           "push-preset-delete", "history", "history-list", "history-count", "history-clear"];
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
+             "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
+             "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
              "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select",
              "push-destination": "select" };
@@ -1525,5 +1528,106 @@ run("panel geometry", function () {
 });
 
 WScript.Echo("");
+// Large transfers arrive in pieces and are built once all are in.
+run("chunks", function () {
+    var sock = boot("PHXS", new MemoryStorage());
+    var text = JSON.stringify({ type: "transfer", id: "c-1", target: "photoshop", document: figmaDoc() });
+    var size = Math.ceil(text.length / 3);
+    var pieces = [];
+    for (var i = 0; i < 3; i++) {
+        pieces.push({ type: "chunk", id: "c-1", target: "photoshop", index: i, total: 3, data: text.slice(i * size, (i + 1) * size) });
+    }
+    deliver(sock, pieces[2]);
+    deliver(sock, pieces[0]);
+    ok("chunks: nothing built before the last piece", irFile() === null);
+    deliver(sock, pieces[1]);
+    ok("chunks: built once every piece is in, whatever the order", irFile() !== null &&
+       JSON.parse(irFile().file.data).name === "Page");
+    lastEval().cb(JSON.stringify({ ok: true, layersCreated: 4, message: "", diagnostics: [] }));
+    var reply = lastSent(sock);
+    ok("chunks: acknowledged under the transfer's id", reply && reply.type === "ack" && reply.id === "c-1" && reply.ok === true,
+       JSON.stringify(reply));
+});
+
+// History: every finished transfer is kept per host role, newest first.
+run("history", function () {
+    var store = new MemoryStorage();
+    var sock = boot("PHXS", store);
+    ok("history: empty at first", els["history-list"].children.length === 1 && els["history-count"].textContent === "");
+
+    deliver(sock, { type: "transfer", id: "h-1", document: figmaDoc() });
+    lastEval().cb(JSON.stringify({ ok: true, layersCreated: 5, layersUpdated: 2, message: "", diagnostics: [] }));
+    deliver(sock, { type: "transfer", id: "h-2", document: figmaDoc() });
+    lastEval().cb(JSON.stringify({ ok: false, layersCreated: 0, message: "No document is open.", diagnostics: [] }));
+
+    var saved = JSON.parse(store.getItem("lazylord.history.photoshop"));
+    ok("history: both transfers kept, newest first", saved && saved.length === 2 && saved[0].ok === false && saved[1].ok === true,
+       store.getItem("lazylord.history.photoshop"));
+    ok("history: route, name and counts", saved[1].dir === "in" && saved[1].peer === "Figma" && saved[1].name === "Page" &&
+       saved[1].layers === 5 && saved[1].updated === 2 && saved[1].fallbacks > 0, JSON.stringify(saved[1]));
+    ok("history: a failure keeps its message", saved[0].message === "No document is open.", JSON.stringify(saved[0]));
+    ok("history: listed in the card with a count", els["history-list"].children.length === 2 && els["history-count"].textContent === "2");
+    ok("history: the failed entry is marked", els["history-list"].children[0].className.indexOf("err") >= 0);
+
+    boot("PHXS", store);
+    ok("history: survives a restart", els["history-list"].children.length === 2);
+    els["history-clear"].fire("click");
+    ok("history: cleared", JSON.parse(store.getItem("lazylord.history.photoshop")).length === 0 &&
+       els["history-list"].children.length === 1);
+
+    // Only the newest 25 are kept.
+    var many = [];
+    for (var i = 0; i < 25; i++) many.push({ t: i, dir: "out", peer: "Illustrator", ok: true, layers: 1 });
+    store.setItem("lazylord.history.photoshop", JSON.stringify(many));
+    sock = boot("PHXS", store);
+    deliver(sock, { type: "transfer", id: "h-3", document: figmaDoc() });
+    lastEval().cb(JSON.stringify({ ok: true, layersCreated: 1, message: "", diagnostics: [] }));
+    var capped = JSON.parse(store.getItem("lazylord.history.photoshop"));
+    ok("history: capped at 25, the oldest dropped", capped.length === 25 && capped[0].peer === "Figma" && capped[24].t === 23,
+       capped.length + " / " + capped[24].t);
+});
+
+// Presets: the Destination, Image scale and Options saved under a name.
+run("presets", function () {
+    var store = new MemoryStorage();
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    ok("presets: none yet, nothing to delete", els["push-preset"].children.length === 1 && els["push-preset-delete"].disabled === true);
+
+    choose("push-layout", "combine");
+    choose("push-destination", "page");
+    pick("push-scales", "scale", "4");
+    els["push-preset-save"].fire("click");
+    ok("presets: a name is required", linesWith("name for the preset").length === 1, texts(els["log"].children));
+
+    els["push-preset-name"].value = "  Motion  ";
+    els["push-preset-save"].fire("click");
+    var list = JSON.parse(store.getItem("lazylord.presets.illustrator"));
+    ok("presets: saved with every setting, name trimmed", list.length === 1 && list[0].name === "Motion" &&
+       list[0].values.layout === "combine" && list[0].values.destination === "page" && list[0].values.scale === 4,
+       store.getItem("lazylord.presets.illustrator"));
+    ok("presets: listed and selected", els["push-preset"].children.length === 2 && els["push-preset"].value === "Motion" &&
+       els["push-preset-delete"].disabled === false);
+
+    choose("push-layout", "split");
+    choose("push-destination", "active");
+    pick("push-scales", "scale", "2");
+    choose("push-preset", "Motion");
+    ok("presets: applying one restores its settings", els["push-layout"].value === "combine" &&
+       els["push-destination"].value === "page" && chipValue(els["push-scales"], "scale") === "4");
+    ok("presets: applied settings become the remembered ones",
+       JSON.parse(store.getItem("lazylord.prefs.illustrator")).layout === "combine");
+
+    els["push-preset-name"].value = "Motion";
+    choose("push-layout", "split");
+    els["push-preset-save"].fire("click");
+    list = JSON.parse(store.getItem("lazylord.presets.illustrator"));
+    ok("presets: saving under the same name updates it", list.length === 1 && list[0].values.layout === "split");
+
+    els["push-preset-delete"].fire("click");
+    ok("presets: deleted", JSON.parse(store.getItem("lazylord.presets.illustrator")).length === 0 &&
+       els["push-preset"].children.length === 1 && els["push-preset-delete"].disabled === true);
+});
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

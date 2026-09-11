@@ -561,6 +561,49 @@ LazyLord._ae_comboLeaf = function (sl, path, layer, origin) {
 LazyLord._ae_COMP_MIN = 4;
 LazyLord._ae_COMP_MAX = 30000;
 
+/*
+ * Transactions (see LazyLord.run): the ids of every project item, and of the
+ * layers in the comp that is open, before a build. A failed build removes
+ * the layers and items whose ids are new. Layer ids exist from After Effects
+ * 22; without them the open comp's layers are left alone.
+ */
+LazyLord.snapshot = function () {
+  var items = {};
+  for (var i = 1; i <= app.project.numItems; i++) items[app.project.item(i).id] = true;
+  var comp = app.project.activeItem;
+  if (!(comp && comp instanceof CompItem)) comp = null;
+  var layers = null;
+  if (comp) {
+    layers = {};
+    for (var j = 1; j <= comp.numLayers; j++) {
+      var id = comp.layer(j).id;
+      if (id === undefined || id === null) { layers = null; break; }
+      layers[id] = true;
+    }
+  }
+  return { items: items, comp: comp, layers: layers };
+};
+
+LazyLord.rollback = function (s) {
+  var complete = true;
+  if (s.comp) {
+    if (s.layers) {
+      for (var j = s.comp.numLayers; j >= 1; j--) {
+        var lyr = s.comp.layer(j);
+        if (!s.layers[lyr.id]) lyr.remove();
+      }
+    } else {
+      complete = false;
+    }
+  }
+  // New comps, footage and folders, newest first; a new comp takes its layers with it.
+  for (var i = app.project.numItems; i >= 1; i--) {
+    var item = app.project.item(i);
+    if (!s.items[item.id]) item.remove();
+  }
+  return complete;
+};
+
 LazyLord._ae_comp = function (doc) {
   var item = app.project.activeItem;
   if (item && item instanceof CompItem && !LazyLord.wantsNewDocument(doc)) return item;
@@ -1312,7 +1355,7 @@ LazyLord._ae_assetFile = function (assets, layer, path) {
     if (!assets.noted) {
       assets.noted = true;
       LazyLord.warn("Project", "The project has not been saved, so generated images are linked from the temporary folder " +
-        "and can go missing when it is cleaned up. Save the project and later transfers copy them into a '" +
+        "and go missing once LazyLord clears it (after a week). Save the project and later transfers copy them into a '" +
         LazyLord._ae_ASSET_FOLDER + "' folder beside it.", "approximated");
     }
     return path;

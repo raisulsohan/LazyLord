@@ -1098,6 +1098,34 @@ WScript.Echo("");
        tdoc(api.comp.list[0]).font === "BrandSansWeb-Bd" && api.diags.length === 0, dump(api.diags));
 })();
 
+// 19z) Guides and swatches: only when asked for.
+(function () {
+    function named(list, n) {
+        for (var k = 0; list && k < list.length; k++) if (list[k].name === n) return list[k];
+        return null;
+    }
+    var extras = {
+        guides: [{ orientation: "vertical", position: 12 }, { orientation: "horizontal", position: 30 }],
+        swatches: [{ name: "Brand", color: rgba(1, 0, 0) }, { name: "Ink", color: rgba(0, 0, 0) }]
+    };
+    var r = build(irDoc([vector("A", { x: 0, y: 0, width: 10, height: 10 })], extras));
+    ok("extras: nothing added unless asked for", !named(r.comp.list, "Swatches") && r.diags.length === 0, names(r.comp.list));
+
+    extras.options = { guides: true, swatches: true };
+    r = build(irDoc([vector("A", { x: 0, y: 0, width: 10, height: 10 })], extras));
+    var sw = named(r.comp.list, "Swatches");
+    ok("extras: a Swatches guide layer that never renders", sw && sw.guideLayer === true, names(r.comp.list));
+    ok("extras: older After Effects reports the guides it could not add",
+       diagsMatching(r.diags, /2 guides could not be added/).length === 1, dump(r.diags));
+
+    CompItem.prototype.addGuide = function (o, p) { (this.guides = this.guides || []).push(o + "@" + p); };
+    try { r = build(irDoc([vector("A", { x: 0, y: 0, width: 10, height: 10 })], extras)); }
+    finally { delete CompItem.prototype.addGuide; }
+    ok("extras: guides become comp guides, vertical 1 and horizontal 0",
+       r.comp.guides && r.comp.guides.join(",") === "1@12,0@30" && diagsMatching(r.diags, /guides/).length === 0,
+       String(r.comp.guides));
+})();
+
 // 20a) Precomps: Figma frames become comps of their own size, nested frames nest.
 (function () {
     var inner = group("Card", { x: 250, y: 150, width: 20, height: 20, opacity: 1 },

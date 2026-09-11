@@ -48,6 +48,7 @@ LazyLord.build = function (doc) {
   LazyLord._ai_buildList(ctx, root, layers);
   ctx.container = aiDoc;
   LazyLord._ai_closeClips(ctx, root);
+  LazyLord._ai_extras(ctx, doc, rect);
   try { app.redraw(); } catch (eR) {}
 
   var message = "";
@@ -57,6 +58,41 @@ LazyLord.build = function (doc) {
       : "Nothing matched artwork from an earlier transfer, so everything was added.";
   }
   return { ok: true, layersCreated: ctx.created, layersUpdated: ctx.updated, message: message };
+};
+
+/**
+ * Guides and swatches, when the sender asked for them: ruler guides are paths
+ * marked as guides, spanning well past the artboard; named colours become
+ * swatches, skipping any name the document already has.
+ */
+LazyLord._ai_extras = function (ctx, doc, rect) {
+  var guides = LazyLord.wantedGuides(doc);
+  var w = rect[2] - rect[0], h = rect[1] - rect[3];
+  var lost = 0;
+  for (var i = 0; i < guides.length; i++) {
+    try {
+      var g = guides[i];
+      var p = ctx.doc.pathItems.add();
+      if (g.orientation === "horizontal") p.setEntirePath([LazyLord._ai_pt(ctx, -2 * w, g.position), LazyLord._ai_pt(ctx, 3 * w, g.position)]);
+      else p.setEntirePath([LazyLord._ai_pt(ctx, g.position, -2 * h), LazyLord._ai_pt(ctx, g.position, 3 * h)]);
+      p.guides = true;
+    } catch (e) { lost++; }
+  }
+  if (lost) LazyLord.warn("Guides", lost + " of " + guides.length + " guides could not be added", "skipped");
+
+  var sw = LazyLord.wantedSwatches(doc);
+  var failed = 0;
+  for (var k = 0; k < sw.length; k++) {
+    var exists = false;
+    try { ctx.doc.swatches.getByName(sw[k].name); exists = true; } catch (eN) {}
+    if (exists) continue;
+    try {
+      var s = ctx.doc.swatches.add();
+      s.name = sw[k].name;
+      s.color = LazyLord._ai_rgb(sw[k].color || {});
+    } catch (eS) { failed++; }
+  }
+  if (failed) LazyLord.warn("Swatches", failed + " of " + sw.length + " swatches could not be added", "skipped");
 };
 
 /**

@@ -25,6 +25,7 @@ import type {
   Layer,
   Paint,
   RGBA,
+  Swatch,
   TextLayer,
   VectorLayer,
 } from "@lazylord/core";
@@ -85,6 +86,8 @@ export async function buildDocument(doc: Document): Promise<BuildResult> {
     placeFrame(frame, doc);
     figma.currentPage.appendChild(frame);
   }
+  addGuides(doc, opts, frame, ctx);
+  if (opts.swatches && doc.swatches && doc.swatches.length) await addSwatches(doc.swatches, ctx);
 
   if (made.length === 0 && !frame) {
     return { ok: false, layersCreated: 0, message: "Nothing in the transfer could be rebuilt.", diagnostics: ctx.diagnostics };
@@ -148,6 +151,47 @@ async function loadFonts(doc: Document, ctx: Ctx) {
       );
     }
   }
+}
+
+/** Ruler guides live on frames in Figma, so they need the new frame a New destination makes. */
+function addGuides(doc: Document, opts: { guides: boolean }, frame: FrameNode | null, ctx: Ctx) {
+  const guides = opts.guides && doc.guides ? doc.guides : [];
+  if (!guides.length) return;
+  if (!frame) {
+    warn(ctx, "Guides", "Figma keeps guides on frames, so they are added only when the transfer makes a new frame", "skipped");
+    return;
+  }
+  const page = doc.originSpace === "document" && doc.bounds ? doc.bounds : { x: 0, y: 0 };
+  try {
+    frame.guides = guides.map((g) =>
+      g.orientation === "vertical" ? { axis: "X" as const, offset: g.position + page.x } : { axis: "Y" as const, offset: g.position + page.y }
+    );
+  } catch (e) {
+    warn(ctx, "Guides", `The guides could not be added — ${message(e)}`, "skipped");
+  }
+}
+
+/** Named colours as local colour styles; a name the file already has is left alone. */
+async function addSwatches(swatches: Swatch[], ctx: Ctx) {
+  let names = new Set<string>();
+  try {
+    const styles: PaintStyle[] = await (figma as any).getLocalPaintStylesAsync();
+    names = new Set(styles.map((s) => s.name));
+  } catch {
+    /* no list: every swatch is added */
+  }
+  let failed = 0;
+  for (const s of swatches) {
+    if (names.has(s.name)) continue;
+    try {
+      const style = figma.createPaintStyle();
+      style.name = s.name;
+      style.paints = [solidPaint(s.color)];
+    } catch {
+      failed++;
+    }
+  }
+  if (failed) warn(ctx, "Swatches", `${failed} of ${swatches.length} colour styles could not be added`, "skipped");
 }
 
 function makeFrame(doc: Document): FrameNode {

@@ -325,7 +325,12 @@ LazyLord.imagePath = function (layer) {
  */
 LazyLord.applyOrigin = function (doc) {
   if (!doc || doc.originSpace !== "document" || !doc.bounds) return;
-  LazyLord.shiftLayers(doc.layers, doc.bounds.x || 0, doc.bounds.y || 0);
+  var ox = doc.bounds.x || 0, oy = doc.bounds.y || 0;
+  LazyLord.shiftLayers(doc.layers, ox, oy);
+  // Guides live in frame space too.
+  for (var g = 0; doc.guides && g < doc.guides.length; g++) {
+    doc.guides[g].position += (doc.guides[g].orientation === "vertical") ? ox : oy;
+  }
 };
 
 /**
@@ -440,8 +445,18 @@ LazyLord.options = function (doc) {
     hierarchy: (o.hierarchy === "groups" || o.hierarchy === "precomps") ? o.hierarchy : "flatten",
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
-    keyframes: o.keyframes === "always" ? "always" : "auto"
+    keyframes: o.keyframes === "always" ? "always" : "auto",
+    guides: o.guides === true,
+    swatches: o.swatches === true
   };
+};
+
+/** The guides and swatches a builder should add: [] unless asked for and sent. */
+LazyLord.wantedGuides = function (doc) {
+  return (LazyLord.options(doc).guides && doc.guides && doc.guides.length) ? doc.guides : [];
+};
+LazyLord.wantedSwatches = function (doc) {
+  return (LazyLord.options(doc).swatches && doc.swatches && doc.swatches.length) ? doc.swatches : [];
 };
 
 /** True when the builder must make a new document / comp even if one is open. */

@@ -1,7 +1,8 @@
 @echo off
 rem LazyLord - one-step install for live testing on Windows.
-rem   install.bat              build everything, install the Adobe panel, start the bridge
+rem   install.bat              build everything and install the Adobe panel
 rem   install.bat /uninstall   remove the Adobe panel link
+rem Nothing needs to be left running: the LazyLord panel runs the bridge itself.
 rem Figma needs one manual click (Import plugin from manifest); this script
 rem prepares everything else and tells you exactly what to click.
 
@@ -101,8 +102,14 @@ start "" explorer /select,"%FIGMA_MANIFEST%"
 
 rem ---------------------------------------------------------------- 7. bridge
 echo.
-echo [7/7] Starting the bridge in its own window...
-start "LazyLord bridge" "%REPO%\start-bridge.bat"
+echo [7/7] Bridge
+if exist "%PANEL_SRC%\js\relay.js" (
+  echo       Built into the panel - no window to keep open. The first LazyLord
+  echo       panel you open in Photoshop, Illustrator or After Effects runs it.
+) else (
+  echo [warn] The panel's bridge was not built; use start-bridge.bat until install.bat succeeds.
+  set "BUILD_WARN=1"
+)
 
 echo.
 echo ============================================================
@@ -115,9 +122,8 @@ echo ============================================================
 echo   Next:
 echo   - Restart Photoshop, Illustrator and After Effects if they are open.
 echo   - In each: Window - Extensions (legacy) - LazyLord. The dot turns green
-echo     when the bridge is running.
-echo   - Keep the "LazyLord bridge" window open while you test.
-echo     Next time, start it with start-bridge.bat.
+echo     once it is connected; with one panel open, Figma connects too.
+echo   - There is no bridge window any more: keep one LazyLord panel open.
 echo   - Follow TESTING.md for the checklist.
 echo.
 goto :end

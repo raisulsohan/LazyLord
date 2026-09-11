@@ -18,7 +18,8 @@
     "dev:figma": "npm run dev --workspace @lazylord/figma-plugin",
     "bridge": "npm run start --workspace @lazylord/bridge",
     "test": "npm run build:core && node tools/smoke-test.mjs",
-    "test:core": "node --experimental-transform-types tools/test-core.mjs"
+    "test:core": "node --experimental-transform-types tools/test-core.mjs",
+    "test:bridge": "npm run build:core && npm run build:bridge && node tools/test-bridge.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

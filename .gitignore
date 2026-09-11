@@ -11,3 +11,5 @@ packages/**/dist/
 .claude/
 # Synced from packages/ui-kit/lazylord.css by tools/sync-ui-css.mjs
 packages/adobe-cep/css/
+# The relay the panel runs, bundled by packages/bridge/scripts/bundle-relay.mjs
+packages/adobe-cep/js/relay.js

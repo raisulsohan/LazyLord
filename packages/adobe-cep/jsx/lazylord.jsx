@@ -503,6 +503,25 @@ LazyLord._tagSafe = function (s) {
   return String(s === undefined || s === null ? "" : s).replace(/[\[\]|~]/g, "");
 };
 
+/**
+ * A host's blend-mode value as the IR's name, for a reader: `modes` is the
+ * host's enum (BlendingMode, BlendModes, BlendMode) and `map` the builder's IR
+ * name -> enum member table, read backwards. null for Normal (and pass
+ * through), which the IR leaves out; a mode the IR cannot name is reported and
+ * sent as Normal.
+ */
+LazyLord.blendFromHost = function (value, modes, map, object) {
+  if (value === undefined || value === null || !modes) return null;
+  try {
+    if (value === modes.NORMAL || value === modes.PASSTHROUGH) return null;
+  } catch (e) {}
+  for (var ir in map) {
+    if (map.hasOwnProperty(ir) && modes[map[ir]] !== undefined && modes[map[ir]] === value) return ir;
+  }
+  LazyLord.warn(object || "Layer", "Its blend mode (" + String(value) + ") has no match in the other apps, so it is sent as Normal", "approximated");
+  return null;
+};
+
 /** A short, stable hash of a string (djb2 plus the length), as the panels use. */
 LazyLord.hashText = function (s) {
   s = String(s);

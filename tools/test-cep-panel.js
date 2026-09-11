@@ -1426,6 +1426,82 @@ run("live", function () {
        linesWith("Live stopped: the destination app disconnected").length === 1, texts(els["log"].children));
 });
 
+// 13d) What the in-depth review found: Live, delivery, reconnect, paths.
+run("live and delivery fixes", function () {
+    var ir = {
+        version: "1.0", source: "illustrator", sourceKey: "doc-F", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "a", name: "A", type: "vector", frame: frame(0, 0), subpaths: [square()], fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    function answerRead(sock) {
+        files["C:/tmp/fix/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+        lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/fix/ir.json", message: "", diagnostics: [] }));
+    }
+
+    // Photoshop cannot update, so Live would add a copy per change: refused.
+    var store = new MemoryStorage();
+    store.setItem("lazylord.prefs.illustrator", JSON.stringify({ target: "photoshop" }));
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "photoshop"]);
+    els["push-live"].checked = true;
+    els["push-live"].fire("change");
+    ok("live: refused for a destination that can only add", els["push-live"].checked === false &&
+       linesWith("can only add layers").length === 1, texts(els["log"].children));
+
+    // A failed live send is tried again at the next poll, with the flag the receiver reads.
+    store = new MemoryStorage();
+    store.setItem("lazylord.prefs.illustrator", JSON.stringify({ target: "aftereffects" }));
+    sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    els["push-live"].checked = true;
+    els["push-live"].fire("change");
+    lastEval().cb("s1");
+    answerRead(sock);
+    var t1 = lastSent(sock);
+    ok("live: the send says it is live", t1 && t1.document.options.live === true, t1 && JSON.stringify(t1.document.options));
+    deliver(sock, { type: "ack", id: t1.id, from: "aftereffects", ok: false, message: "Busy" });
+    fireTimer(LIVE_POLL);
+    lastEval().cb("s1"); // nothing changed since, but the last one did not arrive
+    ok("live: a failed send is read again", lastEval().script.indexOf("LazyLord.runRead(") === 0, lastEval().script);
+    answerRead(sock);
+    ok("live: and sent again", lastSent(sock).id !== t1.id);
+
+    // Pressing Send while a send is under way does nothing.
+    var count = sock.sent.length, evals = evalCalls.length;
+    els["push"].fire("click");
+    ok("send: never two at once", sock.sent.length === count && evalCalls.length === evals);
+
+    // Bridge gone: said at once, the button freed, nothing pretended.
+    sock = boot("ILST", new MemoryStorage());
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    sock.readyState = 3;
+    els["push"].fire("click");
+    answerRead(sock);
+    ok("send: without the bridge nothing is claimed as sent", linesWith("Not connected to the other apps").length === 1 &&
+       linesWith("Sent 1 layer").length === 0 && els["push"].disabled === false, texts(els["log"].children));
+
+    // Reconnect lets the old socket go without it scheduling a reconnect of its own.
+    sock = boot("ILST", new MemoryStorage());
+    var first = sockets[0];
+    els["reconnect"].fire("click");
+    ok("reconnect: a new socket, and the old one's close is ignored", sockets.length === 2 && first.onclose === null);
+
+    // A transfer id off the network cannot name a folder of its own.
+    sock = boot("AEFT", new MemoryStorage());
+    peersMsg(sock, "welcome", ["aftereffects", "illustrator"]);
+    var img = { version: "1.0", source: "figma", name: "X", bounds: { x: 0, y: 0, width: 1, height: 1 },
+                layers: [{ id: "i", name: "I", type: "image", frame: frame(0, 0), pngBase64: "AAAA" }],
+                options: { live: true } };
+    deliver(sock, { type: "transfer", id: "../../../Users/Public/evil", document: img });
+    var bad = false;
+    for (var p in files) if (files.hasOwnProperty(p) && p.indexOf("..") >= 0) bad = true;
+    ok("paths: the id is made safe before it names a folder", !bad);
+    lastEval().cb(JSON.stringify({ ok: true, layersCreated: 1, message: "", diagnostics: [] }));
+    ok("receive: a live update stays out of the history", !store.getItem("lazylord.history.aftereffects") &&
+       els["history-count"].textContent === "", els["history-count"].textContent);
+});
+
 // 14) A build that updated layers reports both halves in its one line.
 run("update summary", function () {
     var sock = boot("AEFT", new MemoryStorage());
@@ -1496,11 +1572,14 @@ run("send destination", function () {
     };
     files["C:/tmp/dest/ir.json"] = { data: JSON.stringify(pageDoc), enc: "" };
 
+    // Each send is answered before the next: the button is disabled until then.
     function send() {
         els["push"].fire("click");
         lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/dest/ir.json",
                                        message: "", diagnostics: [] }));
-        return lastSent(sock);
+        var t = lastSent(sock);
+        deliver(sock, { type: "ack", id: t.id, from: t.target || "aftereffects", ok: true, layersCreated: 1 });
+        return t;
     }
 
     var t1 = send();

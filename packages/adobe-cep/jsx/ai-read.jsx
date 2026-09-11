@@ -156,8 +156,10 @@ LazyLord.readSelection = function (outDir) {
     canvas: canvas,
     sourceKey: LazyLord._air_sourceKey(doc),
     layers: layers,
-    guides: LazyLord._air_guides(ctx),
-    swatches: LazyLord._air_swatches(doc)
+    // Both walk the whole document, so they are skipped when the sender did
+    // not ask for them (the panel says so in the read options).
+    guides: LazyLord.readOptions.guides === false ? [] : LazyLord._air_guides(ctx),
+    swatches: LazyLord.readOptions.swatches === false ? [] : LazyLord._air_swatches(doc)
   };
 };
 
@@ -198,7 +200,7 @@ LazyLord._air_swatches = function (doc) {
       var t = s.color && s.color.typename;
       if (t !== "RGBColor" && t !== "CMYKColor" && t !== "GrayColor" && t !== "SpotColor") continue;
       if (t === "SpotColor" && /registration/i.test(s.name)) continue;
-      var p = LazyLord._air_color(s.color, 100, s.name);
+      var p = LazyLord._air_color(s.color, String(s.name), null);
       if (p && p.color) out.push({ name: String(s.name), color: p.color });
     } catch (eS) {}
   }
@@ -616,6 +618,12 @@ LazyLord._air_leaf = function (ctx, n) {
     LazyLord.warn(n.item.name || n.item.typename, e.message, "skipped");
   }
   if (!layer) return null;
+  var bm = null;
+  try {
+    bm = LazyLord.blendFromHost(n.item.blendingMode, typeof BlendModes !== "undefined" ? BlendModes : null,
+      LazyLord._ai_BLEND || {}, n.item.name || n.item.typename);
+  } catch (eB) {}
+  if (bm) layer.blendMode = bm;
   var clip = LazyLord._air_clipFor(ctx, n.mask);
   // Every layer gets its own copy: targets shift clip vertices in place.
   if (clip) layer.clip = LazyLord._air_copyClip(clip);
@@ -1013,7 +1021,15 @@ LazyLord._air_color = function (col, label, box) {
     return { type: "solid", color: { r: rgb[0], g: rgb[1], b: rgb[2], a: 1 } };
   }
   if (t === "SpotColor") {
-    try { return LazyLord._air_color(col.spot.color, label, box); } catch (e) { return null; }
+    var base = null;
+    try { base = LazyLord._air_color(col.spot.color, label, box); } catch (e) { return null; }
+    // A tint is the spot colour thinned towards paper white.
+    var tint = LazyLord._air_num(col.tint) ? Math.max(0, Math.min(100, col.tint)) / 100 : 1;
+    if (base && base.type === "solid" && tint < 1) {
+      var bc = base.color;
+      base.color = { r: 1 - (1 - bc.r) * tint, g: 1 - (1 - bc.g) * tint, b: 1 - (1 - bc.b) * tint, a: bc.a };
+    }
+    return base;
   }
   if (t === "GradientColor") {
     return LazyLord._air_gradient(col, label, box);
@@ -1717,7 +1733,9 @@ LazyLord._air_textRuns = function (tf, name, size) {
       st.fontSize = a.size * factor;
       try { st.fontFamily = a.textFont.family; st.fontStyle = a.textFont.style; } catch (eF) {}
       var p = null;
-      try { p = LazyLord._air_color(a.fillColor, 100, name); } catch (eC) {}
+      // No box: a gradient on a character has no box of its own, and reads as its first colour.
+      try { p = LazyLord._air_color(a.fillColor, name, null); } catch (eC) {}
+      if (p && p.type !== "solid") p = p.stops && p.stops.length ? { type: "solid", color: p.stops[0].color } : null;
       if (p && p.color) st.color = p.color;
       st.letterSpacing = ((a.tracking || 0) / 1000) * st.fontSize;
       st.decoration = a.underline ? "underline" : (a.strikeThrough ? "strikethrough" : "none");
@@ -1803,7 +1821,8 @@ LazyLord._air_rasterItem = function (ctx, item) {
 
 /** Last rung of the ladder: duplicate into a temp document and export a PNG. */
 LazyLord._air_raster = function (ctx, item, reason) {
-  var gb = LazyLord._air_gb(item);
+  // The PNG covers what shows — strokes and effects included — so its frame does too.
+  var gb = LazyLord._air_visible(item) || LazyLord._air_gb(item);
   if (!gb) { LazyLord.warn(item.name || item.typename, "No bounds to export", "skipped"); return null; }
 
   var name = item.name || item.typename;
@@ -1823,13 +1842,23 @@ LazyLord._air_raster = function (ctx, item, reason) {
   return LazyLord._air_imageLayer(ctx, item, LazyLord._air_frame(ctx, item, gb), outPath, false, scale);
 };
 
+/** An item's visible bounds (strokes and effects included), else its geometric ones; null when neither reads. */
+LazyLord._air_visible = function (item) {
+  var b = null;
+  try { b = item.visibleBounds; } catch (e) {}
+  if (!b || b.length !== 4) { try { b = item.geometricBounds; } catch (e2) { b = null; } }
+  return (b && b.length === 4) ? b : null;
+};
+
 /**
  * Export a single item to PNG by duplicating it into a scratch document sized
  * to its bounds. The source document is never modified.
  */
 LazyLord._air_export = function (item, outPath, scalePct) {
   var src = app.activeDocument;
-  var gb = item.geometricBounds;
+  // Visible bounds: strokes and effects reach past the geometry, and the
+  // scratch artboard clips whatever lies outside it.
+  var gb = LazyLord._air_visible(item);
   var w = Math.max(1, Math.ceil(gb[2] - gb[0]));
   var h = Math.max(1, Math.ceil(gb[1] - gb[3]));
 
@@ -1837,7 +1866,7 @@ LazyLord._air_export = function (item, outPath, scalePct) {
   try {
     var dup = item.duplicate(tmp, ElementPlacement.PLACEATEND);
     var ar = tmp.artboards[0].artboardRect; // [0, h, w, 0]
-    var dgb = dup.geometricBounds;
+    var dgb = LazyLord._air_visible(dup);
     dup.translate(ar[0] - dgb[0], ar[1] - dgb[1]);
 
     var opts = new ExportOptionsPNG24();

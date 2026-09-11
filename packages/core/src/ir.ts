@@ -379,6 +379,8 @@ export type TransferOptions = {
    * "keep": the layer is left as the user made it, and not updated.
    */
   conflict?: "overwrite" | "keep";
+  /** Set on a Live update, one of many: the receiver keeps it out of its history. */
+  live?: boolean;
   /** Rebuild the source page's ruler guides on the target (off by default). */
   guides?: boolean;
   /** Add the source's named colours to the target's swatches (off by default). */
@@ -401,6 +403,7 @@ export function transferOptions(doc: Pick<Document, "options">): Required<Transf
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto",
     conflict: o.conflict === "keep" ? "keep" : "overwrite",
+    live: o.live === true,
     guides: o.guides === true,
     swatches: o.swatches === true,
   };

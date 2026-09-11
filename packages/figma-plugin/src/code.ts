@@ -173,7 +173,11 @@ async function postPrefs(): Promise<void> {
   } catch {
     /* an unusable stored size is not worth failing the plugin over */
   }
-  figma.ui.postMessage({ type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy, guides: prefs.guides, swatches: prefs.swatches, place: prefs.place, width: prefs.width, height: prefs.height });
+  figma.ui.postMessage({
+    type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy,
+    existing: prefs.existing, keyframes: prefs.keyframes, conflict: prefs.conflict, onlyChanged: prefs.onlyChanged,
+    guides: prefs.guides, swatches: prefs.swatches, place: prefs.place, width: prefs.width, height: prefs.height,
+  });
 }
 
 async function savePrefs(raw: any): Promise<void> {
@@ -212,7 +216,9 @@ async function postList(kind: ListKind): Promise<void> {
  */
 async function exportNodes(nodes: readonly SceneNode[], scale: number, place: Place): Promise<{ docs: Document[] } | { error: string }> {
   const sorted = sortByZOrder(topmostOnly(nodes));
-  const perFrame = place !== "open" && sorted.length > 1 && sorted.every(isWholeFrame);
+  // Only frames that are pages of their own: two buttons inside one screen are
+  // parts of that screen, not two documents.
+  const perFrame = place !== "open" && sorted.length > 1 && sorted.every((n) => isWholeFrame(n) && isTopLevel(n));
   const sets = perFrame ? sorted.map((n) => [n]) : [sorted];
   const docs: Document[] = [];
   for (const set of sets) docs.push(await buildDocument(scale, place, set));
@@ -427,6 +433,12 @@ function warn(ctx: Ctx, object: string, reason: string, resolution: Diagnostic["
   ctx.diag.list.push({ object: object || "(unnamed)", reason, resolution });
 }
 
+/** Directly on the page, or directly in a section on it. */
+function isTopLevel(node: SceneNode): boolean {
+  const p = node.parent;
+  return !p || p.type === "PAGE" || p.type === "SECTION";
+}
+
 /** A frame-like node that becomes a page (document / comp) of its own when sent whole. */
 function isWholeFrame(node: SceneNode): boolean {
   return node.type === "FRAME" || node.type === "SECTION" || node.type === "COMPONENT" ||
@@ -490,15 +502,28 @@ async function buildDocument(
 /**
  * What tells this Figma file apart from every other one, so a target can match
  * a node id back to the thing it came from. `fileKey` is the file's own
- * identifier but is only readable with the right permission, so the document
- * root's id stands in for it; either is stable for the life of the file.
+ * identifier but only private plugins may read it, and the document root's id
+ * is "0:0" in every file, so the plugin keeps a random key of its own on the
+ * document (plugin data travels with the file, duplicates included).
  */
+const SOURCE_KEY = "lazylord.sourceKey";
+
 function sourceKey(): string {
   try {
     const key = (figma as unknown as { fileKey?: string }).fileKey;
     if (key) return key;
   } catch {
-    // Reading fileKey without permission throws; the root id works just as well.
+    // Reading fileKey without permission throws.
+  }
+  try {
+    let key = figma.root.getPluginData(SOURCE_KEY);
+    if (!key) {
+      key = "fig-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+      figma.root.setPluginData(SOURCE_KEY, key);
+    }
+    return key;
+  } catch {
+    // Plugin data unavailable: the root id at least keeps one file consistent.
   }
   try {
     return figma.root.id || "";
@@ -716,11 +741,20 @@ function containerPaint(
 
   const geometry = containerGeometry(node, ctx);
   const id = node.id + ":fill";
-  if (!hasContent) return { below: vectorLayer(node, ctx, { fills: paints, geometry, id, opacity: 1 }), above: null };
+  // The group carries the frame's blend and effects, as it carries its opacity:
+  // on these layers too, a shadow would be drawn twice and a blend applied twice.
+  const plain = (l: VectorLayer | null): VectorLayer | null => {
+    if (l) {
+      delete l.blendMode;
+      delete l.effects;
+    }
+    return l;
+  };
+  if (!hasContent) return { below: plain(vectorLayer(node, ctx, { fills: paints, geometry, id, opacity: 1 })), above: null };
   return {
-    below: paints.length ? vectorLayer(node, ctx, { fills: paints, strokes: false, geometry, id, opacity: 1 }) : null,
+    below: paints.length ? plain(vectorLayer(node, ctx, { fills: paints, strokes: false, geometry, id, opacity: 1 })) : null,
     above: strokes.length
-      ? vectorLayer(node, ctx, { fills: [], geometry, id: node.id + ":stroke", name: node.name + " (stroke)", opacity: 1 })
+      ? plain(vectorLayer(node, ctx, { fills: [], geometry, id: node.id + ":stroke", name: node.name + " (stroke)", opacity: 1 }))
       : null,
   };
 }

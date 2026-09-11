@@ -75,6 +75,29 @@ export type ChunkMessage = {
   data: string;
 };
 
+/**
+ * A question for another app, answered by a ReplyMessage with the same id.
+ * "active-document": what document is open, and where it is saved
+ * (answered by Photoshop, for the After Effects panel's PSD import).
+ */
+export type RequestMessage = {
+  type: "request";
+  id: string;
+  target: Role;
+  what: "active-document";
+};
+
+/** The answer to a RequestMessage, routed back to whoever asked. */
+export type ReplyMessage = {
+  type: "reply";
+  id: string;
+  from: Role;
+  ok: boolean;
+  message?: string;
+  /** For "active-document": { name, path, saved } — path is "" when never saved. */
+  data?: { name?: string; path?: string; saved?: boolean };
+};
+
 export type PingMessage = { type: "ping"; t: number };
 export type PongMessage = { type: "pong"; t: number };
 
@@ -85,6 +108,8 @@ export type Message =
   | TransferMessage
   | ChunkMessage
   | AckMessage
+  | RequestMessage
+  | ReplyMessage
   | PingMessage
   | PongMessage;
 

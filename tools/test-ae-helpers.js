@@ -188,6 +188,32 @@ WScript.Echo("");
     ok("decompose: no precomp selected is explained", !r.ok && r.message.indexOf("precomp layer") > 0, r.message);
 })();
 
+// Import PSD
+(function () {
+    function File(path) { this.fsName = path; this.name = path.replace(/^.*[\\\/]/, ""); this.exists = path.indexOf("missing") < 0; }
+    File.openDialog = function () { return null; };
+    function ImportOptions(f) { this.file = f; }
+    var ImportAsType = { COMP: "comp", COMP_CROPPED_LAYERS: "cropped" };
+    var imported = null, opened = false;
+    app.project.importFile = function (io) {
+        imported = io;
+        var c = new CompItem(io.file.name.replace(/\.psd$/, ""), []);
+        c.openInViewer = function () { opened = true; };
+        return c;
+    };
+    // The host names these globally.
+    this.File = File; this.ImportOptions = ImportOptions; this.ImportAsType = ImportAsType;
+    undo = [];
+    var r = JSON.parse(LazyLord.importPsd("C:\\art\\Poster.psd"));
+    ok("psd: imported as a composition keeping layer sizes, and opened",
+       r.ok && imported && imported.importAs === "cropped" && opened && r.message.indexOf("'Poster'") > 0, r.message);
+    ok("psd: one undo step", undo.join("|") === "begin LazyLord Import PSD|end", undo.join("|"));
+    r = JSON.parse(LazyLord.importPsd("C:\\art\\missing.psd"));
+    ok("psd: a file that is gone is explained", !r.ok && r.message.indexOf("not there") > 0, r.message);
+    r = JSON.parse(LazyLord.importPsd(""));
+    ok("psd: a cancelled file dialog does nothing", !r.ok && r.message === "No file chosen.", r.message);
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

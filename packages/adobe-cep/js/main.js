@@ -734,7 +734,83 @@
       renderTargets();
     } else if (msg.type === "ack") {
       onAck(msg);
+    } else if (msg.type === "request") {
+      answerRequest(msg);
+    } else if (msg.type === "reply") {
+      onReply(msg);
     }
+  }
+
+  // --- Requests between panels ---------------------------------------------
+  // One question today: the After Effects panel asks Photoshop which document
+  // is open, to import it.
+
+  var pendingReplies = {};
+  var REPLY_TIMEOUT_MS = 10000;
+
+  function answerRequest(msg) {
+    function reply(ok, message, data) {
+      send({ type: "reply", id: msg.id, from: role, ok: ok, message: message || "", data: data || {} });
+    }
+    if (msg.what !== "active-document" || role !== "photoshop") {
+      reply(false, "The " + roleLabel(role) + " panel cannot answer that.");
+      return;
+    }
+    if (!jsxReady) { reply(false, "The Photoshop panel's scripts are not loaded yet."); return; }
+    cs.evalScript("LazyLord.activeDocumentInfo()", function (res) {
+      var r;
+      try { r = JSON.parse(res); } catch (e) { r = { ok: false, message: "Photoshop did not answer: " + res }; }
+      reply(!!r.ok, r.message, r.data);
+    });
+  }
+
+  /** Ask another app; `done(reply)` runs once, with ok false on a timeout. */
+  function request(target, what, done) {
+    var id = newId();
+    var finished = false;
+    pendingReplies[id] = function (r) {
+      if (finished) return;
+      finished = true;
+      delete pendingReplies[id];
+      done(r);
+    };
+    send({ type: "request", id: id, target: target, what: what });
+    setTimeout(function () {
+      if (pendingReplies[id]) pendingReplies[id]({ ok: false, message: roleLabel(target) + " did not answer." });
+    }, REPLY_TIMEOUT_MS);
+  }
+
+  function onReply(msg) {
+    var cb = pendingReplies[msg.id];
+    if (cb) cb(msg);
+  }
+
+  /** After Effects: import the document open in Photoshop, or a chosen file. */
+  function importPsd() {
+    if (!jsxReady) { log("The host scripts are not loaded yet.", "err"); return; }
+    function run(path) {
+      cs.evalScript("LazyLord.importPsd(" + jsonStr(path) + ")", function (res) {
+        var r;
+        try { r = JSON.parse(res); } catch (e) { r = { ok: false, message: "Import failed: " + res }; }
+        log(r.message || (r.ok ? "Imported." : "Import failed."), r.ok ? "ok" : "err");
+      });
+    }
+    if (!contains(peers, "photoshop")) {
+      log("Photoshop is not connected, so choose the file to import.");
+      run("");
+      return;
+    }
+    log("Asking Photoshop which document is open…");
+    request("photoshop", "active-document", function (r) {
+      var d = r.data || {};
+      if (!r.ok) { log(r.message || "Photoshop could not say which document is open.", "err"); return; }
+      if (!d.path) {
+        log("\"" + (d.name || "The document") + "\" has never been saved. Save it in Photoshop, then import again.", "warn");
+        return;
+      }
+      if (!d.saved) log("\"" + d.name + "\" has unsaved changes; its last saved version is imported.", "warn");
+      run(d.path);
+    });
   }
 
   // --- Push targets -------------------------------------------------------
@@ -1540,6 +1616,8 @@
     var dec = document.getElementById("ae-decompose");
     if (pre) pre.addEventListener("click", function () { runHelper("precomposeSelection", "Precompose"); });
     if (dec) dec.addEventListener("click", function () { runHelper("decomposeSelection", "Decompose"); });
+    var imp = document.getElementById("ae-import-psd");
+    if (imp) imp.addEventListener("click", importPsd);
   }
 
   if (presetSel) presetSel.addEventListener("change", function () { usePreset(presetSel.value); });

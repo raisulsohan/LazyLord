@@ -717,6 +717,34 @@ LazyLord._ae_swatchLayer = function (ctx, sw) {
   ctx.created++;
 };
 
+/**
+ * Import a PSD as a composition whose layers keep their own sizes, and open
+ * it. With no path, a file dialog asks for one. Layer styles follow After
+ * Effects' own import preference (scripts cannot choose it).
+ */
+LazyLord.importPsd = function (path) {
+  var res = { ok: false, message: "" };
+  var f = path ? new File(path) : File.openDialog("Choose a Photoshop file to import", "*.psd;*.psb");
+  if (!f) { res.message = "No file chosen."; return JSON.stringify(res); }
+  if (!f.exists) { res.message = "The file is not there any more: " + f.fsName; return JSON.stringify(res); }
+  app.beginUndoGroup("LazyLord Import PSD");
+  try {
+    var io = new ImportOptions(f);
+    var how = "composition";
+    try { io.importAs = ImportAsType.COMP_CROPPED_LAYERS; how = "composition with layer sizes kept"; }
+    catch (eAs) { io.importAs = ImportAsType.COMP; }
+    var item = app.project.importFile(io);
+    try { if (item && item instanceof CompItem) item.openInViewer(); } catch (eView) {}
+    res.ok = true;
+    res.message = "Imported '" + ((item && item.name) || f.name) + "' as a " + how + ".";
+  } catch (e) {
+    res.message = "Import failed: " + ((e && e.message) || String(e));
+  } finally {
+    app.endUndoGroup();
+  }
+  return JSON.stringify(res);
+};
+
 /* -------------------------------------------------------------------------
  * Precomp helpers — the panel's Precompose / Decompose buttons. Each returns
  * JSON { ok, message } for the panel's log, and is one undo step.

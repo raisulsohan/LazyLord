@@ -171,10 +171,12 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "diag-counts", "diag-list", "reconnect", "push-options", "push-opts-note", "push-layout",
            "push-hierarchy", "push-existing", "push-keyframes", "push-keyframes-row", "push-opts-hint",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
-           "push-preset-delete", "history", "history-list", "history-count", "history-clear"];
+           "push-preset-delete", "history", "history-list", "history-count", "history-clear",
+           "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd"];
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
              "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
+             "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button",
              "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select",
              "push-destination": "select" };
@@ -1528,6 +1530,46 @@ run("panel geometry", function () {
 });
 
 WScript.Echo("");
+// PSD import: After Effects asks Photoshop which document is open.
+run("psd import", function () {
+    // Photoshop answers.
+    var ps = boot("PHXS", new MemoryStorage());
+    deliver(ps, { type: "request", id: "q-1", target: "photoshop", what: "active-document" });
+    var call = lastEval();
+    ok("psd: Photoshop asks its host", call && has(call.script, "LazyLord.activeDocumentInfo()"), call && call.script);
+    call.cb(JSON.stringify({ ok: true, data: { name: "Poster.psd", path: "C:\\art\\Poster.psd", saved: false } }));
+    var answer = lastSent(ps);
+    ok("psd: and replies under the same id", answer && answer.type === "reply" && answer.id === "q-1" && answer.ok === true &&
+       answer.from === "photoshop" && answer.data.path === "C:\\art\\Poster.psd", JSON.stringify(answer));
+
+    // After Effects asks, then imports what Photoshop names.
+    var ae = boot("AEFT", new MemoryStorage());
+    ok("psd: the After Effects tools are shown", els["ae-tools"].hidden === false);
+    peersMsg(ae, "welcome", ["aftereffects", "photoshop"]);
+    els["ae-import-psd"].fire("click");
+    var q = lastSent(ae);
+    ok("psd: After Effects asks Photoshop", q && q.type === "request" && q.target === "photoshop" && q.what === "active-document",
+       JSON.stringify(q));
+    deliver(ae, { type: "reply", id: q.id, from: "photoshop", ok: true, data: { name: "Poster.psd", path: "C:\\art\\Poster.psd", saved: false } });
+    ok("psd: unsaved changes are mentioned", linesWith("last saved version").length === 1, texts(els["log"].children));
+    ok("psd: the saved file is imported", has(lastEval().script, "LazyLord.importPsd(") && has(lastEval().script, "Poster.psd"),
+       lastEval().script);
+
+    // A document that was never saved cannot be imported.
+    var before = evalCalls.length;
+    els["ae-import-psd"].fire("click");
+    q = lastSent(ae);
+    deliver(ae, { type: "reply", id: q.id, from: "photoshop", ok: true, data: { name: "Untitled-1", path: "", saved: false } });
+    ok("psd: an unsaved document asks to be saved, nothing imported",
+       linesWith("never been saved").length === 1 && evalCalls.length === before, texts(els["log"].children));
+
+    // Without Photoshop, a file is chosen instead.
+    ae = boot("AEFT", new MemoryStorage());
+    peersMsg(ae, "welcome", ["aftereffects"]);
+    els["ae-import-psd"].fire("click");
+    ok("psd: without Photoshop, a file dialog", has(lastEval().script, 'LazyLord.importPsd("")'), lastEval().script);
+});
+
 // Large transfers arrive in pieces and are built once all are in.
 run("chunks", function () {
     var sock = boot("PHXS", new MemoryStorage());

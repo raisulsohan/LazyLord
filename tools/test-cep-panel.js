@@ -172,11 +172,11 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-hierarchy", "push-existing", "push-keyframes", "push-keyframes-row", "push-opts-hint",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
-           "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd"];
+           "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row"];
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
              "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
-             "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button",
+             "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button", "push-only-changed": "input",
              "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select",
              "push-destination": "select" };
@@ -250,6 +250,7 @@ function boot(appName, storage) {
     els["host"].appendChild(textNode("Detecting host..."));
     els["log"].appendChild(textNode("Waiting for the LazyLord bridge..."));
     els["auto"].checked = true; // index.html default
+    els["push-only-changed"].checked = true; // index.html default
     els["push-card"].hidden = true;
     els["diag-card"].hidden = true;
     addOptions(els["push-layout"], LAYOUT_VALUES);
@@ -1253,6 +1254,60 @@ run("update options travel", function () {
        JSON.stringify(sent.document.options));
     ok("sent: so does Always", sent.document.options.keyframes === "always",
        JSON.stringify(sent.document.options));
+});
+
+// 13b) Smart diff: while updating, only what changed since the last send goes out.
+run("smart diff", function () {
+    var store = new MemoryStorage();
+    store.setItem("lazylord.prefs.illustrator", JSON.stringify({ existing: "update", target: "aftereffects" }));
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    ok("diff: the Only what changed switch shows while updating", els["push-only-changed-row"] ?
+       els["push-only-changed-row"].hidden === false : true);
+
+    function art(boxX) {
+        return {
+            version: "1.0", source: "illustrator", sourceKey: "doc-1", name: "Art", originSpace: "document",
+            bounds: { x: 0, y: 0, width: 50, height: 50 },
+            layers: [
+                { id: "a", name: "A", type: "vector", frame: frame(boxX, 0), subpaths: [square()], fills: [], strokes: [] },
+                { id: "b", name: "B", type: "vector", frame: frame(0, 20), subpaths: [square()], fills: [], strokes: [] }
+            ],
+            diagnostics: []
+        };
+    }
+    function push(doc) {
+        files["C:/tmp/diff/ir.json"] = { data: JSON.stringify(doc), enc: "" };
+        var before = sock.sent.length;
+        els["push"].fire("click");
+        lastEval().cb(JSON.stringify({ ok: true, layerCount: 2, irPath: "C:/tmp/diff/ir.json", message: "", diagnostics: [] }));
+        return sock.sent.length > before ? lastSent(sock) : null;
+    }
+
+    var first = push(art(0));
+    ok("diff: the first send carries everything", first && first.document.layers.length === 2);
+    deliver(sock, { type: "ack", id: first.id, from: "aftereffects", ok: true, layersCreated: 2 });
+    ok("diff: the destination's fingerprints are kept after a successful send",
+       /"a":/.test(store.getItem("lazylord.sent.illustrator") || ""), store.getItem("lazylord.sent.illustrator"));
+
+    var again = push(art(0));
+    ok("diff: nothing changed, nothing sent", again === null && linesWith("Nothing changed").length === 1, texts(els["log"].children));
+
+    var moved = push(art(10));
+    ok("diff: only the changed layer is sent", moved && moved.document.layers.length === 1 && moved.document.layers[0].id === "a",
+       moved && JSON.stringify(moved.document.layers));
+    ok("diff: the unchanged one is counted in the log", linesWith("1 unchanged layer not sent again").length === 1, texts(els["log"].children));
+
+    // Without an ack the fingerprints are not taken: a failed send is resent in full.
+    deliver(sock, { type: "ack", id: moved.id, from: "aftereffects", ok: false, message: "No comp open." });
+    var retry = push(art(10));
+    ok("diff: after a failed send the change is sent again", retry && retry.document.layers.length === 1 && retry.document.layers[0].id === "a");
+    deliver(sock, { type: "ack", id: retry.id, from: "aftereffects", ok: true, layersCreated: 0 });
+
+    // Switched off, everything goes again.
+    els["push-only-changed"].checked = false;
+    var all = push(art(10));
+    ok("diff: switched off, everything is sent", all && all.document.layers.length === 2);
 });
 
 // 14) A build that updated layers reports both halves in its one line.

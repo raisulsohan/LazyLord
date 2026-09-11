@@ -65,6 +65,8 @@
   var existingSel = document.getElementById("push-existing");
   var keyframesSel = document.getElementById("push-keyframes");
   var keyframesRow = document.getElementById("push-keyframes-row");
+  var onlyChangedEl = document.getElementById("push-only-changed");
+  var onlyChangedRow = document.getElementById("push-only-changed-row");
   var guidesEl = document.getElementById("push-guides");
   var swatchesEl = document.getElementById("push-swatches");
   var optsHint = document.getElementById("push-opts-hint");
@@ -235,6 +237,7 @@
     if (existingSel && contains(EXISTING, prefs.existing)) existingSel.value = prefs.existing;
     if (keyframesSel && contains(KEYFRAMES, prefs.keyframes)) keyframesSel.value = prefs.keyframes;
     if (guidesEl && typeof prefs.guides === "boolean") guidesEl.checked = prefs.guides;
+    if (onlyChangedEl && typeof prefs.onlyChanged === "boolean") onlyChangedEl.checked = prefs.onlyChanged;
     if (swatchesEl && typeof prefs.swatches === "boolean") swatchesEl.checked = prefs.swatches;
     if (destinationSel && contains(DESTINATIONS, prefs.destination)) destinationSel.value = prefs.destination;
     if (scalesEl && contains(SCALES, String(prefs.scale))) selectChip(scalesEl, "scale", prefs.scale);
@@ -531,6 +534,7 @@
     // Keyframes only mean anything while updating, and only in After Effects.
     var updating = (o.existing === "update");
     if (keyframesRow) keyframesRow.hidden = !updating;
+    if (onlyChangedRow) onlyChangedRow.hidden = !updating;
     if (optsHint) {
       if (!updating) optsHint.textContent = "";
       else if (destinationSel && destinationSel.value !== "active") {
@@ -739,6 +743,92 @@
     } else if (msg.type === "reply") {
       onReply(msg);
     }
+  }
+
+  // --- Smart diff ------------------------------------------------------------
+  // Every leaf sent is fingerprinted from its IR. After a successful send the
+  // fingerprints are kept per destination app and source document; an update
+  // then leaves out every leaf whose fingerprint has not changed (groups that
+  // end up empty go too — updating ignores hierarchy anyway). The paths of
+  // images LazyLord generated change on every read without the art changing,
+  // so they are not part of the fingerprint.
+
+  var SENT_KEY = "lazylord.sent." + role;
+  var SENT_DOCS_MAX = 30;
+
+  function hashText(s) {
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36) + "." + s.length.toString(36);
+  }
+
+  function leafPrint(layer) {
+    var copy = {};
+    for (var k in layer) {
+      if (!Object.prototype.hasOwnProperty.call(layer, k)) continue;
+      if (k === "filePath" && layer.isOriginalFile !== true) continue;
+      copy[k] = layer[k];
+    }
+    return hashText(JSON.stringify(copy));
+  }
+
+  function onlyChangedWanted() {
+    return !onlyChangedEl || onlyChangedEl.checked !== false;
+  }
+
+  /**
+   * Fingerprint every leaf; with `prune`, drop the ones the destination
+   * already has unchanged. Returns { key, prints, kept, skipped, pruned }.
+   */
+  function fingerprintLeaves(doc, target, prune) {
+    var key = target + "|" + (doc.sourceKey || "") + "|" + (doc.source || "");
+    var before = prune ? (loadSentMap()[key] || {}) : {};
+    var prints = {}, kept = 0, skipped = 0;
+    function walk(list) {
+      var out = [];
+      for (var i = 0; list && i < list.length; i++) {
+        var l = list[i];
+        if (!l) continue;
+        if (l.type === "group") {
+          l.children = walk(l.children || []);
+          if (!prune || l.children.length) out.push(l);
+          continue;
+        }
+        var p = leafPrint(l);
+        if (l.id !== undefined) prints[l.id] = p;
+        if (prune && l.id !== undefined && before[l.id] === p) { skipped++; continue; }
+        kept++;
+        out.push(l);
+      }
+      return out;
+    }
+    doc.layers = walk(doc.layers);
+    return { key: key, prints: prints, kept: kept, skipped: skipped, pruned: !!prune };
+  }
+
+  function loadSentMap() {
+    var st = prefsStore();
+    if (!st) return {};
+    try {
+      var m = JSON.parse(st.getItem(SENT_KEY) || "{}");
+      return (m && typeof m === "object") ? m : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function rememberSent(key, prints) {
+    var st = prefsStore();
+    if (!st || !prints) return;
+    var all = loadSentMap();
+    var entry = all[key] || {};
+    for (var id in prints) if (Object.prototype.hasOwnProperty.call(prints, id)) entry[id] = prints[id];
+    delete all[key];
+    all[key] = entry; // newest last
+    var keys = [];
+    for (var k in all) if (Object.prototype.hasOwnProperty.call(all, k)) keys.push(k);
+    while (keys.length > SENT_DOCS_MAX) delete all[keys.shift()];
+    try { st.setItem(SENT_KEY, JSON.stringify(all)); } catch (e) {}
   }
 
   // --- Requests between panels ---------------------------------------------
@@ -1103,13 +1193,24 @@
       // target's builder obeys.
       doc.options = options;
       applyDestination(doc, place);
+
+      // Updating: only what changed since the last send to this app goes out.
+      var diff = fingerprintLeaves(doc, target, options.existing === "update" && onlyChangedWanted());
+      if (diff.pruned && diff.kept === 0) {
+        log("Nothing changed since the last send to " + roleLabel(target) + ", so nothing was sent.", "ok");
+        setPushBusy(false);
+        return;
+      }
+      if (diff.skipped) log(plural(diff.skipped, "unchanged layer") + " not sent again.");
       if (target === "figma") embedImagesForFigma(doc);
 
       pendingPush = id;
       pendingPushInfo = {
         name: doc.name || "",
         images: imageStats(doc),
-        diagnostics: doc.diagnostics || r.diagnostics || []
+        diagnostics: doc.diagnostics || r.diagnostics || [],
+        sentKey: diff.key,
+        prints: diff.prints
       };
       var parts = sendTransfer({ type: "transfer", id: id, target: target, document: doc });
       if (parts > 1) log("Large transfer: sent in " + parts + " pieces.");
@@ -1150,6 +1251,8 @@
   function reportAck(msg, info, late) {
     if (!info) info = { images: imageStats(null), diagnostics: [] };
     var hostDiags = msg.diagnostics || [];
+    // What the target now holds, for the next update's comparison.
+    if (msg.ok && info.sentKey) rememberSent(info.sentKey, info.prints);
 
     // A late reply leaves the card to a push that is still waiting for its
     // own answer; the summary line below still counts every fallback.
@@ -1582,6 +1685,7 @@
       updateOptionsNote();
     });
     if (guidesEl) guidesEl.addEventListener("change", function () { savePref("guides", !!guidesEl.checked); updateOptionsNote(); });
+    if (onlyChangedEl) onlyChangedEl.addEventListener("change", function () { savePref("onlyChanged", !!onlyChangedEl.checked); });
     if (swatchesEl) swatchesEl.addEventListener("change", function () { savePref("swatches", !!swatchesEl.checked); updateOptionsNote(); });
     if (destinationSel) destinationSel.addEventListener("change", function () {
       savePref("destination", destinationSel.value);

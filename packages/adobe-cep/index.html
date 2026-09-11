@@ -115,6 +115,9 @@
               <option value="always">Always</option>
             </select>
           </div>
+          <div class="a-row" id="push-only-changed-row" title="While updating: leave out everything the destination already has unchanged since the last send. Turn off to send everything again, for example after deleting a layer there." hidden>
+            <label class="a-check"><input type="checkbox" id="push-only-changed" checked /> Only what changed</label>
+          </div>
           <div class="a-row" title="Also send the source page's ruler guides, and its named colours (swatches, colour styles). The receiving app adds what it can.">
             <label class="a-check"><input type="checkbox" id="push-guides" /> Include guides</label>
             <label class="a-check"><input type="checkbox" id="push-swatches" /> Include swatches</label>

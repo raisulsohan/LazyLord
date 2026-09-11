@@ -12,7 +12,7 @@ import {
   roleLabel,
   transferOptions,
 } from "@lazylord/core";
-import type { Diagnostic, Document, Message, Role, TransferMessage, TransferOptions } from "@lazylord/core";
+import type { Diagnostic, Document, Layer, Message, Role, TransferMessage, TransferOptions } from "@lazylord/core";
 
 // Figma's manifest only accepts host names in allowedDomains (an IP address is
 // rejected as "not a valid URL"), and the connection must match it.
@@ -34,6 +34,8 @@ const hierarchySel = $<HTMLSelectElement>("#hierarchy");
 const existingSel = $<HTMLSelectElement>("#existing");
 const keyframesSel = $<HTMLSelectElement>("#keyframes");
 const keyframesOpt = $("#keyframes-opt");
+const onlyChangedEl = $<HTMLInputElement>("#only-changed");
+const onlyChangedOpt = $("#only-changed-opt");
 const guidesEl = $<HTMLInputElement>("#guides");
 const swatchesEl = $<HTMLInputElement>("#swatches");
 const optsHint = $("#opts-hint");
@@ -173,6 +175,9 @@ function onMessage(msg: Message) {
       break;
     case "ack": {
       pending.delete(msg.id);
+      const sentWith = pendingPrints.get(msg.id);
+      pendingPrints.delete(msg.id);
+      if (msg.ok && sentWith) rememberSent(sentWith);
       addDiagnostics(roleLabel(msg.from), msg.diagnostics);
       const inBatch = batchAck(msg.id, !!msg.ok, msg.layersCreated ?? 0, msg.message || "", roleLabel(msg.from));
       if (inBatch) {
@@ -348,6 +353,7 @@ function updateOptionsNote() {
   // Keyframes only mean anything while updating, and only in After Effects.
   const updating = o.existing === "update";
   keyframesOpt.hidden = !updating;
+  if (onlyChangedOpt) onlyChangedOpt.hidden = !updating;
   if (!updating) {
     optsHint.textContent = "Applied by the app that receives the transfer.";
   } else if (placeSel.value !== "open") {
@@ -364,11 +370,12 @@ function updateOptionsNote() {
 /** Tell the main thread, which keeps them in figma.clientStorage. */
 function savePrefs() {
   const o = currentOptions();
-  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches, place: placeSel.value, width: winWidth, height: winHeight } }, "*");
+  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches, onlyChanged: onlyChangedWanted(), place: placeSel.value, width: winWidth, height: winHeight } }, "*");
 }
 
-function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; guides?: unknown; swatches?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
+function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; guides?: unknown; swatches?: unknown; onlyChanged?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
   noteSize(msg.width, msg.height);
+  if (onlyChangedEl && typeof msg.onlyChanged === "boolean") onlyChangedEl.checked = msg.onlyChanged;
   if (typeof msg.place === "string" && PLACE_NOTES[msg.place]) placeSel.value = msg.place;
   updatePlaceNote();
   const t = typeof msg.target === "string" ? msg.target : "";
@@ -555,7 +562,7 @@ scalesEl.addEventListener("click", (e) => {
   savePrefs();
 });
 
-for (const box of [guidesEl, swatchesEl]) {
+for (const box of [guidesEl, swatchesEl, onlyChangedEl]) {
   if (!box) continue;
   box.addEventListener("change", () => {
     prefsApplied = true;
@@ -606,16 +613,29 @@ window.onmessage = (event: MessageEvent) => {
     }
   } else if (msg.type === "ir") {
     // Several whole frames arrive as one document each (a comp / document per frame).
-    const docs = (Array.isArray(msg.documents) ? msg.documents : [msg.document]) as Document[];
+    let docs = (Array.isArray(msg.documents) ? msg.documents : [msg.document]) as Document[];
     const options = currentOptions();
+    // Updating: only what changed since the last send to this app goes out.
+    const dest = (msg.target as string) || "all";
+    let prints = docs.map((d) => fingerprintLeaves(d, dest, options.existing === "update" && onlyChangedWanted()));
+    const skipped = prints.reduce((n, p) => n + p.skipped, 0);
+    docs = docs.filter((_, i) => !prints[i].pruned || prints[i].kept > 0);
+    prints = prints.filter((p) => !p.pruned || p.kept > 0);
+    if (!docs.length) {
+      setStatus("Nothing changed since the last send, so nothing was sent.", "ok");
+      updateSendButton();
+      return;
+    }
+    const note = skipped ? ` ${skipped} unchanged layer${skipped === 1 ? "" : "s"} not sent again.` : "";
     batch = docs.length > 1 ? { ids: new Set(), total: docs.length, done: 0, layers: 0, failures: [], from: "" } : null;
     docs.forEach((doc, i) => {
       addDiagnostics("Figma", doc.diagnostics);
       // The receiving app's builder lays the transfer out as asked here.
       doc.options = Object.assign({}, options);
-      dispatchTransfer(doc, (msg.target as Role) || undefined, i);
+      dispatchTransfer(doc, (msg.target as Role) || undefined, i, prints[i]);
     });
-    if (batch) setStatus(`Sent ${docs.length} frames, one ${frameUnit()} each…`, "");
+    if (batch) setStatus(`Sent ${docs.length} frames, one ${frameUnit()} each…${note}`, "");
+    else if (note) setStatus(`Sent ${countLeaves(docs[0].layers)} layer(s)…${note}`, "");
   } else if (msg.type === "built") {
     // The main thread finished rebuilding a transfer: tell the sender.
     const r = msg.result || { ok: false, layersCreated: 0, message: "", diagnostics: [] };
@@ -647,11 +667,70 @@ window.onmessage = (event: MessageEvent) => {
   }
 };
 
-function dispatchTransfer(document: Document, tgt?: Role, index = 0) {
+// --- Smart diff ---------------------------------------------------------------
+// Every leaf sent is fingerprinted from its IR. After a successful send the
+// fingerprints are kept per destination and source document; an update then
+// leaves out every leaf whose fingerprint has not changed (groups that end up
+// empty go too — updating ignores hierarchy anyway). They live only while the
+// plugin is open: the first update after reopening sends everything once.
+
+type Prints = { key: string; prints: Record<string, string>; kept: number; skipped: number; pruned: boolean };
+const SENT_DOCS_MAX = 30;
+const sentPrints = new Map<string, Record<string, string>>();
+/** transfer id -> the fingerprints it carried, kept once it is acknowledged. */
+const pendingPrints = new Map<string, Prints>();
+
+function hashText(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + "." + s.length.toString(36);
+}
+
+function onlyChangedWanted(): boolean {
+  return !onlyChangedEl || onlyChangedEl.checked !== false;
+}
+
+/** Fingerprint every leaf; with `prune`, drop the ones the destination already has unchanged. */
+function fingerprintLeaves(doc: Document, dest: string, prune: boolean): Prints {
+  const key = `${dest}|${doc.sourceKey || ""}|${doc.source || ""}`;
+  const before = (prune && sentPrints.get(key)) || {};
+  const prints: Record<string, string> = {};
+  let kept = 0;
+  let skipped = 0;
+  const walk = (list: Layer[]): Layer[] => {
+    const out: Layer[] = [];
+    for (const l of list || []) {
+      if (!l) continue;
+      if (l.type === "group") {
+        l.children = walk(l.children || []);
+        if (!prune || l.children.length) out.push(l);
+        continue;
+      }
+      const p = hashText(JSON.stringify(l));
+      if (l.id !== undefined) prints[l.id] = p;
+      if (prune && l.id !== undefined && before[l.id] === p) { skipped++; continue; }
+      kept++;
+      out.push(l);
+    }
+    return out;
+  };
+  doc.layers = walk(doc.layers);
+  return { key, prints, kept, skipped, pruned: prune };
+}
+
+function rememberSent(p: Prints) {
+  const entry = Object.assign(sentPrints.get(p.key) || {}, p.prints);
+  sentPrints.delete(p.key);
+  sentPrints.set(p.key, entry); // newest last
+  while (sentPrints.size > SENT_DOCS_MAX) sentPrints.delete(sentPrints.keys().next().value as string);
+}
+
+function dispatchTransfer(document: Document, tgt?: Role, index = 0, prints?: Prints) {
   const id = uuid();
   const transfer: TransferMessage = { type: "transfer", id, target: tgt, document };
   pending.set(id, Date.now());
   sentNames.set(id, document.name || "");
+  if (prints) pendingPrints.set(id, prints);
   if (batch) batch.ids.add(id);
   // A large transfer (images travel as base64) goes in pieces the receiver joins.
   for (const part of chunkTransfer(transfer)) send(part);
@@ -665,6 +744,7 @@ function dispatchTransfer(document: Document, tgt?: Role, index = 0) {
   window.setTimeout(() => {
     if (pending.has(id)) {
       pending.delete(id);
+      pendingPrints.delete(id);
       if (batch && batch.ids.has(id)) {
         batchAck(id, false, 0, "no response", "");
       } else {

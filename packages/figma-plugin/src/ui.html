@@ -73,6 +73,9 @@
             <option value="always">Always</option>
           </select>
         </div>
+        <div class="a-row" id="only-changed-opt" title="While updating: leave out everything the destination already has unchanged since the last send. Turn off to send everything again, for example after deleting a layer there." hidden>
+          <label class="a-check"><input type="checkbox" id="only-changed" checked /> Only what changed</label>
+        </div>
         <div class="a-row" title="Also send the frame's ruler guides, and the file's colour styles. The receiving app adds what it can.">
           <label class="a-check"><input type="checkbox" id="guides" /> Include guides</label>
           <label class="a-check"><input type="checkbox" id="swatches" /> Include swatches</label>

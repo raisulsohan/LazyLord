@@ -41,11 +41,28 @@ LazyLord.build = function (doc) {
     // Clips are applied once every layer exists, so each group can take its
     // whole run of members at once.
     for (var c = 0; c < st.clips.groups.length; c++) LazyLord._ps_clipGroup(st.psDoc, st.clips.groups[c]);
+    LazyLord._ps_extras(st.psDoc, doc);
   } finally {
     app.preferences.rulerUnits = oldRuler;
     app.preferences.typeUnits = oldType;
   }
   return { ok: true, layersCreated: st.created, message: "" };
+};
+
+/** Guides, when asked for; named colours are reported, not added. */
+LazyLord._ps_extras = function (psDoc, doc) {
+  var guides = LazyLord.wantedGuides(doc);
+  var lost = 0;
+  for (var i = 0; i < guides.length; i++) {
+    try {
+      psDoc.guides.add(guides[i].orientation === "horizontal" ? Direction.HORIZONTAL : Direction.VERTICAL,
+        new UnitValue(guides[i].position, "px"));
+    } catch (e) { lost++; }
+  }
+  if (lost) LazyLord.warn("Guides", lost + " of " + guides.length + " guides could not be added", "skipped");
+  if (LazyLord.wantedSwatches(doc).length) {
+    LazyLord.warn("Swatches", "Photoshop swatches are not added from scripts here; the colours arrive in the layers themselves", "skipped");
+  }
 };
 
 /**

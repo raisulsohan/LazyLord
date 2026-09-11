@@ -65,6 +65,8 @@
   var existingSel = document.getElementById("push-existing");
   var keyframesSel = document.getElementById("push-keyframes");
   var keyframesRow = document.getElementById("push-keyframes-row");
+  var guidesEl = document.getElementById("push-guides");
+  var swatchesEl = document.getElementById("push-swatches");
   var optsHint = document.getElementById("push-opts-hint");
   var destinationSel = document.getElementById("push-destination");
   var destNote = document.getElementById("push-dest-note");
@@ -232,6 +234,8 @@
     if (hierarchySel && contains(HIERARCHIES, prefs.hierarchy)) hierarchySel.value = prefs.hierarchy;
     if (existingSel && contains(EXISTING, prefs.existing)) existingSel.value = prefs.existing;
     if (keyframesSel && contains(KEYFRAMES, prefs.keyframes)) keyframesSel.value = prefs.keyframes;
+    if (guidesEl && typeof prefs.guides === "boolean") guidesEl.checked = prefs.guides;
+    if (swatchesEl && typeof prefs.swatches === "boolean") swatchesEl.checked = prefs.swatches;
     if (destinationSel && contains(DESTINATIONS, prefs.destination)) destinationSel.value = prefs.destination;
     if (scalesEl && contains(SCALES, String(prefs.scale))) selectChip(scalesEl, "scale", prefs.scale);
     updateDestNote();
@@ -281,7 +285,9 @@
       layout: o.layout,
       hierarchy: o.hierarchy,
       existing: o.existing,
-      keyframes: o.keyframes
+      keyframes: o.keyframes,
+      guides: o.guides,
+      swatches: o.swatches
     };
   }
 
@@ -293,6 +299,8 @@
     if (hierarchySel && contains(HIERARCHIES, s.hierarchy)) { hierarchySel.value = s.hierarchy; savePref("hierarchy", s.hierarchy); }
     if (existingSel && contains(EXISTING, s.existing)) { existingSel.value = s.existing; savePref("existing", s.existing); }
     if (keyframesSel && contains(KEYFRAMES, s.keyframes)) { keyframesSel.value = s.keyframes; savePref("keyframes", s.keyframes); }
+    if (guidesEl && typeof s.guides === "boolean") { guidesEl.checked = s.guides; savePref("guides", s.guides); }
+    if (swatchesEl && typeof s.swatches === "boolean") { swatchesEl.checked = s.swatches; savePref("swatches", s.swatches); }
     updateDestNote();
     updateOptionsNote();
   }
@@ -441,7 +449,9 @@
       layout: o.layout === "combine" ? "combine" : "split",
       hierarchy: (o.hierarchy === "groups" || o.hierarchy === "precomps") ? o.hierarchy : "flatten",
       existing: o.existing === "update" ? "update" : "add",
-      keyframes: o.keyframes === "always" ? "always" : "auto"
+      keyframes: o.keyframes === "always" ? "always" : "auto",
+      guides: o.guides === true,
+      swatches: o.swatches === true
     };
   }
 
@@ -453,6 +463,8 @@
     if (o.hierarchy === "precomps") parts.push("Precomps");
     if (o.existing === "update") parts.push("Update");
     if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
+    if (o.guides) parts.push("Guides");
+    if (o.swatches) parts.push("Swatches");
     var sc = activeChip(scalesEl, "scale");
     if (sc && sc !== "2") parts.push(sc + "x");
     return parts.join(", ");
@@ -464,7 +476,9 @@
       layout: layoutSel ? layoutSel.value : "",
       hierarchy: hierarchySel ? hierarchySel.value : "",
       existing: existingSel ? existingSel.value : "",
-      keyframes: keyframesSel ? keyframesSel.value : ""
+      keyframes: keyframesSel ? keyframesSel.value : "",
+      guides: !!(guidesEl && guidesEl.checked),
+      swatches: !!(swatchesEl && swatchesEl.checked)
     });
   }
 
@@ -1491,6 +1505,8 @@
       savePref("keyframes", pushOptions().keyframes);
       updateOptionsNote();
     });
+    if (guidesEl) guidesEl.addEventListener("change", function () { savePref("guides", !!guidesEl.checked); updateOptionsNote(); });
+    if (swatchesEl) swatchesEl.addEventListener("change", function () { savePref("swatches", !!swatchesEl.checked); updateOptionsNote(); });
     if (destinationSel) destinationSel.addEventListener("change", function () {
       savePref("destination", destinationSel.value);
       updateDestNote();

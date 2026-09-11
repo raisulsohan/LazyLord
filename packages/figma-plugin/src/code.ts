@@ -30,10 +30,12 @@ import type {
   Diagnostic,
   Document,
   GroupLayer,
+  Guide,
   ImageLayer,
   Layer,
   Paint,
   Primitive,
+  Swatch,
   RGBA,
   Stroke,
   SubPath,
@@ -120,6 +122,8 @@ type Prefs = {
   hierarchy: "flatten" | "groups" | "precomps";
   existing: "add" | "update";
   keyframes: "auto" | "always";
+  guides: boolean;
+  swatches: boolean;
   place: Place;
 };
 
@@ -138,6 +142,8 @@ function cleanPrefs(raw: any): Prefs {
     hierarchy: options.hierarchy,
     existing: options.existing,
     keyframes: options.keyframes,
+    guides: options.guides,
+    swatches: options.swatches,
     place,
   };
 }
@@ -162,7 +168,7 @@ async function postPrefs(): Promise<void> {
   } catch {
     /* an unusable stored size is not worth failing the plugin over */
   }
-  figma.ui.postMessage({ type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy, place: prefs.place, width: prefs.width, height: prefs.height });
+  figma.ui.postMessage({ type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy, guides: prefs.guides, swatches: prefs.swatches, place: prefs.place, width: prefs.width, height: prefs.height });
 }
 
 async function savePrefs(raw: any): Promise<void> {
@@ -367,6 +373,14 @@ async function buildDocument(
   // and "open" keep a nested frame on its top-level frame instead.
   const single = selection.length === 1 && isWholeFrame(selection[0]) ? selection[0] : null;
   if (single && (place === "auto" || doc.originSpace !== "document")) placeOnOwnFrame(doc, single, ctx);
+  // Guides and colour styles always travel; the target adds them only when asked.
+  const page = single && doc.canvas && doc.canvas.name === single.name ? single : pageFrameOf(selection);
+  if (page && doc.originSpace === "document") {
+    const guides = frameGuides(page, doc);
+    if (guides.length) doc.guides = guides;
+  }
+  const swatches = await localSwatches();
+  if (swatches.length) doc.swatches = swatches;
   if (ctx.diag.list.length) doc.diagnostics = ctx.diag.list;
   return doc;
 }
@@ -1388,6 +1402,43 @@ function placeOnArtboard(doc: Document, selection: readonly SceneNode[], ctx: Ct
   if (b.x > bx + width || b.x + b.width < bx || b.y > by + height || b.y + b.height < by) return;
   doc.originSpace = "document";
   doc.bounds = { x: b.x - bx, y: b.y - by, width: b.width, height: b.height };
+}
+
+/** The top-level frame every selected node sits in, when there is one. */
+function pageFrameOf(selection: readonly SceneNode[]): SceneNode | null {
+  const shared = sharedArtboard(selection.map(scenePath));
+  return shared ? (shared.node as SceneNode) : null;
+}
+
+/** A page frame's ruler guides in frame space (bounds are measured from the frame's corner). */
+function frameGuides(frame: SceneNode, doc: Document): Guide[] {
+  const gs = (frame as any).guides;
+  if (!Array.isArray(gs)) return [];
+  const out: Guide[] = [];
+  for (const g of gs) {
+    if (!g || typeof g.offset !== "number") continue;
+    if (g.axis === "X") out.push({ orientation: "vertical", position: g.offset - doc.bounds.x });
+    else if (g.axis === "Y") out.push({ orientation: "horizontal", position: g.offset - doc.bounds.y });
+  }
+  return out;
+}
+
+/** The file's local colour styles that are one flat colour. */
+async function localSwatches(): Promise<Swatch[]> {
+  let styles: any[] = [];
+  try {
+    styles = await (figma as any).getLocalPaintStylesAsync();
+  } catch {
+    return [];
+  }
+  const out: Swatch[] = [];
+  for (const s of styles || []) {
+    const paints = visiblePaints(s && s.paints);
+    if (paints.length === 1 && paints[0].type === "SOLID") {
+      out.push({ name: String(s.name), color: rgba(paints[0].color, paints[0].opacity == null ? 1 : paints[0].opacity) });
+    }
+  }
+  return out;
 }
 
 /**

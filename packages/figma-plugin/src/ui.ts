@@ -34,6 +34,8 @@ const hierarchySel = $<HTMLSelectElement>("#hierarchy");
 const existingSel = $<HTMLSelectElement>("#existing");
 const keyframesSel = $<HTMLSelectElement>("#keyframes");
 const keyframesOpt = $("#keyframes-opt");
+const guidesEl = $<HTMLInputElement>("#guides");
+const swatchesEl = $<HTMLInputElement>("#swatches");
 const optsHint = $("#opts-hint");
 const placeSel = $<HTMLSelectElement>("#place");
 const placeNote = $("#place-note");
@@ -58,7 +60,10 @@ let diagnostics: Array<Diagnostic & { from: string }> = [];
 
 // Presets and history live in figma.clientStorage (a plugin iframe has no
 // usable localStorage); the main thread loads them and saves what we post.
-type Settings = { place: string; scale: number; layout: string; hierarchy: string; existing: string; keyframes: string };
+type Settings = {
+  place: string; scale: number; layout: string; hierarchy: string; existing: string; keyframes: string;
+  guides?: boolean; swatches?: boolean;
+};
 type HistoryEntry = {
   t: number; dir: "in" | "out"; peer: string; name: string; ok: boolean;
   layers: number; updated: number; fallbacks: number; message: string;
@@ -311,6 +316,8 @@ function currentOptions(): Required<TransferOptions> {
       destination: existing === "update" || placeSel.value === "open" ? "active" : "new",
       existing,
       keyframes: keyframesSel.value as TransferOptions["keyframes"],
+      guides: !!(guidesEl && guidesEl.checked),
+      swatches: !!(swatchesEl && swatchesEl.checked),
     },
   });
 }
@@ -334,6 +341,8 @@ function updateOptionsNote() {
   if (o.hierarchy === "precomps") parts.push("Precomps");
   if (o.existing === "update") parts.push("Update");
   if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
+  if (o.guides) parts.push("Guides");
+  if (o.swatches) parts.push("Swatches");
   optsNote.textContent = parts.join(", ");
 
   // Keyframes only mean anything while updating, and only in After Effects.
@@ -355,10 +364,10 @@ function updateOptionsNote() {
 /** Tell the main thread, which keeps them in figma.clientStorage. */
 function savePrefs() {
   const o = currentOptions();
-  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, place: placeSel.value, width: winWidth, height: winHeight } }, "*");
+  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches, place: placeSel.value, width: winWidth, height: winHeight } }, "*");
 }
 
-function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
+function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; guides?: unknown; swatches?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
   noteSize(msg.width, msg.height);
   if (typeof msg.place === "string" && PLACE_NOTES[msg.place]) placeSel.value = msg.place;
   updatePlaceNote();
@@ -377,6 +386,8 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
   hierarchySel.value = o.hierarchy;
   existingSel.value = o.existing;
   keyframesSel.value = o.keyframes;
+  if (guidesEl) guidesEl.checked = o.guides;
+  if (swatchesEl) swatchesEl.checked = o.swatches;
   updateOptionsNote();
   updateSendButton();
 }
@@ -385,7 +396,7 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
 
 function currentSettings(): Settings {
   const o = currentOptions();
-  return { place: placeSel.value, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes };
+  return { place: placeSel.value, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches };
 }
 
 function setSelect(sel: HTMLSelectElement, value: unknown) {
@@ -398,6 +409,8 @@ function applySettings(s: Partial<Settings>) {
   setSelect(hierarchySel, s.hierarchy);
   setSelect(existingSel, s.existing);
   setSelect(keyframesSel, s.keyframes);
+  if (guidesEl && typeof s.guides === "boolean") guidesEl.checked = s.guides;
+  if (swatchesEl && typeof s.swatches === "boolean") swatchesEl.checked = s.swatches;
   if (SCALES.indexOf(Number(s.scale)) >= 0) {
     scale = Number(s.scale);
     selectButton(scalesEl, ".a-scale", "scale", String(scale));
@@ -541,6 +554,15 @@ scalesEl.addEventListener("click", (e) => {
   selectButton(scalesEl, ".a-scale", "scale", String(s));
   savePrefs();
 });
+
+for (const box of [guidesEl, swatchesEl]) {
+  if (!box) continue;
+  box.addEventListener("change", () => {
+    prefsApplied = true;
+    updateOptionsNote();
+    savePrefs();
+  });
+}
 
 for (const sel of [layoutSel, hierarchySel, existingSel, keyframesSel, placeSel]) {
   sel.addEventListener("change", () => {

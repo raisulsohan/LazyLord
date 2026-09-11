@@ -866,6 +866,31 @@ function uv2(g) { return uv(g.from) + " " + uv(g.to); }
     ok("text: baseline still exact", near(l.baseline, 20), String(l.baseline));
 })();
 
+// Guides and swatches always travel; the target adds them only when asked.
+(function () {
+    function guidePath(a, b) {
+        return { guides: true, pathPoints: [{ anchor: a }, { anchor: b }] };
+    }
+    var doc = app.activeDocument;
+    doc.pathItems = [guidePath([-100, 300], [900, 300]), guidePath([150, 0], [150, 600]),
+                     guidePath([0, 0], [100, 100]), { guides: false, pathPoints: [{ anchor: [0, 10] }, { anchor: [50, 10] }] }];
+    doc.swatches = [
+        { name: "[None]", color: { typename: "NoColor" } },
+        { name: "Brand red", color: rgb(255, 0, 0) },
+        { name: "Blend", color: { typename: "GradientColor" } }
+    ];
+    var out;
+    try { out = readSel([squarePath()]); }
+    finally { delete doc.pathItems; delete doc.swatches; }
+    // The square's top-left (IR 100,100) is frame space's 0,0.
+    var gs = out.guides || [];
+    ok("guides: only straight guides, in frame space",
+       gs.length === 2 && gs[0].orientation === "horizontal" && near(gs[0].position, 200) &&
+       gs[1].orientation === "vertical" && near(gs[1].position, 50), JSON.stringify(gs));
+    ok("swatches: flat colours only, named", out.swatches && out.swatches.length === 1 &&
+       out.swatches[0].name === "Brand red" && near(out.swatches[0].color.r, 1), JSON.stringify(out.swatches));
+})();
+
 // Mixed character styles travel as runs.
 (function () {
     function ch(size, color, extra) {

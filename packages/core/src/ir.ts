@@ -320,6 +320,10 @@ export type Document = {
   sourceKey?: string;
   /** How the sender asked the target to lay the transfer out. */
   options?: TransferOptions;
+  /** The source page's ruler guides; built only when options.guides is on. */
+  guides?: Guide[];
+  /** The source document's named colours; built only when options.swatches is on. */
+  swatches?: Swatch[];
 };
 
 /**
@@ -367,7 +371,17 @@ export type TransferOptions = {
    * playhead, which is how you animate a shape by re-sending it.
    */
   keyframes?: "auto" | "always";
+  /** Rebuild the source page's ruler guides on the target (off by default). */
+  guides?: boolean;
+  /** Add the source's named colours to the target's swatches (off by default). */
+  swatches?: boolean;
 };
+
+/** A ruler guide in frame space: `position` is an x for a vertical guide, a y for a horizontal one. */
+export type Guide = { orientation: "horizontal" | "vertical"; position: number };
+
+/** A named colour from the source's swatches (Illustrator) or colour styles (Figma). */
+export type Swatch = { name: string; color: RGBA };
 
 /** Resolved options with defaults applied. */
 export function transferOptions(doc: Pick<Document, "options">): Required<TransferOptions> {
@@ -378,6 +392,8 @@ export function transferOptions(doc: Pick<Document, "options">): Required<Transf
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto",
+    guides: o.guides === true,
+    swatches: o.swatches === true,
   };
 }
 

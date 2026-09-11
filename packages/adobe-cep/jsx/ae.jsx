@@ -81,6 +81,7 @@ LazyLord.build = function (doc) {
     }
     if (opts.layout === "combine") ctx.combo = LazyLord._ae_planCombine(doc, layers);
     LazyLord._ae_tree(ctx, layers, 1, { separate: 0, combined: false });
+    LazyLord._ae_extras(ctx, doc);
   } finally {
     app.endUndoGroup();
   }
@@ -668,6 +669,52 @@ LazyLord.rollback = function (s) {
     if (!s.items[item.id]) item.remove();
   }
   return complete;
+};
+
+/*
+ * Guides and swatches, when the sender asked for them: the source page's
+ * ruler guides become comp guides (After Effects 16.1+), and its named
+ * colours a "Swatches" guide layer — a row of squares, one vector group per
+ * colour and named after it, that is visible in the comp but never renders.
+ */
+LazyLord._ae_extras = function (ctx, doc) {
+  var guides = LazyLord.wantedGuides(doc);
+  var added = 0;
+  for (var i = 0; i < guides.length; i++) {
+    try { ctx.comp.addGuide(guides[i].orientation === "vertical" ? 1 : 0, guides[i].position); added++; } catch (e) {}
+  }
+  if (added < guides.length) {
+    LazyLord.warn("Guides", (guides.length - added) + " of " + LazyLord._ae_plural(guides.length, "guide") +
+      " could not be added; After Effects 16.1 or newer adds guides from scripts", "skipped");
+  }
+  var sw = LazyLord.wantedSwatches(doc);
+  if (!sw.length) return;
+  try {
+    LazyLord._ae_swatchLayer(ctx, sw);
+  } catch (e2) {
+    LazyLord.warn("Swatches", "The swatch palette could not be built (" + ((e2 && e2.message) || String(e2)) + ")", "skipped");
+  }
+};
+
+LazyLord._ae_swatchLayer = function (ctx, sw) {
+  var size = 40, gap = 8;
+  var sl = ctx.comp.layers.addShape();
+  sl.name = "Swatches";
+  var root = sl.property("ADBE Root Vectors Group");
+  for (var i = 0; i < sw.length; i++) {
+    var grp = root.addProperty("ADBE Vector Group");
+    grp.name = sw[i].name;
+    var inner = grp.property("ADBE Vectors Group");
+    var rect = inner.addProperty("ADBE Vector Shape - Rect");
+    rect.property("ADBE Vector Rect Size").setValue([size, size]);
+    rect.property("ADBE Vector Rect Position").setValue([i * (size + gap) + size / 2, size / 2]);
+    var fill = inner.addProperty("ADBE Vector Graphic - Fill");
+    var c = sw[i].color || {};
+    fill.property("ADBE Vector Fill Color").setValue([c.r || 0, c.g || 0, c.b || 0, 1]);
+  }
+  LazyLord._ae_setTransform(sl, { anchor: [0, 0], position: [0, 0], scale: [100, 100], rotation: 0 });
+  try { sl.guideLayer = true; } catch (eG) {}
+  ctx.created++;
 };
 
 /* -------------------------------------------------------------------------

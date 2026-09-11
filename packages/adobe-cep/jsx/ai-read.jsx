@@ -130,8 +130,54 @@ LazyLord.readSelection = function (outDir) {
     originSpace: "document",
     canvas: canvas,
     sourceKey: LazyLord._air_sourceKey(doc),
-    layers: layers
+    layers: layers,
+    guides: LazyLord._air_guides(ctx),
+    swatches: LazyLord._air_swatches(doc)
   };
+};
+
+/**
+ * The document's straight ruler guides, in frame space. Illustrator keeps a
+ * guide as a path with guides = true; only horizontal and vertical lines are
+ * ruler guides.
+ */
+LazyLord._air_guides = function (ctx) {
+  var out = [];
+  var paths = null;
+  try { paths = ctx.doc.pathItems; } catch (e) {}
+  if (!paths || typeof paths.length !== "number") return out;
+  for (var i = 0; i < paths.length; i++) {
+    try {
+      var p = paths[i];
+      if (p.guides !== true || p.pathPoints.length !== 2) continue;
+      var a = p.pathPoints[0].anchor, b = p.pathPoints[1].anchor;
+      if (Math.abs(a[1] - b[1]) < 1e-6) {
+        out.push({ orientation: "horizontal", position: LazyLord._air_y(ctx, a[1]) - ctx.minY });
+      } else if (Math.abs(a[0] - b[0]) < 1e-6) {
+        out.push({ orientation: "vertical", position: LazyLord._air_x(ctx, a[0]) - ctx.minX });
+      }
+    } catch (eP) {}
+  }
+  return out;
+};
+
+/** The document's flat-colour swatches; [None], [Registration], gradients and patterns are left out. */
+LazyLord._air_swatches = function (doc) {
+  var out = [];
+  var sw = null;
+  try { sw = doc.swatches; } catch (e) {}
+  if (!sw || typeof sw.length !== "number") return out;
+  for (var i = 0; i < sw.length; i++) {
+    try {
+      var s = sw[i];
+      var t = s.color && s.color.typename;
+      if (t !== "RGBColor" && t !== "CMYKColor" && t !== "GrayColor" && t !== "SpotColor") continue;
+      if (t === "SpotColor" && /registration/i.test(s.name)) continue;
+      var p = LazyLord._air_color(s.color, 100, s.name);
+      if (p && p.color) out.push({ name: String(s.name), color: p.color });
+    } catch (eS) {}
+  }
+  return out;
 };
 
 /**

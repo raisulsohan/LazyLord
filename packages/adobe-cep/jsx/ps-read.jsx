@@ -19,6 +19,23 @@
  * Entry point
  * ---------------------------------------------------------------------- */
 
+/** The document's ruler guides, in frame space (the selection's top-left is 0,0). */
+LazyLord._psr_guides = function (psDoc, box) {
+  var out = [];
+  var gs = null;
+  try { gs = psDoc.guides; } catch (e) {}
+  if (!gs || typeof gs.length !== "number") return out;
+  for (var i = 0; i < gs.length; i++) {
+    try {
+      var g = gs[i];
+      var at = LazyLord._pv(g.coordinate);
+      if (g.direction === Direction.HORIZONTAL) out.push({ orientation: "horizontal", position: at - box.y });
+      else out.push({ orientation: "vertical", position: at - box.x });
+    } catch (eG) {}
+  }
+  return out;
+};
+
 LazyLord.readSelection = function (outDir, opts) {
   if (app.documents.length === 0) throw new Error("No Photoshop document is open.");
 
@@ -75,7 +92,8 @@ LazyLord.readSelection = function (outDir, opts) {
         name: psDoc.name || "Photoshop"
       },
       sourceKey: LazyLord._psr_sourceKey(psDoc),
-      layers: raws
+      layers: raws,
+      guides: LazyLord._psr_guides(psDoc, box)
     };
   } finally {
     app.preferences.rulerUnits = oldRuler;

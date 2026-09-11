@@ -1841,6 +1841,49 @@ function updateOptsAI(extra) {
        /\[\[LazyLord /.test(String(aiDoc.pageItems[0].note)), String(aiDoc.pageItems[0].note));
 })();
 
+// U2b) Conflicts: the tag remembers how the artwork stood when it was last sent.
+(function () {
+    var red = [{ type: "solid", color: rgba(1, 0, 0) }], blue = [{ type: "solid", color: rgba(0, 0, 1) }];
+    var aiDoc = openDoc();
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], red)]));
+    var t = LazyLord.readTag(aiDoc.pageItems[0].note);
+    ok("AI fp: the tag carries a fingerprint", t && t.fp !== "" && t.id === "Box", String(aiDoc.pageItems[0].note));
+    ok("AI fp: it matches the artwork as built", t && t.fp === LazyLord._ai_state([aiDoc.pageItems[0]]));
+
+    LazyLord.diagnostics = [];
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], blue)], "file-A", updateOptsAI()));
+    ok("AI fp: untouched artwork is no conflict", !findDiag2(/since it was last sent/), diags());
+
+    // The user recolours it in Illustrator, then the source is sent again, keeping.
+    aiDoc.pageItems[0].fillColor = new RGBColor();
+    aiDoc.pageItems[0].fillColor.green = 255;
+    var edited = aiDoc.pageItems[0];
+    LazyLord.diagnostics = [];
+    var r = build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], red)], "file-A", updateOptsAI({ conflict: "keep" })));
+    ok("AI keep: reported", !!findDiag2(/changed in Illustrator since it was last sent, so it was left as you made it/), diags());
+    ok("AI keep: the edited item is still there, untouched", aiDoc.pageItems.length === 1 && aiDoc.pageItems[0] === edited &&
+       edited.fillColor.green === 255, aiDoc.pageItems.length + " " + edited.fillColor.green);
+    ok("AI keep: nothing replaced or added", r.layersUpdated === 0 && r.layersCreated === 0 && /left as you made them/.test(r.message) &&
+       !/Nothing matched/.test(r.message), r.message);
+
+    // The default overwrites, and says so; the next update is clean again.
+    LazyLord.diagnostics = [];
+    r = build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], red)], "file-A", updateOptsAI()));
+    ok("AI overwrite: reported", !!findDiag2(/changed in Illustrator since it was last sent; the update replaced it/), diags());
+    ok("AI overwrite: replaced", r.layersUpdated === 1 && aiDoc.pageItems.length === 1 && aiDoc.pageItems[0] !== edited &&
+       aiDoc.pageItems[0].fillColor.red === 255, r.message);
+    ok("AI overwrite: the summary says so", /1 item was changed here since the last send: your changes were replaced\. Replaced 1 item/.test(r.message), r.message);
+    LazyLord.diagnostics = [];
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], blue)], "file-A", updateOptsAI()));
+    ok("AI overwrite: then clean again", !findDiag2(/since it was last sent/), diags());
+
+    // A reshaped path is an edit too.
+    aiDoc.pageItems[0].pathPoints[0].anchor = [1, 1];
+    LazyLord.diagnostics = [];
+    build(taggedDocAI([vectorLayer("Box", BOX, [rectPath(200, 100)], blue)], "file-A", updateOptsAI({ conflict: "keep" })));
+    ok("AI keep: a moved point counts", !!findDiag2(/left as you made it/), diags());
+})();
+
 // U3) The point of replacing in place: the artwork keeps its depth in the stack.
 (function () {
     var aiDoc = openDoc();

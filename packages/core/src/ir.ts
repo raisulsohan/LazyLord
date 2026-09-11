@@ -371,6 +371,14 @@ export type TransferOptions = {
    * playhead, which is how you animate a shape by re-sending it.
    */
   keyframes?: "auto" | "always";
+  /**
+   * Only consulted while updating. A target remembers, in each layer's tag, a
+   * fingerprint of what LazyLord last wrote to it; a layer whose fingerprint
+   * no longer matches was edited in the target since. Either way it is reported.
+   * "overwrite" (default): the update replaces those edits.
+   * "keep": the layer is left as the user made it, and not updated.
+   */
+  conflict?: "overwrite" | "keep";
   /** Rebuild the source page's ruler guides on the target (off by default). */
   guides?: boolean;
   /** Add the source's named colours to the target's swatches (off by default). */
@@ -392,6 +400,7 @@ export function transferOptions(doc: Pick<Document, "options">): Required<Transf
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto",
+    conflict: o.conflict === "keep" ? "keep" : "overwrite",
     guides: o.guides === true,
     swatches: o.swatches === true,
   };

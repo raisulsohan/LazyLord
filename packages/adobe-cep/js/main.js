@@ -65,6 +65,8 @@
   var existingSel = document.getElementById("push-existing");
   var keyframesSel = document.getElementById("push-keyframes");
   var keyframesRow = document.getElementById("push-keyframes-row");
+  var conflictSel = document.getElementById("push-conflict");
+  var conflictRow = document.getElementById("push-conflict-row");
   var onlyChangedEl = document.getElementById("push-only-changed");
   var onlyChangedRow = document.getElementById("push-only-changed-row");
   var guidesEl = document.getElementById("push-guides");
@@ -236,6 +238,7 @@
     if (hierarchySel && contains(HIERARCHIES, prefs.hierarchy)) hierarchySel.value = prefs.hierarchy;
     if (existingSel && contains(EXISTING, prefs.existing)) existingSel.value = prefs.existing;
     if (keyframesSel && contains(KEYFRAMES, prefs.keyframes)) keyframesSel.value = prefs.keyframes;
+    if (conflictSel && contains(CONFLICTS, prefs.conflict)) conflictSel.value = prefs.conflict;
     if (guidesEl && typeof prefs.guides === "boolean") guidesEl.checked = prefs.guides;
     if (onlyChangedEl && typeof prefs.onlyChanged === "boolean") onlyChangedEl.checked = prefs.onlyChanged;
     if (swatchesEl && typeof prefs.swatches === "boolean") swatchesEl.checked = prefs.swatches;
@@ -289,6 +292,7 @@
       hierarchy: o.hierarchy,
       existing: o.existing,
       keyframes: o.keyframes,
+      conflict: o.conflict,
       guides: o.guides,
       swatches: o.swatches
     };
@@ -302,6 +306,7 @@
     if (hierarchySel && contains(HIERARCHIES, s.hierarchy)) { hierarchySel.value = s.hierarchy; savePref("hierarchy", s.hierarchy); }
     if (existingSel && contains(EXISTING, s.existing)) { existingSel.value = s.existing; savePref("existing", s.existing); }
     if (keyframesSel && contains(KEYFRAMES, s.keyframes)) { keyframesSel.value = s.keyframes; savePref("keyframes", s.keyframes); }
+    if (conflictSel && contains(CONFLICTS, s.conflict)) { conflictSel.value = s.conflict; savePref("conflict", s.conflict); }
     if (guidesEl && typeof s.guides === "boolean") { guidesEl.checked = s.guides; savePref("guides", s.guides); }
     if (swatchesEl && typeof s.swatches === "boolean") { swatchesEl.checked = s.swatches; savePref("swatches", s.swatches); }
     updateDestNote();
@@ -444,6 +449,7 @@
   var HIERARCHIES = ["flatten", "groups", "precomps"];
   var EXISTING = ["add", "update"];
   var KEYFRAMES = ["auto", "always"];
+  var CONFLICTS = ["overwrite", "keep"];
 
   /** Options with the defaults applied (mirrors core's transferOptions). */
   function normaliseOptions(o) {
@@ -453,6 +459,7 @@
       hierarchy: (o.hierarchy === "groups" || o.hierarchy === "precomps") ? o.hierarchy : "flatten",
       existing: o.existing === "update" ? "update" : "add",
       keyframes: o.keyframes === "always" ? "always" : "auto",
+      conflict: o.conflict === "keep" ? "keep" : "overwrite",
       guides: o.guides === true,
       swatches: o.swatches === true
     };
@@ -466,6 +473,7 @@
     if (o.hierarchy === "precomps") parts.push("Precomps");
     if (o.existing === "update") parts.push("Update");
     if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
+    if (o.existing === "update" && o.conflict === "keep") parts.push("Keep edits");
     if (o.guides) parts.push("Guides");
     if (o.swatches) parts.push("Swatches");
     var sc = activeChip(scalesEl, "scale");
@@ -480,6 +488,7 @@
       hierarchy: hierarchySel ? hierarchySel.value : "",
       existing: existingSel ? existingSel.value : "",
       keyframes: keyframesSel ? keyframesSel.value : "",
+      conflict: conflictSel ? conflictSel.value : "",
       guides: !!(guidesEl && guidesEl.checked),
       swatches: !!(swatchesEl && swatchesEl.checked)
     });
@@ -535,6 +544,7 @@
     var updating = (o.existing === "update");
     if (keyframesRow) keyframesRow.hidden = !updating;
     if (onlyChangedRow) onlyChangedRow.hidden = !updating;
+    if (conflictRow) conflictRow.hidden = !updating;
     if (optsHint) {
       if (!updating) optsHint.textContent = "";
       else if (destinationSel && destinationSel.value !== "active") {
@@ -1682,6 +1692,10 @@
     });
     if (keyframesSel) keyframesSel.addEventListener("change", function () {
       savePref("keyframes", pushOptions().keyframes);
+      updateOptionsNote();
+    });
+    if (conflictSel) conflictSel.addEventListener("change", function () {
+      savePref("conflict", pushOptions().conflict);
       updateOptionsNote();
     });
     if (guidesEl) guidesEl.addEventListener("change", function () { savePref("guides", !!guidesEl.checked); updateOptionsNote(); });

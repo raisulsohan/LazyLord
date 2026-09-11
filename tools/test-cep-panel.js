@@ -96,6 +96,7 @@ var LAYOUT_VALUES = selectValues("push-layout");
 var HIERARCHY_VALUES = selectValues("push-hierarchy");
 var EXISTING_VALUES = selectValues("push-existing");
 var KEYFRAME_VALUES = selectValues("push-keyframes");
+var CONFLICT_VALUES = selectValues("push-conflict");
 var DESTINATION_VALUES = selectValues("push-destination");
 /** The image scales index.html offers, read off its chips. */
 var SCALE_VALUES = (function () {
@@ -172,13 +173,14 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-hierarchy", "push-existing", "push-keyframes", "push-keyframes-row", "push-opts-hint",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
-           "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row"];
+           "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
+           "push-conflict", "push-conflict-row"];
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
              "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
              "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button", "push-only-changed": "input",
              "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
-             "push-existing": "select", "push-keyframes": "select",
+             "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
              "push-destination": "select" };
 
 /** Fill a mock chip row the way index.html does, with one chip active. */
@@ -257,6 +259,7 @@ function boot(appName, storage) {
     addOptions(els["push-hierarchy"], HIERARCHY_VALUES);
     addOptions(els["push-existing"], EXISTING_VALUES);
     addOptions(els["push-keyframes"], KEYFRAME_VALUES);
+    addOptions(els["push-conflict"], CONFLICT_VALUES);
     addOptions(els["push-destination"], DESTINATION_VALUES);
     addChips(els["push-scales"], "scale", SCALE_VALUES, "2"); // index.html default
     els["push-keyframes-row"].hidden = true;
@@ -1254,6 +1257,40 @@ run("update options travel", function () {
        JSON.stringify(sent.document.options));
     ok("sent: so does Always", sent.document.options.keyframes === "always",
        JSON.stringify(sent.document.options));
+    ok("sent: On conflict defaults to Overwrite", sent.document.options.conflict === "overwrite",
+       JSON.stringify(sent.document.options));
+});
+
+// 13a) On conflict: shown while updating, stored, named on the folded label, sent.
+run("on conflict", function () {
+    var store = new MemoryStorage();
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    ok("conflict: offers Overwrite then Keep my edits", CONFLICT_VALUES.join(",") === "overwrite,keep", CONFLICT_VALUES.join(","));
+    ok("conflict: labelled", has(HTML_SRC, '<label for="push-conflict">On conflict</label>'));
+    ok("conflict: hidden while adding", els["push-conflict-row"].hidden === true);
+    choose("push-existing", "update");
+    ok("conflict: shown once updating", els["push-conflict-row"].hidden === false);
+    choose("push-conflict", "keep");
+    ok("conflict: named on the folded label", noteText() === "Update, Keep edits", noteText());
+    var saved = JSON.parse(store.getItem("lazylord.prefs.illustrator"));
+    ok("conflict: stored", saved && saved.conflict === "keep", store.getItem("lazylord.prefs.illustrator"));
+
+    var again = boot("ILST", store);
+    peersMsg(again, "welcome", ["illustrator", "aftereffects"]);
+    ok("conflict: restored", els["push-conflict"].value === "keep", els["push-conflict"].value);
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()], fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    files["C:/tmp/cf/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/cf/ir.json", message: "", diagnostics: [] }));
+    var sent = lastSent(again);
+    ok("conflict: Keep my edits reaches the builder", sent && sent.document.options.conflict === "keep",
+       sent && JSON.stringify(sent.document.options));
 });
 
 // 13b) Smart diff: while updating, only what changed since the last send goes out.

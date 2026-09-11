@@ -34,6 +34,8 @@ const hierarchySel = $<HTMLSelectElement>("#hierarchy");
 const existingSel = $<HTMLSelectElement>("#existing");
 const keyframesSel = $<HTMLSelectElement>("#keyframes");
 const keyframesOpt = $("#keyframes-opt");
+const conflictSel = $<HTMLSelectElement>("#conflict");
+const conflictOpt = $("#conflict-opt");
 const onlyChangedEl = $<HTMLInputElement>("#only-changed");
 const onlyChangedOpt = $("#only-changed-opt");
 const guidesEl = $<HTMLInputElement>("#guides");
@@ -64,7 +66,7 @@ let diagnostics: Array<Diagnostic & { from: string }> = [];
 // usable localStorage); the main thread loads them and saves what we post.
 type Settings = {
   place: string; scale: number; layout: string; hierarchy: string; existing: string; keyframes: string;
-  guides?: boolean; swatches?: boolean;
+  conflict?: string; guides?: boolean; swatches?: boolean;
 };
 type HistoryEntry = {
   t: number; dir: "in" | "out"; peer: string; name: string; ok: boolean;
@@ -321,6 +323,7 @@ function currentOptions(): Required<TransferOptions> {
       destination: existing === "update" || placeSel.value === "open" ? "active" : "new",
       existing,
       keyframes: keyframesSel.value as TransferOptions["keyframes"],
+      conflict: (conflictSel ? conflictSel.value : "") as TransferOptions["conflict"],
       guides: !!(guidesEl && guidesEl.checked),
       swatches: !!(swatchesEl && swatchesEl.checked),
     },
@@ -346,6 +349,7 @@ function updateOptionsNote() {
   if (o.hierarchy === "precomps") parts.push("Precomps");
   if (o.existing === "update") parts.push("Update");
   if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
+  if (o.existing === "update" && o.conflict === "keep") parts.push("Keep edits");
   if (o.guides) parts.push("Guides");
   if (o.swatches) parts.push("Swatches");
   optsNote.textContent = parts.join(", ");
@@ -354,6 +358,7 @@ function updateOptionsNote() {
   const updating = o.existing === "update";
   keyframesOpt.hidden = !updating;
   if (onlyChangedOpt) onlyChangedOpt.hidden = !updating;
+  if (conflictOpt) conflictOpt.hidden = !updating;
   if (!updating) {
     optsHint.textContent = "Applied by the app that receives the transfer.";
   } else if (placeSel.value !== "open") {
@@ -370,10 +375,10 @@ function updateOptionsNote() {
 /** Tell the main thread, which keeps them in figma.clientStorage. */
 function savePrefs() {
   const o = currentOptions();
-  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches, onlyChanged: onlyChangedWanted(), place: placeSel.value, width: winWidth, height: winHeight } }, "*");
+  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, conflict: o.conflict, guides: o.guides, swatches: o.swatches, onlyChanged: onlyChangedWanted(), place: placeSel.value, width: winWidth, height: winHeight } }, "*");
 }
 
-function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; guides?: unknown; swatches?: unknown; onlyChanged?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
+function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; conflict?: unknown; guides?: unknown; swatches?: unknown; onlyChanged?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
   noteSize(msg.width, msg.height);
   if (onlyChangedEl && typeof msg.onlyChanged === "boolean") onlyChangedEl.checked = msg.onlyChanged;
   if (typeof msg.place === "string" && PLACE_NOTES[msg.place]) placeSel.value = msg.place;
@@ -393,6 +398,7 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
   hierarchySel.value = o.hierarchy;
   existingSel.value = o.existing;
   keyframesSel.value = o.keyframes;
+  if (conflictSel) conflictSel.value = o.conflict;
   if (guidesEl) guidesEl.checked = o.guides;
   if (swatchesEl) swatchesEl.checked = o.swatches;
   updateOptionsNote();
@@ -403,7 +409,7 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
 
 function currentSettings(): Settings {
   const o = currentOptions();
-  return { place: placeSel.value, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, guides: o.guides, swatches: o.swatches };
+  return { place: placeSel.value, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, conflict: o.conflict, guides: o.guides, swatches: o.swatches };
 }
 
 function setSelect(sel: HTMLSelectElement, value: unknown) {
@@ -416,6 +422,7 @@ function applySettings(s: Partial<Settings>) {
   setSelect(hierarchySel, s.hierarchy);
   setSelect(existingSel, s.existing);
   setSelect(keyframesSel, s.keyframes);
+  if (conflictSel) setSelect(conflictSel, s.conflict);
   if (guidesEl && typeof s.guides === "boolean") guidesEl.checked = s.guides;
   if (swatchesEl && typeof s.swatches === "boolean") swatchesEl.checked = s.swatches;
   if (SCALES.indexOf(Number(s.scale)) >= 0) {
@@ -571,7 +578,8 @@ for (const box of [guidesEl, swatchesEl, onlyChangedEl]) {
   });
 }
 
-for (const sel of [layoutSel, hierarchySel, existingSel, keyframesSel, placeSel]) {
+for (const sel of [layoutSel, hierarchySel, existingSel, keyframesSel, conflictSel, placeSel]) {
+  if (!sel) continue;
   sel.addEventListener("change", () => {
     prefsApplied = true;
     updateOptionsNote();

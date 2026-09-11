@@ -141,8 +141,11 @@
     line.textContent = "[" + t + "] " + msg;
     if (logEl.firstChild && logEl.firstChild.nodeType === 3) logEl.textContent = "";
     logEl.appendChild(line);
+    // Live adds lines all session long: keep the newest LOG_MAX.
+    while (logEl.children && logEl.children.length > LOG_MAX && logEl.firstChild) logEl.removeChild(logEl.firstChild);
     logEl.scrollTop = logEl.scrollHeight;
   }
+  var LOG_MAX = 500;
 
   function setConn(on, text) {
     connEl.className = "conn" + (on ? " on" : "");
@@ -599,7 +602,7 @@
       jsxLoading = false;
       jsxError = "the application did not answer, it may be busy or showing a dialog";
       log("Loading the host scripts timed out: " + jsxError + ".", "err");
-      flushJsxWaiters(false);
+      loadFailed();
     }, JSX_LOAD_TIMEOUT_MS);
 
     cs.evalScript(script, function (res) {
@@ -610,26 +613,42 @@
         jsxReady = true;
         jsxError = "";
         log("Host modules loaded (" + host + (canPush ? " + reader" : "") + ").");
-        if (canPush) {
-          // Everything about sending appears at once, so a host that cannot send
-          // shows a receive-only panel rather than dead controls.
-          var cards = ["push-card", "scale-card", "destination-card", "options-card", "send-card"];
-          for (var c = 0; c < cards.length; c++) {
-            var el = document.getElementById(cards[c]);
-            if (el) el.hidden = false;
-          }
-          pushSub.textContent = "Send the selected " +
-            (role === "aftereffects" ? "layers" : "artwork") + " to another app.";
-          updateDestNote();
-        }
+        showSendCards();
         updatePushButton();
         flushJsxWaiters(true);
         return;
       }
       jsxError = describeLoadError(res, files);
       log("Failed to load the host scripts: " + jsxError, "err");
-      flushJsxWaiters(false);
+      loadFailed();
     });
+  }
+
+  /**
+   * Everything about sending appears at once, so a host that cannot send shows
+   * a receive-only panel rather than dead controls.
+   */
+  function showSendCards() {
+    if (!canPush) return;
+    var cards = ["push-card", "scale-card", "destination-card", "options-card", "send-card"];
+    for (var c = 0; c < cards.length; c++) {
+      var el = document.getElementById(cards[c]);
+      if (el) el.hidden = false;
+    }
+    pushSub.textContent = "Send the selected " +
+      (role === "aftereffects" ? "layers" : "artwork") + " to another app.";
+    updateDestNote();
+  }
+
+  /**
+   * The scripts did not load (the host was busy or starting up). The send side
+   * still appears, and Send tries loading them again.
+   */
+  function loadFailed() {
+    showSendCards();
+    if (canPush) log("Press Send to try loading the scripts again.");
+    updatePushButton();
+    flushJsxWaiters(false);
   }
 
   function flushJsxWaiters(ok) {
@@ -650,17 +669,70 @@
 
   // --- Bridge connection --------------------------------------------------
 
-  function connect() {
-    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-    try { if (ws) ws.close(); } catch (e) {}
-    setConn(false, "Connecting…");
+  // --- The bridge, run by the panel itself ----------------------------------
+  // Nobody starts a bridge by hand: the first LazyLord panel opened hosts the
+  // relay in its own Node context (js/relay.js), and every panel — that one
+  // included — and the Figma plugin connect to it. When the hosting app quits,
+  // the others lose their connection, and the next to reconnect takes the port
+  // over. A stand-alone bridge (start-bridge.bat) still works: it holds the
+  // port, and the panels simply use it.
+
+  var relay = null;
+  var relayNoted = false;
+
+  function ensureBridge(done) {
+    if (relay || typeof require !== "function") { done(); return; }
+    var mod = null;
     try {
-      ws = new WebSocket(BRIDGE_URL);
+      mod = require(cs.getSystemPath(SystemPath.EXTENSION) + "/js/relay.js");
+    } catch (e) {
+      // Not built (an old install): a stand-alone bridge may be running instead.
+      if (!relayNoted) {
+        relayNoted = true;
+        log("The built-in bridge is missing (run install.bat again); looking for a running bridge instead.", "warn");
+      }
+      done();
+      return;
+    }
+    mod.startRelay({ port: DEFAULT_PORT }).then(function (r) {
+      relay = r;
+      done();
+    }, function () {
+      // The port is served already — by another app's panel, or a stand-alone bridge.
+      done();
+    });
+  }
+
+  function stopBridge() {
+    if (!relay) return;
+    try { relay.close(); } catch (e) {}
+    relay = null;
+  }
+
+  function connect() {
+    ensureBridge(openSocket);
+  }
+
+  function openSocket() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    // The old socket is let go first, so its close cannot schedule a reconnect
+    // of its own: that turned Reconnect into an endless drop-and-reconnect.
+    var old = ws;
+    ws = null;
+    if (old) {
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      try { old.close(); } catch (e) {}
+    }
+    setConn(false, "Connecting…");
+    var sock;
+    try {
+      sock = ws = new WebSocket(BRIDGE_URL);
     } catch (e) {
       scheduleReconnect();
       return;
     }
-    ws.onopen = function () {
+    sock.onopen = function () {
+      if (sock !== ws) return;
       setConn(true, "Connected");
       send({
         type: "hello",
@@ -670,18 +742,20 @@
       });
       log("Connected to LazyLord bridge.");
     };
-    ws.onmessage = function (ev) {
+    sock.onmessage = function (ev) {
+      if (sock !== ws) return;
       var msg;
       try { msg = JSON.parse(ev.data); } catch (e) { return; }
       onMessage(msg);
     };
-    ws.onclose = function () {
+    sock.onclose = function () {
+      if (sock !== ws) return;
       setConn(false, "Bridge offline");
       peers = [];
       renderTargets();
       scheduleReconnect();
     };
-    ws.onerror = function () { try { ws.close(); } catch (e) {} };
+    sock.onerror = function () { try { sock.close(); } catch (e) {} };
   }
 
   function scheduleReconnect() {
@@ -689,8 +763,11 @@
     reconnectTimer = setTimeout(function () { reconnectTimer = null; connect(); }, 2500);
   }
 
+  /** False when the bridge is not connected, so nothing went. */
   function send(msg) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+    if (!ws || ws.readyState !== 1) return false;
+    ws.send(JSON.stringify(msg));
+    return true;
   }
 
   // --- Large transfers -----------------------------------------------------
@@ -703,23 +780,31 @@
   var CHUNK_TIMEOUT_MS = 2 * 60 * 1000;
   var chunksOpen = {};
 
+  /** How many messages it took; 0 when the bridge was not connected (or dropped part-way). */
   function sendTransfer(msg) {
     var text = JSON.stringify(msg);
-    if (text.length <= CHUNK_THRESHOLD) { send(msg); return 1; }
+    if (text.length <= CHUNK_THRESHOLD) return send(msg) ? 1 : 0;
     var total = Math.ceil(text.length / CHUNK_SIZE);
     for (var i = 0; i < total; i++) {
-      send({ type: "chunk", id: msg.id, target: msg.target, index: i, total: total,
+      var sent = send({ type: "chunk", id: msg.id, target: msg.target, index: i, total: total,
         data: text.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE) });
+      if (!sent) return 0;
     }
     return total;
+  }
+
+  /** Forget half-joined transfers whose sender went quiet. */
+  function pruneChunks(now) {
+    now = now || new Date().getTime();
+    for (var k in chunksOpen) {
+      if (Object.prototype.hasOwnProperty.call(chunksOpen, k) && now - chunksOpen[k].at > CHUNK_TIMEOUT_MS) delete chunksOpen[k];
+    }
   }
 
   /** Add one chunk; the whole transfer once its last piece is in, else null. */
   function joinChunk(c, now) {
     now = now || new Date().getTime();
-    for (var k in chunksOpen) {
-      if (Object.prototype.hasOwnProperty.call(chunksOpen, k) && now - chunksOpen[k].at > CHUNK_TIMEOUT_MS) delete chunksOpen[k];
-    }
+    pruneChunks(now);
     if (!c || typeof c.id !== "string" || !(c.total > 0) || !(c.index >= 0 && c.index < c.total)) return null;
     var rec = Object.prototype.hasOwnProperty.call(chunksOpen, c.id) ? chunksOpen[c.id] : null;
     if (!rec || rec.total !== c.total) rec = chunksOpen[c.id] = { total: c.total, got: 0, data: [], at: now };
@@ -738,6 +823,9 @@
   }
 
   function onMessage(msg) {
+    // Any message will do as a clock: a transfer cut off half-way is dropped
+    // even if no other large transfer ever arrives.
+    if (msg.type !== "chunk") pruneChunks();
     if (msg.type === "chunk") {
       var joined = joinChunk(msg);
       if (joined) onMessage(joined);
@@ -773,14 +861,14 @@
     return (h >>> 0).toString(36) + "." + s.length.toString(36);
   }
 
-  function leafPrint(layer) {
+  function leafPrint(layer, salt) {
     var copy = {};
     for (var k in layer) {
       if (!Object.prototype.hasOwnProperty.call(layer, k)) continue;
       if (k === "filePath" && layer.isOriginalFile !== true) continue;
       copy[k] = layer[k];
     }
-    return hashText(JSON.stringify(copy));
+    return hashText(salt + JSON.stringify(copy));
   }
 
   function onlyChangedWanted() {
@@ -795,17 +883,23 @@
     var key = target + "|" + (doc.sourceKey || "") + "|" + (doc.source || "");
     var before = prune ? (loadSentMap()[key] || {}) : {};
     var prints = {}, kept = 0, skipped = 0;
-    function walk(list) {
+    // Frames are measured from the selection's corner, so where the selection
+    // sits is part of every print, and so is what a group passes on to its
+    // leaves: moving the whole selection, or fading its group, is a change.
+    var b = doc.bounds || { x: 0, y: 0 };
+    var base = JSON.stringify([b.x, b.y, doc.originSpace || "", doc.canvas || null]);
+    function walk(list, salt) {
       var out = [];
       for (var i = 0; list && i < list.length; i++) {
         var l = list[i];
         if (!l) continue;
         if (l.type === "group") {
-          l.children = walk(l.children || []);
+          var passed = JSON.stringify([l.frame && l.frame.opacity, l.blendMode, l.effects, l.clip]);
+          l.children = walk(l.children || [], salt + "|" + passed);
           if (!prune || l.children.length) out.push(l);
           continue;
         }
-        var p = leafPrint(l);
+        var p = leafPrint(l, salt);
         if (l.id !== undefined) prints[l.id] = p;
         if (prune && l.id !== undefined && before[l.id] === p) { skipped++; continue; }
         kept++;
@@ -813,7 +907,7 @@
       }
       return out;
     }
-    doc.layers = walk(doc.layers);
+    doc.layers = walk(doc.layers, base);
     return { key: key, prints: prints, kept: kept, skipped: skipped, pruned: !!prune };
   }
 
@@ -828,18 +922,26 @@
     }
   }
 
+  /**
+   * Every leaf of a send is fingerprinted, the unchanged ones too, so the
+   * document's entry is replaced outright: leaves no longer sent drop out. If
+   * the prints cannot be stored, the old ones are dropped with them — stale
+   * prints would leave a real change unsent, a missing one only sends again.
+   */
   function rememberSent(key, prints) {
     var st = prefsStore();
     if (!st || !prints) return;
     var all = loadSentMap();
-    var entry = all[key] || {};
-    for (var id in prints) if (Object.prototype.hasOwnProperty.call(prints, id)) entry[id] = prints[id];
     delete all[key];
-    all[key] = entry; // newest last
+    all[key] = prints; // newest last
     var keys = [];
     for (var k in all) if (Object.prototype.hasOwnProperty.call(all, k)) keys.push(k);
     while (keys.length > SENT_DOCS_MAX) delete all[keys.shift()];
-    try { st.setItem(SENT_KEY, JSON.stringify(all)); } catch (e) {}
+    try {
+      st.setItem(SENT_KEY, JSON.stringify(all));
+    } catch (e) {
+      try { st.removeItem(SENT_KEY); } catch (e2) {}
+    }
   }
 
   // --- Requests between panels ---------------------------------------------
@@ -1012,7 +1114,8 @@
    */
   function updatePushButton() {
     if (!canPush) return;
-    pushBtn.disabled = pushBusy || !targetsAvailable || !jsxReady;
+    // Not loaded yet is no reason to disable it: pressing it loads the scripts again.
+    pushBtn.disabled = pushBusy || !targetsAvailable || jsxLoading;
     var where = currentTarget() ? roleLabel(currentTarget()) : "";
     if (pushBusy) pushBtn.textContent = "Sending…";
     else pushBtn.textContent = where ? "Send to " + where : "Send";
@@ -1078,7 +1181,8 @@
   function tempDir(id) {
     var sep = nodePath ? nodePath.sep : "/";
     var base = tempBase();
-    var dir = base + sep + id;
+    // A transfer id comes off the network: never let it name a path of its own.
+    var dir = base + sep + (safeName(id).slice(0, 64) || newId());
     if (fs) {
       try { fs.mkdirSync(base, { recursive: true }); } catch (e) {}
       try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
@@ -1155,21 +1259,43 @@
   // a send is under way is caught by the next poll, never lost.
 
   var LIVE_POLL_MS = 1500;
+  var LIVE_STAMP_TIMEOUT_MS = 10000;
   var liveOn = false;
   var liveGen = 0;
   var liveStamp = null;
   var livePolling = false;
+  var liveStarted = false; // its first, full send has gone
+  var liveRetry = false;   // the last live send failed: send again once
+
+  /** Only these rebuild what they built before; anywhere else Live would pile up copies. */
+  function liveCanReach(target) {
+    return target === "aftereffects" || target === "illustrator";
+  }
 
   function startLive() {
-    if (!currentTarget()) {
+    var target = currentTarget();
+    if (!target) {
       stopLive("no destination app is connected");
+      return;
+    }
+    if (!liveCanReach(target)) {
+      stopLive(roleLabel(target) + " can only add layers, not update them, so every change would add another copy; " +
+        "choose After Effects or Illustrator");
       return;
     }
     liveOn = true;
     liveGen++;
     liveStamp = null;
-    log("Live: changes to the selection are sent to " + roleLabel(currentTarget()) + " as you work.", "ok");
+    livePolling = false;
+    liveStarted = false;
+    liveRetry = false;
+    log("Live: changes to the selection are sent to " + roleLabel(target) + " as you work.", "ok");
     livePoll(liveGen);
+  }
+
+  /** A live send failed (read, delivery or build): try it once more at the next poll. */
+  function liveFailed() {
+    if (liveOn) liveRetry = true;
   }
 
   function stopLive(why) {
@@ -1184,16 +1310,26 @@
   function livePoll(gen) {
     if (!liveOn || gen !== liveGen) return;
     setTimeout(function () { livePoll(gen); }, LIVE_POLL_MS);
-    if (!currentTarget()) { stopLive("the destination app disconnected"); return; }
+    var target = currentTarget();
+    if (!target) { stopLive("the destination app disconnected"); return; }
+    if (!liveCanReach(target)) { stopLive(roleLabel(target) + " can only add layers, not update them"); return; }
     if (pushBusy || livePolling || !jsxReady) return;
     livePolling = true;
+    var answered = false;
+    // A host showing a modal dialog may not answer for a while: poll again later.
+    setTimeout(function () { if (!answered && gen === liveGen) livePolling = false; }, LIVE_STAMP_TIMEOUT_MS);
     cs.evalScript("LazyLord.liveStamp()", function (res) {
+      answered = true;
       livePolling = false;
-      if (!liveOn || gen !== liveGen || res === liveStamp) return;
-      var first = liveStamp === null;
+      if (!liveOn || gen !== liveGen) return;
+      // A Send pressed while the host was answering has the floor: poll again after it.
+      if (pushBusy) return;
+      var retry = liveRetry && res === liveStamp;
+      if (res === liveStamp && !retry) return;
+      liveRetry = false;
       liveStamp = res;
       if (res === "") return; // nothing selected: wait for a selection
-      doPush(first ? "live-start" : "live");
+      doPush(liveStarted ? "live" : "live-start");
     });
   }
 
@@ -1205,6 +1341,8 @@
    * one (only what changed, and quietly when nothing did).
    */
   function doPush(mode) {
+    // One send at a time: a second would take over the first one's ack.
+    if (pushBusy) return;
     var live = mode === "live" || mode === "live-start";
     var target = currentTarget();
     if (!target) { log("No destination app is connected.", "err"); return; }
@@ -1223,10 +1361,12 @@
     // Live keeps one copy in step: it updates what its first send built.
     if (live) {
       options.existing = "update";
+      options.live = true; // so the receiver keeps it out of its history too
       place = "active";
     }
     var prune = live ? mode === "live" : (options.existing === "update" && onlyChangedWanted());
-    var reading = { scale: currentScale() };
+    // Guides and swatches cost a walk of the whole document, so the reader skips what was not asked for.
+    var reading = { scale: currentScale(), guides: options.guides, swatches: options.swatches };
     var id = newId();
     var dir;
     try {
@@ -1249,6 +1389,7 @@
       if (!r.ok) {
         log(r.message || "Could not read the selection.", "err");
         setPushBusy(false);
+        if (live) liveFailed();
         return;
       }
 
@@ -1259,6 +1400,7 @@
       } catch (e2) {
         log("Could not read the exported data: " + e2.message, "err");
         setPushBusy(false);
+        if (live) liveFailed();
         return;
       }
 
@@ -1288,6 +1430,15 @@
         live: live
       };
       var parts = sendTransfer({ type: "transfer", id: id, target: target, document: doc });
+      if (!parts) {
+        pendingPush = null;
+        pendingPushInfo = null;
+        log("Not connected to the other apps, so nothing was sent. The panel reconnects by itself; send again in a moment.", "err");
+        setPushBusy(false);
+        if (live) liveFailed();
+        return;
+      }
+      if (mode === "live-start") liveStarted = true;
       if (parts > 1) log("Large transfer: sent in " + parts + " pieces.");
       // Counted here, not taken from the reader's layerCount, which only sees
       // the top level: layers inside groups count too.
@@ -1306,6 +1457,7 @@
         log("No response from " + roleLabel(target) + " after " + (PUSH_TIMEOUT_MS / 1000) +
           " s. Its result will still be shown here if it arrives.", "warn");
         setPushBusy(false);
+        if (live) liveFailed();
       }, PUSH_TIMEOUT_MS);
     });
   }
@@ -1329,6 +1481,7 @@
     var hostDiags = msg.diagnostics || [];
     // What the target now holds, for the next update's comparison.
     if (msg.ok && info.sentKey) rememberSent(info.sentKey, info.prints);
+    if (!msg.ok && info.live && !late) liveFailed();
 
     // A late reply leaves the card to a push that is still waiting for its
     // own answer; the summary line below still counts every fallback.
@@ -1454,11 +1607,14 @@
         } else {
           log("Build failed: " + (result.message || "unknown error"), "err");
         }
-        recordHistory({
-          dir: "in", peer: roleLabel(doc.source), name: doc.name || "", ok: !!result.ok,
-          layers: result.layersCreated || 0, updated: result.layersUpdated || 0,
-          fallbacks: shownDiags.length + buildDiags.length, message: result.ok ? "" : (result.message || "unknown error")
-        });
+        // A live update is one of many: it stays in the log, as on the sending side.
+        if (!(doc.options && doc.options.live)) {
+          recordHistory({
+            dir: "in", peer: roleLabel(doc.source), name: doc.name || "", ok: !!result.ok,
+            layers: result.layersCreated || 0, updated: result.layersUpdated || 0,
+            fallbacks: shownDiags.length + buildDiags.length, message: result.ok ? "" : (result.message || "unknown error")
+          });
+        }
         ack(msg.id, !!result.ok, result.message, result.layersCreated, recvDiags.concat(buildDiags), result.layersUpdated);
       });
     } catch (e) {
@@ -1824,4 +1980,16 @@
   cleanTempFiles();
   loadJsx();
   connect();
+  // Closing the panel (or quitting the app) frees the port for another panel.
+  try { window.addEventListener("beforeunload", stopBridge); } catch (eU) {}
+
+  // Photoshop unloads a panel that is closed or tabbed behind another, which
+  // would drop the bridge connection (and Live); ask it to keep this one loaded.
+  if (role === "photoshop") {
+    try {
+      var keep = new CSEvent("com.adobe.PhotoshopPersistent", "APPLICATION");
+      keep.extensionId = cs.getExtensionID();
+      cs.dispatchEvent(keep);
+    } catch (e) {}
+  }
 })();

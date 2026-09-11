@@ -571,6 +571,11 @@ function withChildren(n) {
     child.parent = this;
     this.children.push(child);
   };
+  n.insertChild = function (index, child) {
+    detach(child);
+    child.parent = this;
+    this.children.splice(index, 0, child);
+  };
   return n;
 }
 
@@ -592,6 +597,11 @@ page.appendChild = function (child) {
   detach(child);
   child.parent = page;
   page.children.push(child);
+};
+page.insertChild = function (index, child) {
+  detach(child);
+  child.parent = page;
+  page.children.splice(index, 0, child);
 };
 
 Object.assign(globalThis.figma, {
@@ -1946,6 +1956,11 @@ await block("ui, live", async () => {
   const ui = await loadUi();
   const ws = ui.connect();
   const live = ui.$("#live");
+  // All apps (no target) would get a copy per change in Photoshop: refused.
+  live.checked = true;
+  live.fire("change");
+  ok("live ui: refused without one destination that can update", live.checked === false && /only After Effects and Illustrator/.test(ui.$("#status").textContent));
+  ui.fromPlugin({ type: "prefs", target: "illustrator" });
   live.checked = true;
   live.fire("change");
   const start = ui.toPlugin.find((m) => m.type === "live-start");
@@ -1989,6 +2004,113 @@ await block("ui, live", async () => {
   ui.toPlugin.length = 0;
   ws.onclose();
   ok("live ui: the bridge going away stops it", live.checked === false && ui.toPlugin.some((m) => m.type === "live-stop"));
+});
+
+// From the in-depth review: Figma send, receive and smart diff.
+await block("review (figma)", async () => {
+  const B = await import(pathToFileURL(join(figmaEsm, "build.ts")).href);
+  const vec = (id, x, y, w, h, extra = {}) => ({
+    id, name: id, type: "vector", frame: { x, y, width: w, height: h, rotation: 0, opacity: 1 },
+    subpaths: G.rectToSubPaths({ x: 0, y: 0, width: w, height: h }),
+    fills: [{ type: "solid", color: { r: 1, g: 0, b: 0, a: 1 } }], strokes: [], windingRule: "nonzero", ...extra,
+  });
+  const doc = (layers, extra = {}) => ({ version: "1.0", source: "illustrator", name: "Art",
+    bounds: { x: 0, y: 0, width: 200, height: 100 }, originSpace: "canvas", layers, ...extra });
+
+  // A page-sized new frame: the artwork lands where it sat on the page.
+  resetPage();
+  await B.buildDocument(doc([vec("Icon", 0, 0, 10, 10)], {
+    originSpace: "document", canvas: { width: 800, height: 600 }, bounds: { x: 500, y: 300, width: 10, height: 10 },
+    options: { destination: "new" } }));
+  const frame = page.children.find((n) => n.type === "FRAME");
+  const icon = frame && frame.children[0];
+  ok("review: document-space art lands at its page position in the new frame", icon && near(icon.x, 500) && near(icon.y, 300),
+    icon && `${icon.x},${icon.y}`);
+
+  // Turned about its centre, as the IR means it.
+  resetPage();
+  await B.buildDocument(doc([{ id: "p", name: "P", type: "image", frame: { x: 0, y: 0, width: 100, height: 50, rotation: 90, opacity: 1 },
+    pngBase64: Buffer.from("png").toString("base64") }]));
+  const img = page.children[0];
+  const m = img && img.relativeTransform;
+  const cx = m ? m[0][2] + m[0][0] * 50 + m[0][1] * 25 : NaN;
+  const cy = m ? m[1][2] + m[1][0] * 50 + m[1][1] * 25 : NaN;
+  ok("review: a turned image keeps its centre", near(cx, 50) && near(cy, 25), `${cx},${cy}`);
+
+  // Siblings sharing a clip are masked together.
+  resetPage();
+  const clip = { id: "c1", subpaths: G.rectToSubPaths({ x: 0, y: 0, width: 50, height: 50 }) };
+  await B.buildDocument(doc([vec("A", 0, 0, 80, 80, { clip }), vec("B", 10, 10, 80, 80, { clip })]));
+  const g = page.children.find((n) => n.type === "GROUP");
+  ok("review: layers clipped by one clip are grouped under its mask, mask at the bottom",
+    g && g.children.length === 3 && g.children[0].isMask === true && g.children[1].name === "A", g && g.children.map((c) => c.name).join());
+
+  // The gradient's third handle is perpendicular in pixels on a 2:1 box.
+  resetPage();
+  await B.buildDocument(doc([vec("R", 0, 0, 200, 100, { fills: [{ type: "radial-gradient", from: { x: 0.5, y: 0.5 }, to: { x: 1, y: 0.5 },
+    stops: [{ position: 0, color: { r: 1, g: 1, b: 1, a: 1 } }, { position: 1, color: { r: 0, g: 0, b: 0, a: 1 } }] }] })]));
+  const gt = page.children[0].fills[0].gradientTransform;
+  const h = G.gradientHandlesFromTransform(gt, "radial");
+  ok("review: a radial on a 2:1 box stays round (third handle at 0.5,1.5)", near(h.edge.x, 0.5) && near(h.edge.y, 1.5),
+    JSON.stringify(h));
+
+  // The text's own underline.
+  resetPage();
+  await B.buildDocument(doc([{ id: "t", name: "T", type: "text", frame: { x: 0, y: 0, width: 100, height: 20, rotation: 0, opacity: 1 },
+    characters: "Hi", fontFamily: "Inter", fontStyle: "Regular", fontSize: 12, color: { r: 0, g: 0, b: 0, a: 1 }, decoration: "underline" }]));
+  ok("review: a text's own underline arrives", page.children[0] && page.children[0].textDecoration === "UNDERLINE");
+
+  // A precomp's page moves with its group when the plugin normalises.
+  const grp = { id: "g", name: "G", type: "group", frame: { x: 20, y: 20, width: 10, height: 10, rotation: 0, opacity: 1 },
+    page: { x: 0, y: 0, width: 100, height: 100 }, children: [vec("k", 20, 20, 10, 10)] };
+  G.moveLayers([grp], -20, -20);
+  ok("review: moving layers moves a group's page too", grp.page.x === -20 && grp.page.y === -20, JSON.stringify(grp.page));
+
+  // Two nested frames are parts of one screen, not two documents.
+  const inner1 = mk("FRAME", { width: 20, height: 20, absoluteTransform: T(0, 10, 10), fills: [solid(1, 0, 0)], children: [] });
+  const inner2 = mk("FRAME", { width: 20, height: 20, absoluteTransform: T(0, 40, 10), fills: [solid(0, 1, 0)], children: [] });
+  const screen = mk("FRAME", { width: 200, height: 100, absoluteTransform: T(0), fills: [], children: [inner1, inner2] });
+  scene([screen]);
+  const sent = await send([inner1, inner2], 2, "frame");
+  ok("review: nested frames go as one document", sent && sent.type === "ir" && sent.documents.length === 1,
+    sent && (sent.documents ? sent.documents.length : sent.message));
+});
+
+await block("review (figma ui)", async () => {
+  const ui = await loadUi();
+  const ws = ui.connect();
+  ui.fromPlugin({ type: "prefs", target: "illustrator" });
+  ui.choose("#existing", "update");
+  const doc = (x) => {
+    const d = groupedDoc();
+    d.bounds.x = x;
+    return d;
+  };
+  const sendIr = (d) => {
+    ws.sent.length = 0;
+    ui.fromPlugin({ type: "ir", document: d, target: "illustrator" });
+    return ws.sent.find((m) => m.type === "transfer");
+  };
+  const t1 = sendIr(doc(0));
+  ws.onmessage({ data: JSON.stringify({ type: "ack", id: t1.id, from: "illustrator", ok: true, layersCreated: 3 }) });
+  const moved = sendIr(doc(30));
+  ok("review: moving the whole selection is a change", moved && countTree(moved.document.layers) === 3);
+  ws.onmessage({ data: JSON.stringify({ type: "ack", id: moved.id, from: "illustrator", ok: true, layersCreated: 0 }) });
+  const faded = doc(30);
+  faded.layers[0].frame.opacity = 0.5;
+  const f = sendIr(faded);
+  ok("review: fading a group resends what is in it", f && countTree(f.document.layers) === 2);
+  ws.onmessage({ data: JSON.stringify({ type: "ack", id: f.id, from: "illustrator", ok: true, layersCreated: 0 }) });
+
+  // A second app answering a send to all apps changes nothing but the status.
+  const hist = () => ui.toPlugin.filter((m) => m.type === "save-list" && m.kind === "history").length;
+  ws.sent.length = 0;
+  ui.fromPlugin({ type: "ir", document: groupedDoc(), target: null });
+  const all = ws.sent.find((m) => m.type === "transfer");
+  ws.onmessage({ data: JSON.stringify({ type: "ack", id: all.id, from: "illustrator", ok: true, layersCreated: 3 }) });
+  const before = hist();
+  ws.onmessage({ data: JSON.stringify({ type: "ack", id: all.id, from: "aftereffects", ok: true, layersCreated: 3 }) });
+  ok("review: a second app's answer is shown, not recorded twice", hist() === before && /After Effects/.test(ui.$("#status").textContent));
 });
 
 // Markup: the same choices, labels and order as the Adobe panel.

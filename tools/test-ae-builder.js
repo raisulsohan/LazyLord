@@ -2010,6 +2010,43 @@ function box(x, y) { return vector("Box", { x: x, y: y, width: 100, height: 50 }
     ok("old tag: and it gains one", LazyLord.readTag(ol.comment).fp !== "", ol.comment);
 })();
 
+// R1) From the in-depth review: update corner cases.
+(function () {
+    // A gradient-filled shape with a stroke: the stroke has a layer of its own,
+    // so updating the fill layer is not "a stroke with nothing to update".
+    var grad = linear([stop(0, rgba(1, 0, 0, 1)), stop(1, rgba(0, 0, 1, 0.2))], { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var card = function () {
+        return vector("Card", { x: 0, y: 0, width: 100, height: 50 },
+                      { fills: [grad], strokes: [{ paint: solid(0, 0, 0), weight: 2 }] });
+    };
+    var first = build(taggedDoc([card()]));
+    var second = build(taggedDoc([card()], "file-A", updateOpts()), { comp: first.comp });
+    ok("review: no false 'no stroke to update' on a split-stroke shape",
+       diagsMatching(second.diags, /has a stroke but the layer has none/).length === 0, dump(second.diags));
+    var fillLayer = null;
+    for (var i = 0; i < first.comp.list.length; i++) if (first.comp.list[i].name === "Card") fillLayer = first.comp.list[i];
+    ok("review: an update keeps a gradient's averaged opacity (60), as the build wrote it",
+       fillLayer && near(findIn(contents(fillLayer), "ADBE Vector Fill Opacity").value, 60),
+       fillLayer && String(findIn(contents(fillLayer), "ADBE Vector Fill Opacity").value));
+
+    // Two layers with one tag (sent twice with Add): the lower, earlier one is updated.
+    var a = build(taggedDoc([box(10, 20)]));
+    var b = build(taggedDoc([box(10, 20)]), { comp: a.comp });
+    var top = a.comp.list[0], bottom = a.comp.list[a.comp.list.length - 1];
+    build(taggedDoc([box(80, 90)], "file-A", updateOpts()), { comp: a.comp });
+    ok("review: of two layers with one tag, the lower (original) is updated",
+       nearPt(positionOf(bottom).value, [80, 90]) && nearPt(positionOf(top).value, [10, 20]),
+       xy(positionOf(bottom).value) + " " + xy(positionOf(top).value));
+
+    // Keying every property, a font change is keyed too, not tried with setValue.
+    var t1 = build(taggedDoc([textLayer("Title", { x: 0, y: 0, width: 100, height: 30 })]));
+    t1.comp.time = 2;
+    var t2 = build(taggedDoc([textLayer("Title", { x: 0, y: 0, width: 100, height: 30 }, { fontStyle: "Bold" })], "file-A",
+                             updateOpts({ keyframes: "always" })), { comp: t1.comp });
+    ok("review: keyed text gets no false 'font not available'",
+       diagsMatching(t2.diags, /is not available in After Effects/).length === 0, dump(t2.diags));
+})();
+
 // C6) Fingerprint text helpers.
 (function () {
     ok("sealTag: sets the fingerprint", LazyLord.sealTag("note\n[[LazyLord figma|f|1]]", "ab.c") === "note\n[[LazyLord figma|f|1~ab.c]]");

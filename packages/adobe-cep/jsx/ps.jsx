@@ -31,6 +31,32 @@ LazyLord.build = function (doc) {
     LazyLord.applyOrigin(doc);
     st.psDoc = LazyLord._ps_doc(doc);
 
+    // One history step for the whole build: Undo takes it back at once, and
+    // the state before it — where a failed build is rolled back to — is never
+    // pushed out of a full History panel by the build's own steps.
+    var job = LazyLord._ps_job = { st: st, doc: doc, ran: false, error: null };
+    try {
+      st.psDoc.suspendHistory("LazyLord Import", "LazyLord._ps_buildBody()");
+    } catch (eS) {
+      // No suspendHistory here: build step by step.
+    }
+    if (!job.ran) LazyLord._ps_buildBody();
+    LazyLord._ps_job = null;
+    if (job.error) throw job.error;
+  } finally {
+    app.preferences.rulerUnits = oldRuler;
+    app.preferences.typeUnits = oldType;
+  }
+  return { ok: true, layersCreated: st.created, message: "" };
+};
+
+/** The build itself, run by suspendHistory (or directly); errors are kept for build to throw. */
+LazyLord._ps_buildBody = function () {
+  var job = LazyLord._ps_job;
+  if (!job || job.ran) return;
+  job.ran = true;
+  var st = job.st, doc = job.doc;
+  try {
     // Precomps are an After Effects idea: here they are plain layer groups.
     if (LazyLord.options(doc).hierarchy !== "flatten") {
       LazyLord._ps_buildTree(st, doc.layers || [], { set: null, name: "" });
@@ -42,11 +68,9 @@ LazyLord.build = function (doc) {
     // whole run of members at once.
     for (var c = 0; c < st.clips.groups.length; c++) LazyLord._ps_clipGroup(st.psDoc, st.clips.groups[c]);
     LazyLord._ps_extras(st.psDoc, doc);
-  } finally {
-    app.preferences.rulerUnits = oldRuler;
-    app.preferences.typeUnits = oldType;
+  } catch (e) {
+    job.error = e;
   }
-  return { ok: true, layersCreated: st.created, message: "" };
 };
 
 /**
@@ -559,10 +583,11 @@ LazyLord._ps_pathScale = function (psDoc, name) {
  * (ox, oy): the layer's frame origin for layer-local geometry, or 0,0 for clip
  * outlines (already in frame space). Returns null when there is nothing to draw.
  */
-LazyLord._ps_pathItem = function (psDoc, name, subpaths, ox, oy) {
+LazyLord._ps_pathItem = function (psDoc, name, subpaths, ox, oy, winding) {
   var subInfos = [];
   var k = null; // pixels -> path units, read once there is something to draw
   var n = subpaths ? subpaths.length : 0;
+  var ops = LazyLord._ps_ops(subpaths, winding);
   for (var s = 0; s < n; s++) {
     var sp = subpaths[s];
     if (!sp || !sp.vertices || !sp.vertices.length) continue;
@@ -578,13 +603,38 @@ LazyLord._ps_pathItem = function (psDoc, name, subpaths, ox, oy) {
       pts.push(ppi);
     }
     var spi = new SubPathInfo();
-    spi.operation = ShapeOperation.SHAPEXOR; // overlapping subpaths punch holes
+    spi.operation = ops[s];
     spi.closed = !!sp.closed;
     spi.entireSubPath = pts;
     subInfos.push(spi);
   }
   if (subInfos.length === 0) return null;
   return psDoc.pathItems.add("LazyLord " + name, subInfos);
+};
+
+/**
+ * How each contour combines with the ones before it. Even-odd is Exclude
+ * throughout: overlaps punch holes. Non-zero, as the contours are drawn: one
+ * turning the same way as the first adds to the shape, one turning the other
+ * way cuts it out — so two overlapping outlines of a crossing stroke stay filled.
+ */
+LazyLord._ps_ops = function (subpaths, winding) {
+  var ops = [];
+  var n = subpaths ? subpaths.length : 0;
+  var first = 0;
+  for (var s = 0; s < n; s++) {
+    var sp = subpaths[s];
+    if (winding !== "nonzero" || !sp || !sp.vertices) { ops.push(ShapeOperation.SHAPEXOR); continue; }
+    var a = 0, v = sp.vertices;
+    for (var i = 0; i < v.length; i++) {
+      var p = v[i], q = v[(i + 1) % v.length];
+      a += p[0] * q[1] - q[0] * p[1];
+    }
+    var sign = a > 0 ? 1 : (a < 0 ? -1 : 0);
+    if (!first && sign) first = sign;
+    ops.push(!sign || sign === first ? ShapeOperation.SHAPEADD : ShapeOperation.SHAPESUBTRACT);
+  }
+  return ops;
 };
 
 /**
@@ -793,7 +843,7 @@ LazyLord._ps_vector = function (psDoc, layer) {
     return [];
   }
 
-  var pathItem = LazyLord._ps_pathItem(psDoc, name, layer.subpaths, layer.frame.x, layer.frame.y);
+  var pathItem = LazyLord._ps_pathItem(psDoc, name, layer.subpaths, layer.frame.x, layer.frame.y, layer.windingRule);
   if (!pathItem) {
     LazyLord.warn(name, "The shape has no outline to draw", "skipped");
     return [];
@@ -1100,7 +1150,7 @@ LazyLord._ps_clipGroup = function (psDoc, grp) {
  */
 LazyLord._ps_vectorMask = function (psDoc, target, clip, name) {
   var cid = LazyLord._ps_cid, sid = LazyLord._ps_sid;
-  var tmp = LazyLord._ps_pathItem(psDoc, name, clip.subpaths, 0, 0);
+  var tmp = LazyLord._ps_pathItem(psDoc, name, clip.subpaths, 0, 0, clip.windingRule);
   if (!tmp) throw new Error("the clip outline is empty");
   try {
     psDoc.activeLayer = target;
@@ -1183,6 +1233,11 @@ LazyLord._ps_textRuns = function (psDoc, artLayer, layer) {
       cd.putDouble(c2t("Bl  "), Math.round((r.color.b || 0) * 255));
       st.putObject(s2t("color"), c2t("RGBC"), cd);
       st.putInteger(s2t("tracking"), Math.round((r.letterSpacing / (r.fontSize || 24)) * 1000));
+      // A style range replaces the whole style, so the line height set on the text goes in each one.
+      if (layer.lineHeight) {
+        st.putBoolean(s2t("autoLeading"), false);
+        st.putUnitDouble(s2t("leading"), c2t("#Pnt"), layer.lineHeight * toPt);
+      }
       if (r.decoration === "underline") st.putEnumerated(s2t("underline"), s2t("underline"), s2t("underlineOnLeftInHorizontalText"));
       if (r.decoration === "strikethrough") st.putEnumerated(s2t("strikethrough"), s2t("strikethrough"), s2t("xHeightStrikethroughOn"));
       var range = new ActionDescriptor();
@@ -1230,7 +1285,8 @@ LazyLord._ps_text = function (psDoc, layer) {
       catch (eL) { LazyLord.warn(name, "Line height could not be applied", "approximated"); }
     }
 
-    var jmap = { left: Justification.LEFT, center: Justification.CENTER, right: Justification.RIGHT, justified: Justification.CENTERJUSTIFIED };
+    // Justified text is placed from its left edge (textAnchor), so its last line sits left.
+    var jmap = { left: Justification.LEFT, center: Justification.CENTER, right: Justification.RIGHT, justified: Justification.LEFTJUSTIFIED };
     try { ti.justification = jmap[layer.textAlignHorizontal] || Justification.LEFT; }
     catch (eJ) { LazyLord.warn(name, "Text alignment could not be applied", "approximated"); }
 

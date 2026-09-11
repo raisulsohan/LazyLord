@@ -66,13 +66,59 @@ LazyLord.liveStamp = function () {
   var sel = comp.selectedLayers;
   if (!sel || !sel.length) return "";
   var out = [comp.id];
+  var budget = { props: 1500 };
   for (var i = 0; i < sel.length && i < 200; i++) {
     var l = sel[i];
     var extra = [];
     try { extra = [l.index, l.name, l.blendingMode, l.inPoint, l.outPoint, l.enabled]; } catch (e) {}
-    out.push(LazyLord.printValue(extra) + LazyLord._ae_state(l));
+    // The groups a send reads, by name: the layer's own list also holds
+    // material, audio and geometry options that are never sent.
+    var parts = [LazyLord.printValue(extra)];
+    for (var g = 0; g < LazyLord._aer_STAMPED.length; g++) {
+      var grp = null;
+      try { grp = l.property(LazyLord._aer_STAMPED[g]); } catch (eG) {}
+      if (grp) parts.push(LazyLord._aer_stampProps(grp, budget));
+    }
+    out.push(parts.join("#"));
+    // A parent moving moves the layer, though none of its own values change.
+    var p = null;
+    try { p = l.parent; } catch (eP) {}
+    for (var up = 0; p && up < 10; up++) {
+      try { out.push("^" + LazyLord._aer_stampProps(p.property("ADBE Transform Group"), budget)); } catch (eT) {}
+      try { p = p.parent; } catch (eQ) { p = null; }
+    }
   }
   return LazyLord.hashText(out.join("|"));
+};
+
+LazyLord._aer_STAMPED = ["ADBE Transform Group", "ADBE Root Vectors Group", "ADBE Mask Parade",
+  "ADBE Effect Parade", "ADBE Text Properties"];
+
+/**
+ * Every property under `group` as text — contents, masks, effects, text,
+ * transform — up to `budget.props` for the whole stamp, so a heavy layer
+ * never stalls After Effects; past the budget the rest is not read.
+ */
+LazyLord._aer_stampProps = function (group, budget) {
+  var out = [];
+  function walk(g) {
+    var n = 0;
+    try { n = g.numProperties || 0; } catch (e) { return; }
+    for (var i = 1; i <= n; i++) {
+      if (budget.props-- <= 0) return;
+      var p = null;
+      try { p = g.property(i); } catch (eP) { continue; }
+      if (!p) continue;
+      var kids = 0;
+      try { kids = p.numProperties || 0; } catch (eK) {}
+      if (kids > 0) { walk(p); continue; }
+      var mn = "";
+      try { mn = p.matchName; } catch (eM) {}
+      out.push(mn + "=" + LazyLord._ae_propPrint(p));
+    }
+  }
+  walk(group);
+  return out.join(";");
 };
 
 /* -------------------------------------------------------------------------
@@ -113,6 +159,12 @@ LazyLord.readSelection = function (outDir) {
       var raw = LazyLord._aer_layer(ctx, lyr);
       if (raw) {
         LazyLord._aer_extras(ctx, lyr, raw);
+        var bm = null;
+        try {
+          bm = LazyLord.blendFromHost(lyr.blendingMode, typeof BlendingMode !== "undefined" ? BlendingMode : null,
+            LazyLord._ae_BLEND || {}, lyr.name);
+        } catch (eB) {}
+        if (bm) raw.blendMode = bm;
         items[i] = raw;
       }
     } catch (e) {
@@ -472,6 +524,7 @@ LazyLord._aer_normalise = function (ctx, raw) {
   }
 
   if (raw.clip) layer.clip = LazyLord._aer_frameClip(ctx, raw.clip);
+  if (raw.blendMode) layer.blendMode = raw.blendMode;
 
   return layer;
 };
@@ -1118,16 +1171,16 @@ LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacit
       }
 
     } else if (mn === "ADBE Vector Shape - Group") {
-      LazyLord._aer_addPath(scan, above, LazyLord._aer_path(prop, matrix));
+      LazyLord._aer_addPath(scan, above, LazyLord._aer_direction(prop, LazyLord._aer_path(prop, matrix)));
 
     } else if (mn === "ADBE Vector Shape - Rect") {
-      LazyLord._aer_addPath(scan, above, LazyLord._aer_rect(prop, matrix));
+      LazyLord._aer_addPath(scan, above, LazyLord._aer_direction(prop, LazyLord._aer_rect(prop, matrix)));
 
     } else if (mn === "ADBE Vector Shape - Ellipse") {
-      LazyLord._aer_addPath(scan, above, LazyLord._aer_ellipse(prop, matrix));
+      LazyLord._aer_addPath(scan, above, LazyLord._aer_direction(prop, LazyLord._aer_ellipse(prop, matrix)));
 
     } else if (mn === "ADBE Vector Shape - Star") {
-      LazyLord._aer_addPath(scan, above, LazyLord._aer_star(prop, matrix, layerName));
+      LazyLord._aer_addPath(scan, above, LazyLord._aer_direction(prop, LazyLord._aer_star(prop, matrix, layerName)));
 
     } else if (mn === "ADBE Vector Graphic - Fill" || mn === "ADBE Vector Graphic - Stroke") {
       var isFill = mn === "ADBE Vector Graphic - Fill";
@@ -1150,6 +1203,18 @@ LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacit
     }
   }
   return node;
+};
+
+/**
+ * A shape's "Shape Direction" set to Reversed (3, as Lottie reads it too)
+ * turns its contour around, which is how an After Effects donut cuts its hole
+ * under a Non-Zero fill; the contour is sent turned around as well.
+ */
+LazyLord._aer_direction = function (prop, sp) {
+  if (!sp) return sp;
+  var dir = 1;
+  try { dir = prop.property("ADBE Vector Shape Direction").value; } catch (e) {}
+  return dir === 3 ? LazyLord._aer_reverse(sp) : sp;
 };
 
 /** Record a drawn path (comp space) as one more path above what follows. */
@@ -1499,6 +1564,22 @@ LazyLord._aer_av = function (ctx, layer) {
   // Preferred branch: hand over the user's own file untouched.
   var filePath = null;
   try { if (src.file && src.file.exists) filePath = src.file.fsName; } catch (e) {}
+
+  // Two kinds of footage have a file that is not the picture on the layer: a
+  // movie (no other app places one as an image), and one layer of a layered
+  // file imported as a composition ("Layer 1/art.psd"), whose file is the
+  // whole document.
+  var still = true;
+  try { if (src.mainSource && src.mainSource.isStill === false) still = false; } catch (eS) {}
+  if (filePath && !still) {
+    LazyLord.warn(layer.name, "Video footage is not transferred; only still images are", "skipped");
+    return null;
+  }
+  if (filePath && /\/[^\/]+\.(psd|psb|ai|pdf|eps)$/i.test(String(src.name || ""))) {
+    LazyLord.warn(layer.name, "This is one layer of a layered file, whose file holds the whole document, " +
+      "so it is not sent; import that file as footage (merged) to send it", "skipped");
+    return null;
+  }
   if (filePath) {
     // Footage cannot be baked: it keeps its unrotated box and turn.
     var tb = LazyLord._aer_turnedBox(layer.name, LazyLord._aer_layerMatrix(ctx, layer),

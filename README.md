@@ -19,19 +19,18 @@ LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://
 
 ## How it works
 
-Figma plugins can only reach `localhost`, and Adobe apps script through CEP/ExtendScript. LazyLord connects them with a tiny local WebSocket relay. Any connected app can send; the bridge routes a transfer to the chosen destination and the acknowledgement back to whoever started it.
+Figma plugins can only reach `localhost`, and Adobe apps script through CEP/ExtendScript. LazyLord connects them with a tiny local WebSocket relay — the bridge — which **runs inside the LazyLord panel**: the first panel opened in Photoshop, Illustrator or After Effects hosts it, so there is nothing to start and no window to keep open. If that app quits, the next panel to reconnect takes it over. Any connected app can send; the bridge routes a transfer to the chosen destination and the acknowledgement back to whoever started it.
 
 ```
-┌────────────┐                     ┌────────────┐                ┌──────────────────┐
-│   Figma    │ ◄──── IR / ack ───► │   Bridge   │ ◄── IR / ack ─► │  Photoshop       │
-│  plugin    │                     │ (Node, ws) │                │  Illustrator     │
-└────────────┘                     │   :7878    │                │  After Effects   │
-                                   └────────────┘                └──────────────────┘
+┌────────────┐                     ┌─────────────────────────────────────────┐
+│   Figma    │ ◄──── IR / ack ───► │  LazyLord panel (first one opened)      │
+│  plugin    │                     │   └ bridge :7878 (Node, ws, loopback)   │ ◄─► other panels
+└────────────┘                     └─────────────────────────────────────────┘
         every app sends and receives; the bridge routes by destination
 ```
 
 1. **Figma plugin** reads the selection and serialises it to a host-neutral **IR** (intermediate representation): groups, bezier contours, paints, clip paths, live-text properties and PNG fallbacks. `packages/figma-plugin`
-2. **Bridge** routes each transfer to its target app and each acknowledgement back to its originator. `packages/bridge`
+2. **Bridge** routes each transfer to its target app and each acknowledgement back to its originator. It accepts only LazyLord's own clients (the Figma plugin, CEP panels, local tools) — a web page open in a browser is refused. `packages/bridge` (`relay.ts`, bundled into the panel as `js/relay.js`; `server.ts` runs it stand-alone)
 3. **Adobe CEP panel** (one panel, three hosts) rebuilds incoming IR natively, and serialises its own selection to send out. `packages/adobe-cep`
 4. **Core** holds the shared IR types, the transfer protocol, the SVG-path → bezier math and the pure geometry (transform baking, gradient handles, artboard detection) used by every side. `packages/core`
 
@@ -64,6 +63,7 @@ lazylord/
 │   ├── test-photoshop-reader.js     # Photoshop reader vs. mocked ActionManager/DOM
 │   ├── test-cep-panel.js            # CEP panel vs. mocked CSInterface/WebSocket
 │   ├── test-core.mjs                # core geometry + Figma plugin vs. a mocked scene (Node)
+│   ├── test-bridge.mjs              # the relay over real sockets (Node)
 │   └── smoke-test.mjs               # path-parser checks against the built core
 └── package.json        # npm workspaces
 ```
@@ -78,21 +78,20 @@ lazylord/
 
 ## Quick start
 
-**Windows, one step:** double-click `install.bat`. It checks Node.js (and offers to install it with winget), runs `npm install`, builds everything, links the Adobe panel into Photoshop, Illustrator and After Effects with CEP debug mode on, starts the bridge, and walks you through the single Figma click (the manifest path is put on your clipboard). Afterwards, start the bridge with `start-bridge.bat`, and follow [TESTING.md](TESTING.md) for the live-app checklist. `install.bat /uninstall` removes the panel.
+**Windows, one step:** double-click `install.bat`. It checks Node.js (and offers to install it with winget), runs `npm install`, builds everything, links the Adobe panel into Photoshop, Illustrator and After Effects with CEP debug mode on, and walks you through the single Figma click (the manifest path is put on your clipboard). Then open the LazyLord panel in any Adobe app — it runs the bridge — and follow [TESTING.md](TESTING.md) for the live-app checklist. `install.bat /uninstall` removes the panel.
 
 Manually, on any platform:
 
 ```bash
-# 1. install & build everything
+# 1. install & build everything (the bridge is bundled into the panel)
 npm install
 npm run build
 
 # 2. verify the core math
 npm test
-
-# 3. start the bridge (leave running)
-npm run bridge
 ```
+
+`npm run bridge` (or `start-bridge.bat`) still runs the bridge on its own, for troubleshooting or with no Adobe app open; a panel finding the port taken simply uses it.
 
 ### Install the Figma plugin
 
@@ -223,6 +222,7 @@ Notes worth knowing:
 
 - **Smart diff.** Every leaf sent is fingerprinted from its IR. After a successful send the fingerprints are kept per destination app and source document (the Adobe panels in their local storage, the Figma plugin while it is open), and an update leaves out every leaf whose fingerprint has not changed. The paths of images LazyLord generated are not part of it, since they change on every read. An update never deletes, so after deleting a layer in the destination, untick **Only what changed** once to send everything again.
 - **Conflicts.** When a build or an update finishes, After Effects and Illustrator add a fingerprint of what LazyLord wrote to the tag — `[[LazyLord figma|0:1|1:42~k3f9.2a]]` — and the next update compares it with the layer as it is now. After Effects reads the transform, outline, paint, text and footage (an animated property by its keys, a still one by its value before expressions, so neither the playhead nor an expression counts as an edit); Illustrator the geometry, points, paint, text and linked file of the items made from one layer. **On conflict** decides what happens to a layer that differs. Tags written before fingerprints never conflict and gain one on their next update.
+- **Live needs one destination that can update**: After Effects or Illustrator. Photoshop and Figma only ever add, so Live to them (or to "All apps") would pile up a copy per change, and is refused.
 - **Live.** Tick **Live — send changes as you work** under the Send button. In Figma, the objects selected at that moment are watched (the page's `nodechange` event, debounced by 600 ms) and exported again when anything inside them changes. In the Adobe panels, a cheap stamp of the selection (`LazyLord.liveStamp`: AE's selected layers and their fingerprints, Illustrator's selected items, Photoshop's history state and selected layers) is polled every 1.5 s. Each change goes as an update of only what changed, into the open document; a change made while a send is under way waits for it. Live sends are logged but kept out of the history. It stops by itself when what it watches is gone, or the bridge or destination disconnects.
 
 After every transfer the panel prints a one-line summary (layers, images — originals vs. generated — and fallbacks by kind), and lists anything that needed a fallback, naming the object and the reason, sorted skipped → rasterized → approximated.
@@ -326,6 +326,16 @@ Worth knowing:
 - AE shape layers holding several painted groups now arrive as several shapes (they used to share the first fill).
 - A new AE comp / Illustrator or Photoshop document is sized to the source artboard, comp or top-level Figma frame, not just the selection.
 
+## In-depth review (v0.8.1)
+
+Four independent reviews (builders, readers, panel + bridge, Figma + core) turned up about sixty defects; the confirmed ones are fixed, with regression tests. The ones that matter most:
+
+- **Security:** the bridge refused nothing — any web page could connect, receive transfers or push files into a panel, and a transfer id could name a folder outside the temp directory. Now only LazyLord's own clients connect, and ids are made safe before they touch the disk.
+- **Wrong target:** the Figma plugin gave every file the same source key (`figma.root.id` is `"0:0"` everywhere), so an Update from one file could overwrite layers sent from another. Each file now gets its own key, kept in its plugin data. Illustrator could tag — and a later Update remove — the user's own artwork on a layer above the active one.
+- **Update:** After Effects wrote comp-space values into parented layers (they jumped), relinked images to the temporary folder, dropped mixed text styles, failed on keyed fonts, reset gradient opacity, left LazyLord's own clip masks behind, and updated a duplicate instead of the original.
+- **Readers:** blend modes never left After Effects, Illustrator or Photoshop; Photoshop group clips were in the wrong space, shape layers lost strokes and got holes where contours overlapped, and a send changed the user's layer selection; Illustrator ignored spot-colour tints and cropped rasterised strokes; After Effects ignored reversed shape direction and sent a whole PSD for one of its layers.
+- **Smart diff and Live:** moving a whole selection, or fading a group, was not seen as a change; a failed live send was never retried; Reconnect started an endless reconnect loop; Live and Send could overlap; a Figma page-sized frame received artwork piled in its corner, rotated images off-centre and clipped layers unclipped.
+
 ## Reliability, history and presets
 
 - **All or nothing.** If a build stops part-way with an error, what it had made is taken back:
@@ -376,7 +386,8 @@ Worth knowing:
 
 ```bash
 npm run dev:figma        # rebuild the Figma plugin on change
-npm run bridge           # run the bridge with logs
+npm run bridge           # run the bridge stand-alone, with logs (the panel normally runs it)
+npm run test:bridge      # the relay over real sockets
 ```
 
 - **Debug the Figma UI**: right-click the plugin → *Open Console*.

@@ -143,7 +143,7 @@ LazyLord._ai_buildOne = function (ctx, scope, layers, i) {
     var isGroup = (layer.type === "group");
     var before = 0;
     if (!isGroup) {
-      try { before = ctx.container.pageItems.length; } catch (eB) { before = -1; }
+      try { before = LazyLord._ai_itemsBox(ctx, ctx.container).pageItems.length; } catch (eB) { before = -1; }
     }
     var built = isGroup ? LazyLord._ai_group(ctx, scope, layer) : LazyLord._ai_layer(ctx, layer);
     if (built) {
@@ -359,8 +359,31 @@ LazyLord._ai_vector = function (ctx, layer) {
   }
 
   // Opacity goes on the whole shape: the compound path, or the single path.
-  if (layer.frame.opacity !== undefined) item.opacity = LazyLord.pct(layer.frame.opacity);
+  // Illustrator colours have no alpha, so a see-through paint joins it there.
+  var alpha = LazyLord._ai_paintAlpha(hasFill && paint.type === "solid" ? fillC : null,
+    hasStroke && stroke.paint.type === "solid" ? stroke.paint.color : null, name);
+  var op = (layer.frame.opacity !== undefined ? layer.frame.opacity : 1) * alpha;
+  if (layer.frame.opacity !== undefined || alpha < 1) item.opacity = LazyLord.pct(op);
   return item;
+};
+
+/**
+ * The alpha a shape's flat fill and stroke share, for its opacity. When they
+ * differ, one item opacity cannot hold both: the fill's is used, reported.
+ */
+LazyLord._ai_paintAlpha = function (fill, stroke, name) {
+  var fa = fill ? LazyLord._ai_alpha(fill) : null;
+  var sa = stroke ? LazyLord._ai_alpha(stroke) : null;
+  if (fa === null && sa === null) return 1;
+  if (fa === null) return sa;
+  if (sa !== null && Math.abs(fa - sa) > 0.005) {
+    LazyLord.warn(name, "Its fill and stroke are see-through by different amounts; Illustrator takes the fill's for both", "approximated");
+  }
+  return fa;
+};
+
+LazyLord._ai_alpha = function (c) {
+  return (c && typeof c.a === "number") ? Math.max(0, Math.min(1, c.a)) : 1;
 };
 
 /* -------------------------------------------------------------------------
@@ -1229,7 +1252,11 @@ LazyLord._ai_text = function (ctx, layer) {
   var deg = layer.frame.rotation || 0;
   if (deg) LazyLord._ai_turnText(ctx, tf, layer, deg);
 
-  if (layer.frame.opacity !== undefined) tf.opacity = LazyLord.pct(layer.frame.opacity);
+  // A see-through text colour becomes the frame's opacity (Illustrator colours have no alpha).
+  var ta = LazyLord._ai_alpha(layer.color);
+  if (layer.frame.opacity !== undefined || ta < 1) {
+    tf.opacity = LazyLord.pct((layer.frame.opacity !== undefined ? layer.frame.opacity : 1) * ta);
+  }
   return tf;
 };
 
@@ -1340,14 +1367,29 @@ LazyLord._ai_tagNew = function (ctx, container, before, layer) {
   if (!ctx.ir || !container) return;
   var made = [];
   try {
-    var n = container.pageItems.length - before;
-    for (var i = 0; i < n; i++) made.push(container.pageItems[i]);
+    var box = LazyLord._ai_itemsBox(ctx, container);
+    var n = box.pageItems.length - before;
+    for (var i = 0; i < n; i++) made.push(box.pageItems[i]);
   } catch (e) {
     return;
   }
   LazyLord._ai_tagItems(ctx, made, layer);
   // Blend mode and effects belong to every item the layer produced.
   for (var f = 0; f < made.length; f++) LazyLord._ai_finish(made[f], layer);
+};
+
+/**
+ * Where new items built into `container` can be counted. Built into the
+ * document, they land at the top of its active layer; the document's own
+ * pageItems lists every item on every layer, so counting there would take the
+ * user's artwork on a layer above for the new items (and tag it, and remove it
+ * at the next update).
+ */
+LazyLord._ai_itemsBox = function (ctx, container) {
+  if (container === ctx.doc) {
+    try { if (ctx.doc.activeLayer && ctx.doc.activeLayer.pageItems) return ctx.doc.activeLayer; } catch (e) {}
+  }
+  return container;
 };
 
 /** Put this layer's tag on each of `items`, keeping whatever note they hold. */
@@ -1391,6 +1433,12 @@ LazyLord._ai_itemPrint = function (it, budget) {
   out.push(tn);
   add(function () { return it.geometricBounds; });
   add(function () { return it.opacity; });
+  // The live stamp also caps how many items it reads, nested ones included:
+  // past that an item is its type and bounds.
+  if (budget) {
+    if (typeof budget.items !== "number") budget.items = 2000;
+    if (--budget.items < 0) return out.join(";");
+  }
   var i;
   if (tn === "PathItem") {
     LazyLord._ai_pathPrint(it, out, budget);

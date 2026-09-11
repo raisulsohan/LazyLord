@@ -1,269 +1,39 @@
 #!/usr/bin/env node
 /**
- * LazyLord bridge
- * -------------
- * A tiny WebSocket relay so the Figma plugin (which can only reach localhost
- * from its UI iframe) can hand design payloads to the Adobe CEP panels, and
- * so Adobe can send acknowledgements back.
- *
- * It keeps no design state — it just tracks who is connected and forwards
- * `transfer` / `ack` messages to the right peers.
+ * LazyLord bridge (stand-alone)
+ * -----------------------------
+ * The relay normally runs inside the first LazyLord panel opened in
+ * Photoshop, Illustrator or After Effects, so nothing needs starting. This
+ * runs the same relay on its own, for development and troubleshooting
+ * (start-bridge.bat). If a panel already serves the port, it says so and exits.
  */
 
-import { WebSocketServer, WebSocket, RawData } from "ws";
-import {
-  DEFAULT_BRIDGE_PORT,
-  PROTOCOL_VERSION,
-  Message,
-  Role,
-  countLeaves,
-  isMessage,
-  roleLabel,
-} from "@lazylord/core";
-
-type Client = {
-  socket: WebSocket;
-  role: Role;
-  label: string;
-  alive: boolean;
-};
+import { DEFAULT_BRIDGE_PORT } from "@lazylord/core";
+import { startRelay } from "./relay";
 
 const PORT = Number(process.env.LAZYLORD_PORT || DEFAULT_BRIDGE_PORT);
-const HOST = process.env.LAZYLORD_HOST || "127.0.0.1";
-
-const clients = new Set<Client>();
-
-/**
- * transfer id -> the client that sent it, so acknowledgements go back to the
- * originator. Figma is no longer the only thing that can start a transfer.
- */
-const transferOrigins = new Map<string, { client: Client; at: number }>();
-
-/** Drop origin records older than this (the sender is long gone). */
-const ORIGIN_TTL_MS = 5 * 60 * 1000;
-
-function pruneOrigins() {
-  const cutoff = Date.now() - ORIGIN_TTL_MS;
-  for (const [id, rec] of transferOrigins) {
-    if (rec.at < cutoff || !clients.has(rec.client)) transferOrigins.delete(id);
-  }
-}
+const HOSTS = process.env.LAZYLORD_HOST ? [process.env.LAZYLORD_HOST] : ["127.0.0.1", "::1"];
+const EXTRA_ORIGINS = (process.env.LAZYLORD_ALLOW_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 function log(...args: unknown[]) {
   const ts = new Date().toISOString().slice(11, 19);
   console.log(`[lazylord ${ts}]`, ...args);
 }
 
-function currentPeers(): Role[] {
-  const roles = new Set<Role>();
-  for (const c of clients) roles.add(c.role);
-  return Array.from(roles);
-}
-
-function send(socket: WebSocket, msg: Message) {
-  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(msg));
-}
-
-function broadcastPeers() {
-  const peers = currentPeers();
-  for (const c of clients) send(c.socket, { type: "peers", peers });
-}
-
-/**
- * The Figma plugin must connect to "localhost" (Figma's manifest rejects IP
- * addresses), which some Windows machines resolve to ::1 before 127.0.0.1.
- * So by default listen on both loopback addresses — never on the network.
- */
-const HOSTS = process.env.LAZYLORD_HOST ? [HOST] : ["127.0.0.1", "::1"];
-const servers: WebSocketServer[] = [];
-
-for (const host of HOSTS) {
-  const wss = new WebSocketServer({ port: PORT, host });
-  const shown = host.includes(":") ? `[${host}]` : host;
-
-  wss.on("listening", () => {
-    log(`bridge listening on ws://${shown}:${PORT}`);
-    if (host === HOSTS[0]) log("waiting for Figma and Adobe clients…");
-  });
-
-  wss.on("error", (err) => {
-    // IPv6 may be switched off; the IPv4 listener alone still serves everyone.
-    if (host === "::1" && HOSTS.length > 1) {
-      log(`IPv6 loopback unavailable (${(err as Error).message}); continuing on 127.0.0.1 only`);
-      return;
+startRelay({ port: PORT, hosts: HOSTS, allowOrigins: EXTRA_ORIGINS, log }).then(
+  (relay) => {
+    log("waiting for Figma and Adobe clients…");
+    process.on("SIGINT", () => {
+      log("shutting down");
+      relay.close().then(() => process.exit(0));
+    });
+  },
+  (err: NodeJS.ErrnoException) => {
+    if (err && err.code === "EADDRINUSE") {
+      log(`port ${PORT} is already served — most likely by a LazyLord panel, which runs the bridge itself. Nothing to do.`);
+      process.exit(0);
     }
-    log("server error:", (err as Error).message);
+    log("server error:", (err && err.message) || String(err));
     process.exit(1);
-  });
-
-  wss.on("connection", onConnection);
-  servers.push(wss);
-}
-
-function onConnection(socket: WebSocket) {
-  const client: Client = { socket, role: "unknown", label: "unknown", alive: true };
-  clients.add(client);
-
-  socket.on("message", (data: RawData) => {
-    let msg: Message;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      log("dropped non-JSON message");
-      return;
-    }
-    if (!isMessage(msg)) return;
-    handleMessage(client, msg);
-  });
-
-  socket.on("pong", () => {
-    client.alive = true;
-  });
-
-  socket.on("close", () => {
-    clients.delete(client);
-    log(`disconnected: ${client.label} (${roleLabel(client.role)})`);
-    broadcastPeers();
-  });
-
-  socket.on("error", () => {
-    /* handled by close */
-  });
-}
-
-function handleMessage(client: Client, msg: Message) {
-  switch (msg.type) {
-    case "hello": {
-      client.role = msg.role;
-      client.label = msg.client || roleLabel(msg.role);
-      log(`connected: ${client.label} (${roleLabel(client.role)})`);
-      send(client.socket, { type: "welcome", protocol: PROTOCOL_VERSION, peers: currentPeers() });
-      broadcastPeers();
-      break;
-    }
-
-    case "chunk": {
-      // A large transfer in pieces: relayed to the same targets as the whole
-      // transfer would be. The first piece is logged and remembered for the ack.
-      const targets = targetsFor(client, msg.target);
-      if (msg.index === 0) {
-        log(`transfer ${msg.id}: ${msg.total} chunk(s) from ${roleLabel(client.role)} -> ${targets.length} host(s)`);
-        if (targets.length === 0) {
-          send(client.socket, { type: "ack", id: msg.id, from: "unknown", ok: false, message: notConnected(msg.target) });
-          return;
-        }
-        pruneOrigins();
-        transferOrigins.set(msg.id, { client, at: Date.now() });
-      }
-      for (const t of targets) send(t.socket, msg);
-      break;
-    }
-
-    case "transfer": {
-      const targets = targetsFor(client, msg.target);
-      // Leaves, not top-level entries: a Figma frame arrives as one group.
-      const layerCount = countLeaves(msg.document?.layers);
-      const from = roleLabel(client.role);
-      log(`transfer ${msg.id}: ${layerCount} layer(s) from ${from} -> ${targets.length} host(s)`);
-      if (targets.length === 0) {
-        send(client.socket, {
-          type: "ack",
-          id: msg.id,
-          from: "unknown",
-          ok: false,
-          message: notConnected(msg.target),
-        });
-        return;
-      }
-      pruneOrigins();
-      transferOrigins.set(msg.id, { client, at: Date.now() });
-      for (const t of targets) send(t.socket, msg);
-      break;
-    }
-
-    case "ack": {
-      const origin = transferOrigins.get(msg.id);
-      if (origin && clients.has(origin.client)) {
-        send(origin.client.socket, msg);
-      } else {
-        // Unknown transfer (bridge restarted, or sender gone): fall back to
-        // telling every client that can display a result.
-        for (const c of clients) {
-          if (c !== client) send(c.socket, msg);
-        }
-      }
-      transferOrigins.delete(msg.id);
-      log(`ack ${msg.id} from ${roleLabel(msg.from)}: ${msg.ok ? "ok" : "failed"}${msg.message ? " — " + msg.message : ""}`);
-      break;
-    }
-
-    case "request": {
-      // A question for one app (the AE panel asking Photoshop for its document):
-      // routed like a transfer, answered like an ack.
-      const targets = targetsFor(client, msg.target);
-      if (targets.length === 0) {
-        send(client.socket, { type: "reply", id: msg.id, from: "unknown", ok: false, message: notConnected(msg.target) });
-        return;
-      }
-      pruneOrigins();
-      transferOrigins.set(msg.id, { client, at: Date.now() });
-      send(targets[0].socket, msg);
-      break;
-    }
-
-    case "reply": {
-      const origin = transferOrigins.get(msg.id);
-      if (origin && clients.has(origin.client)) send(origin.client.socket, msg);
-      transferOrigins.delete(msg.id);
-      break;
-    }
-
-    case "ping": {
-      send(client.socket, { type: "pong", t: msg.t });
-      break;
-    }
-
-    default:
-      break;
   }
-}
-
-/** Who receives a transfer: the named app, or everyone but the sender. */
-function targetsFor(sender: Client, target: Role | undefined): Client[] {
-  return [...clients].filter((c) => {
-    if (c === sender) return false; // never echo to the sender
-    // Figma receives like any other host now; only the sender is excluded.
-    if (target && target !== "unknown") return c.role === target;
-    return true;
-  });
-}
-
-function notConnected(target: Role | undefined): string {
-  return target
-    ? `${roleLabel(target)} is not connected. Open the LazyLord panel there first.`
-    : "No receiving app is connected. Open the LazyLord panel in Photoshop, Illustrator or After Effects, or the plugin in Figma.";
-}
-
-// Heartbeat: drop dead sockets.
-const heartbeat = setInterval(() => {
-  for (const c of clients) {
-    if (!c.alive) {
-      c.socket.terminate();
-      clients.delete(c);
-      continue;
-    }
-    c.alive = false;
-    try {
-      c.socket.ping();
-    } catch {
-      /* ignore */
-    }
-  }
-}, 15000);
-
-process.on("SIGINT", () => {
-  log("shutting down");
-  clearInterval(heartbeat);
-  for (const wss of servers) wss.close();
-  process.exit(0);
-});
+);

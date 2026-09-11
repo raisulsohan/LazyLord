@@ -842,27 +842,38 @@ LazyLord._ae_decompose = function (comp, pl, notes) {
     try { if (sub.layer(j).parent) { notes.push("parenting inside " + name); break; } } catch (e5) {}
   }
 
+  // The precomp layer's values are in its parent's space when it has one: the
+  // helper null takes the same values under the same parent, and the copies end
+  // up under that parent too.
+  var pp = null;
+  try { pp = pl.parent; } catch (eP) {}
   var nl = comp.layers.addNull();
   var ng = nl.property("ADBE Transform Group");
   for (var k = 0; k < keys.length; k++) ng.property(keys[k]).setValue(tg.property(keys[k]).value);
+  if (pp) nl.setParentWithJump(pp);
   var fade = tg.property("ADBE Opacity").value / 100;
   var offset = 0;
   try { offset = pl.startTime || 0; } catch (e6) {}
 
   // Top to bottom, each copy placed just above the precomp layer: the stack keeps its order.
   var copies = [];
+  var locked = [];
   try {
     for (var i = 1; i <= sub.numLayers; i++) {
       var before = comp.numLayers;
       sub.layer(i).copyToComp(comp);
       if (comp.numLayers !== before + 1) throw new Error("After Effects did not copy '" + sub.layer(i).name + "'");
       var copy = comp.layer(1);
+      // A locked copy refuses every edit below, and its own removal on failure.
+      var wasLocked = false;
+      try { wasLocked = copy.locked === true; if (wasLocked) copy.locked = false; } catch (eL) {}
+      locked.push(wasLocked);
       copy.moveBefore(pl);
       copies.push(copy);
     }
     for (var c = 0; c < copies.length; c++) {
       copies[c].setParentWithJump(nl);
-      copies[c].parent = null;
+      copies[c].parent = pp;
       if (offset) copies[c].startTime += offset;
       if (fade < 1) {
         var op = copies[c].property("ADBE Transform Group").property("ADBE Opacity");
@@ -876,6 +887,7 @@ LazyLord._ae_decompose = function (comp, pl, notes) {
     try { nl.remove(); } catch (eN) {}
     throw e;
   }
+  for (var q = 0; q < copies.length; q++) { if (locked[q]) { try { copies[q].locked = true; } catch (eQ) {} } }
   nl.remove();
   pl.remove();
   return copies.length;
@@ -1061,6 +1073,30 @@ LazyLord._ae_clip = function (lyr, layer, xf) {
         "delete its '" + base + "' masks to show it unclipped", "approximated");
     }
   }
+};
+
+/**
+ * An update of a clipped layer: the masks LazyLord cut from the clip were cut
+ * for the old frame (they travel with the layer), so they are taken off and
+ * cut again for the new one. The user's own masks, named otherwise, stay.
+ */
+LazyLord._ae_reclip = function (lyr, layer, xf) {
+  var clip = layer.clip;
+  if (!clip || !clip.subpaths || !clip.subpaths.length) return;
+  var base = clip.name || "Clip mask";
+  try {
+    // Last first, each looked up afresh: removing one invalidates the others.
+    for (var i = lyr.property("ADBE Mask Parade").numProperties; i >= 1; i--) {
+      var m = lyr.property("ADBE Mask Parade").property(i);
+      var nm = String(m.name);
+      var rest = nm.substring(base.length + 1);
+      if (nm === base || (nm.indexOf(base + " ") === 0 && /^\d+$/.test(rest))) m.remove();
+    }
+  } catch (e) {
+    LazyLord.warn(layer.name, "Its clipping mask could not be redrawn for the new position, so it was left as it was", "approximated");
+    return;
+  }
+  LazyLord._ae_clip(lyr, layer, xf);
 };
 
 /**
@@ -1748,7 +1784,9 @@ LazyLord._ae_image = function (comp, layer, assets) {
 /** Layers in `comp` that carry a LazyLord tag, as tag key -> layer. */
 LazyLord._ae_index = function (comp) {
   var index = {};
-  for (var i = 1; i <= comp.numLayers; i++) {
+  // Bottom up (layer 1 is the top): a duplicate the user made (Ctrl+D) lands
+  // above the original, tag and all, and must not be the one updated.
+  for (var i = comp.numLayers; i >= 1; i--) {
     var lyr = comp.layer(i);
     var key = null;
     try { key = LazyLord.readTagKey(lyr.comment); } catch (e) { continue; }
@@ -1906,6 +1944,19 @@ LazyLord._ae_keepZ = function (prop, x, y) {
 
 /** The transform half of an update. Returns how many properties were written. */
 LazyLord._ae_putTransform = function (ctx, lyr, xf, opacity) {
+  // The values are comp space, and a parented layer's are its parent's: take
+  // it off its parent (Layer.parent keeps it where it shows), write, put it back.
+  var parent = null;
+  try { parent = lyr.parent; } catch (eP) {}
+  if (parent) { try { lyr.parent = null; } catch (eU) { parent = null; } }
+  try {
+    return LazyLord._ae_writeTransform(ctx, lyr, xf, opacity);
+  } finally {
+    if (parent) { try { lyr.parent = parent; } catch (eR) {} }
+  }
+};
+
+LazyLord._ae_writeTransform = function (ctx, lyr, xf, opacity) {
   var tg = lyr.property("ADBE Transform Group");
   var n = 0;
   var anchor = tg.property("ADBE Anchor Point");
@@ -1997,22 +2048,29 @@ LazyLord._ae_putOutline = function (ctx, parts, layer, name) {
   return n;
 };
 
-/** Update a shape layer's paint. Returns how many properties were written. */
-LazyLord._ae_putPaint = function (ctx, parts, layer, name) {
+/**
+ * Update a shape layer's paint. Returns how many properties were written.
+ * `part`: "fill" for the fill layer of a shape whose stroke has a layer of its
+ * own, "stroke" for that stroke layer, else both.
+ */
+LazyLord._ae_putPaint = function (ctx, parts, layer, name, part) {
   var n = 0;
   var paint = LazyLord.fillPaint(layer);
   var gradient = LazyLord.isGradient(paint);
 
-  if (parts.fill && layer.fills && layer.fills.length) {
-    var c = gradient ? LazyLord._ae_sortedStops(paint)[0].color : LazyLord.fillColor(layer);
+  if (part !== "stroke" && parts.fill && layer.fills && layer.fills.length) {
+    var stops = gradient ? LazyLord._ae_sortedStops(paint) : null;
+    var c = gradient ? stops[0].color : LazyLord.fillColor(layer);
+    // A gradient's transparency rides on the fill, as the build put it there.
+    var fa = gradient ? LazyLord._ae_stopsAlpha(stops) : LazyLord._ae_alpha(c);
     if (LazyLord._ae_put(ctx, parts.fill.property("ADBE Vector Fill Color"), LazyLord._ae_rgba(c))) n++;
-    if (LazyLord._ae_put(ctx, parts.fill.property("ADBE Vector Fill Opacity"), LazyLord.pct(LazyLord._ae_alpha(c)))) n++;
+    if (LazyLord._ae_put(ctx, parts.fill.property("ADBE Vector Fill Opacity"), LazyLord.pct(fa))) n++;
     if (gradient) {
       LazyLord.warn(name, "The gradient's colours were updated on the solid fill, but its Gradient Ramp was left as it was", "approximated");
     }
   }
 
-  var stroke = LazyLord.firstStroke(layer);
+  var stroke = part === "fill" ? null : LazyLord.firstStroke(layer);
   if (stroke && stroke.paint && parts.stroke) {
     var sc;
     if (LazyLord.isGradient(stroke.paint)) sc = LazyLord._ae_sortedStops(stroke.paint)[0].color;
@@ -2027,15 +2085,28 @@ LazyLord._ae_putPaint = function (ctx, parts, layer, name) {
   return n;
 };
 
-LazyLord._ae_updateVector = function (ctx, lyr, layer) {
+LazyLord._ae_updateVector = function (ctx, lyr, layer, part) {
   var name = layer.name || "Vector";
   var parts = LazyLord._ae_findParts(lyr);
   var xf = LazyLord._ae_vectorXf(layer.frame);
   var n = 0;
   n += LazyLord._ae_putTransform(ctx, lyr, xf, layer.frame.opacity);
   n += LazyLord._ae_putOutline(ctx, parts, layer, name);
-  n += LazyLord._ae_putPaint(ctx, parts, layer, name);
+  n += LazyLord._ae_putPaint(ctx, parts, layer, name, part);
+  LazyLord._ae_reclip(lyr, layer, xf);
   return n;
+};
+
+/** The stops' shared alpha, or their average when they differ (as _ae_ramp writes it). */
+LazyLord._ae_stopsAlpha = function (stops) {
+  var minA = 1, maxA = 0, sumA = 0;
+  for (var i = 0; i < stops.length; i++) {
+    var a = LazyLord._ae_alpha(stops[i].color);
+    if (a < minA) minA = a;
+    if (a > maxA) maxA = a;
+    sumA += a;
+  }
+  return (maxA - minA < 0.001) ? maxA : sumA / stops.length;
 };
 
 LazyLord._ae_updateText = function (ctx, lyr, layer) {
@@ -2070,8 +2141,23 @@ LazyLord._ae_updateText = function (ctx, lyr, layer) {
     td.justification = jmap[layer.textAlignHorizontal] || ParagraphJustification.LEFT_JUSTIFY;
   } catch (eJ) {}
 
+  // A keyed Source Text takes no plain value, so the font and the character
+  // styles (both written with setValue) go into this one keyed write instead.
+  var keyed = ctx.always;
+  try { if (prop.numKeys > 0) keyed = true; } catch (eK) {}
+  if (keyed && layer.fontFamily) {
+    try { td.font = LazyLord._ae_fontNames(String(layer.fontFamily), String(layer.fontStyle || "Regular"))[0]; } catch (eFN) {}
+  }
+
   var n = LazyLord._ae_put(ctx, prop, td) ? 1 : 0;
-  try { LazyLord._ae_font(prop, layer); } catch (eF) {}
+  if (!keyed) {
+    try { LazyLord._ae_font(prop, layer); } catch (eF) {}
+    if (layer.runs && layer.runs.length) {
+      try { LazyLord._ae_textRuns(prop, layer); } catch (eR) {}
+    }
+  } else if (layer.runs && layer.runs.length > 1) {
+    LazyLord.warn(name, "The text is animated, so its mixed character styles were not re-applied; the key holds the first style", "approximated");
+  }
 
   var opacity = layer.frame.opacity;
   var ca = LazyLord._ae_alpha(c);
@@ -2086,20 +2172,42 @@ LazyLord._ae_updateText = function (ctx, lyr, layer) {
   return n;
 };
 
+/** Whether two files hold the same bytes; false when either cannot be read. */
+LazyLord._ae_sameFile = function (a, b) {
+  try {
+    var fa = new File(a), fb = new File(b);
+    if (!fa.exists || !fb.exists || fa.length !== fb.length) return false;
+    fa.encoding = fb.encoding = "BINARY";
+    if (!fa.open("r")) return false;
+    if (!fb.open("r")) { fa.close(); return false; }
+    var same = fa.read() === fb.read();
+    fa.close();
+    fb.close();
+    return same;
+  } catch (e) {
+    return false;
+  }
+};
+
 LazyLord._ae_updateImage = function (ctx, lyr, layer) {
   var name = layer.name || "Image";
   var n = 0;
   var source = null;
   try { source = lyr.source; } catch (e) {}
 
-  // Point the footage at the file the source now sends, when it moved.
+  // Point the footage at the picture the source now sends, when it changed.
+  // A generated image arrives at a new temporary path every time, so it is
+  // compared by content, and a new one goes into the project's assets folder
+  // like a built one (the temporary folder is cleared after a week).
   var path = LazyLord.imagePath(layer);
   if (path && source) {
     var current = null;
     try { current = source.file ? source.file.fsName : null; } catch (eF) {}
-    if (current && String(current) !== String(path)) {
+    var changed = current && String(current) !== String(path) &&
+      (layer.isOriginalFile === true || !LazyLord._ae_sameFile(current, path));
+    if (changed) {
       try {
-        source.replace(new File(path));
+        source.replace(new File(LazyLord._ae_assetFile(ctx.assets, layer, path)));
         n++;
       } catch (eR) {
         LazyLord.warn(name, "The image file changed but the footage could not be relinked, so the layer still shows the old one", "skipped");
@@ -2112,12 +2220,14 @@ LazyLord._ae_updateImage = function (ctx, lyr, layer) {
   var fw = layer.frame.width || w;
   var fh = layer.frame.height || h;
 
-  n += LazyLord._ae_putTransform(ctx, lyr, {
+  var xf = {
     anchor: [w / 2, h / 2],
     position: [layer.frame.x + fw / 2, layer.frame.y + fh / 2],
     scale: [w ? (fw / w) * 100 : 100, h ? (fh / h) * 100 : 100],
     rotation: layer.frame.rotation || 0
-  }, layer.frame.opacity);
+  };
+  n += LazyLord._ae_putTransform(ctx, lyr, xf, layer.frame.opacity);
+  LazyLord._ae_reclip(lyr, layer, xf);
   return n;
 };
 
@@ -2142,7 +2252,8 @@ LazyLord._ae_update = function (ctx, layer) {
     LazyLord.warn(name, "Was changed in After Effects since it was last sent; the update replaced those changes", "approximated");
   }
   try {
-    if (layer.type === "vector") LazyLord._ae_updateVector(ctx, lyr, layer);
+    // With a stroke layer of its own, this one holds only the fill.
+    if (layer.type === "vector") LazyLord._ae_updateVector(ctx, lyr, layer, strokeLyr ? "fill" : null);
     else if (layer.type === "text") LazyLord._ae_updateText(ctx, lyr, layer);
     else if (layer.type === "image") LazyLord._ae_updateImage(ctx, lyr, layer);
     else return false;
@@ -2157,7 +2268,7 @@ LazyLord._ae_update = function (ctx, layer) {
   // its own tag, so update it alongside (it has no fill to touch).
   if (strokeLyr) {
     try {
-      LazyLord._ae_updateVector(ctx, strokeLyr, layer);
+      LazyLord._ae_updateVector(ctx, strokeLyr, layer, "stroke");
       try { if (layer.name) strokeLyr.name = layer.name + " stroke"; } catch (eSN) {}
     } catch (eS) {
       LazyLord.warn(name, "The shape updated but its separate stroke layer did not", "approximated");

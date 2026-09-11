@@ -115,8 +115,8 @@ function connect() {
   };
 
   ws.onclose = () => {
-    setConn(false, "Bridge offline");
-    stopLiveUi("the bridge went offline");
+    setConn(false, "Not connected");
+    stopLiveUi("the connection to the Adobe apps was lost");
     peers = [];
     renderPeers();
     scheduleReconnect();
@@ -175,8 +175,17 @@ function onMessage(msg: Message) {
     case "peers":
       peers = msg.peers.filter((p) => p !== "figma");
       renderPeers();
+      if (liveOn && target && peers.indexOf(target as Role) < 0) stopLiveUi("the destination app disconnected");
       break;
     case "ack": {
+      if (!pending.has(msg.id) && !sentNames.has(msg.id)) {
+        // Another app answering a send to all apps, after the first answer
+        // settled it: its fallbacks and result are shown, nothing else is touched.
+        addDiagnostics(roleLabel(msg.from), msg.diagnostics);
+        if (msg.ok) setStatus(`${roleLabel(msg.from)}: created ${msg.layersCreated ?? 0} layer(s).`, "ok");
+        else setStatus(`${roleLabel(msg.from)}: ${msg.message || "transfer failed"}`, "err");
+        break;
+      }
       pending.delete(msg.id);
       const sentWith = pendingPrints.get(msg.id);
       pendingPrints.delete(msg.id);
@@ -249,7 +258,8 @@ function updateSendButton() {
   sendBtn.disabled = !ready;
   if (pending.size > 0) sendBtn.textContent = "Sending…";
   else if (selectionCount === 0) sendBtn.textContent = "Select something to send";
-  else if (!connected) sendBtn.textContent = "Bridge offline";
+  // The bridge runs inside the Adobe panels: no panel open, no connection.
+  else if (!connected) sendBtn.textContent = "Open the LazyLord panel in Adobe";
   else if (!targetIsAvailable()) sendBtn.textContent = "Open the LazyLord panel in Adobe";
   else sendBtn.textContent = `Send ${selectionCount} layer${selectionCount === 1 ? "" : "s"}`;
 }
@@ -623,16 +633,22 @@ window.onmessage = (event: MessageEvent) => {
       applyPrefs(msg);
     }
   } else if (msg.type === "live") {
+    const was = liveOn;
     liveOn = !!msg.on;
     if (liveEl) liveEl.checked = liveOn;
     if (!liveOn) liveQueued = false;
     if (msg.message) setStatus(liveOn ? msg.message : `Live stopped: ${msg.message}`, "err");
     else if (liveOn && msg.count) setStatus(`Live: keeping ${msg.count} object${msg.count === 1 ? "" : "s"} in step…`, "ok");
-    else if (!liveOn) setStatus("Live is off.", "");
+    // Stopped here already (the bridge went): keep the reason that is showing.
+    else if (!liveOn && was) setStatus("Live is off.", "");
   } else if (msg.type === "ir") {
     // Live: "start" is its first send (everything), "change" a later one.
     const live = msg.live === "start" || msg.live === "change" ? (msg.live as "start" | "change") : null;
     if (live && !liveOn) return; // switched off while this was being exported
+    if (live && !liveCanReach(target)) {
+      stopLiveUi(LIVE_NEEDS);
+      return;
+    }
     if (live && pending.size > 0) {
       // Still sending the last change: export again once that is answered,
       // so this one is not lost and the sends never overlap.
@@ -726,23 +742,35 @@ function onlyChangedWanted(): boolean {
   return !onlyChangedEl || onlyChangedEl.checked !== false;
 }
 
-/** Fingerprint every leaf; with `prune`, drop the ones the destination already has unchanged. */
+/**
+ * Fingerprint every leaf; with `prune`, drop the ones the destination already
+ * has unchanged. Frames are measured from the selection's top-left, so where
+ * the selection sits (the document's bounds and page) is part of every print,
+ * and so is what a group passes on to its leaves (opacity, blend, effects,
+ * clip) — moving the whole selection, or fading its frame, is a change. With
+ * no single destination ("all") nothing is pruned: apps can hold different
+ * things.
+ */
 function fingerprintLeaves(doc: Document, dest: string, prune: boolean): Prints {
   const key = `${dest}|${doc.sourceKey || ""}|${doc.source || ""}`;
+  if (dest === "all") prune = false;
   const before = (prune && sentPrints.get(key)) || {};
   const prints: Record<string, string> = {};
   let kept = 0;
   let skipped = 0;
-  const walk = (list: Layer[]): Layer[] => {
+  const b = doc.bounds || { x: 0, y: 0 };
+  const base = JSON.stringify([b.x, b.y, doc.originSpace || "", doc.canvas || null]);
+  const walk = (list: Layer[], salt: string): Layer[] => {
     const out: Layer[] = [];
     for (const l of list || []) {
       if (!l) continue;
       if (l.type === "group") {
-        l.children = walk(l.children || []);
+        const passed = JSON.stringify([l.frame && l.frame.opacity, l.blendMode, l.effects, l.clip]);
+        l.children = walk(l.children || [], salt + "|" + passed);
         if (!prune || l.children.length) out.push(l);
         continue;
       }
-      const p = hashText(JSON.stringify(l));
+      const p = hashText(salt + JSON.stringify(l));
       if (l.id !== undefined) prints[l.id] = p;
       if (prune && l.id !== undefined && before[l.id] === p) { skipped++; continue; }
       kept++;
@@ -750,14 +778,14 @@ function fingerprintLeaves(doc: Document, dest: string, prune: boolean): Prints 
     }
     return out;
   };
-  doc.layers = walk(doc.layers);
+  doc.layers = walk(doc.layers, base);
   return { key, prints, kept, skipped, pruned: prune };
 }
 
 function rememberSent(p: Prints) {
-  const entry = Object.assign(sentPrints.get(p.key) || {}, p.prints);
+  // Every leaf of a send is printed, the unchanged ones too, so the entry is replaced outright.
   sentPrints.delete(p.key);
-  sentPrints.set(p.key, entry); // newest last
+  sentPrints.set(p.key, p.prints); // newest last
   while (sentPrints.size > SENT_DOCS_MAX) sentPrints.delete(sentPrints.keys().next().value as string);
 }
 
@@ -802,6 +830,16 @@ function dispatchTransfer(document: Document, tgt?: Role, index = 0, prints?: Pr
 const liveEl = $<HTMLInputElement>("#live");
 let liveOn = false;
 let liveQueued = false;
+
+/**
+ * Live updates what its first send built, which only After Effects and
+ * Illustrator can do; Photoshop (or every app at once) would get a new copy
+ * with every change.
+ */
+function liveCanReach(t: Role | ""): boolean {
+  return t === "aftereffects" || t === "illustrator";
+}
+const LIVE_NEEDS = "Live keeps one copy up to date, which only After Effects and Illustrator can do; choose one of them as the target";
 /** Live transfers, which stay out of the history. */
 const liveIds = new Set<string>();
 
@@ -829,7 +867,12 @@ if (liveEl) {
     }
     if (!connected) {
       liveEl.checked = false;
-      setStatus("Live needs the LazyLord bridge; start it and try again.", "err");
+      setStatus("Live needs an Adobe app: open the LazyLord panel in After Effects or Illustrator.", "err");
+      return;
+    }
+    if (!liveCanReach(target)) {
+      liveEl.checked = false;
+      setStatus(LIVE_NEEDS + ".", "err");
       return;
     }
     diagnostics = [];

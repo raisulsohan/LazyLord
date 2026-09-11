@@ -550,7 +550,11 @@ export function moveLayers(layers: Layer[], dx: number, dy: number): void {
     layer.frame.x += dx;
     layer.frame.y += dy;
     if (layer.clip) layer.clip.subpaths = offsetSubPaths(layer.clip.subpaths, dx, dy);
-    if (layer.type === "group") moveLayers(layer.children, dx, dy);
+    if (layer.type === "group") {
+      // A page (a precomp's box) is in frame space too, as LazyLord.shiftLayers moves it.
+      if (layer.page) layer.page = { ...layer.page, x: layer.page.x + dx, y: layer.page.y + dy };
+      moveLayers(layer.children, dx, dy);
+    }
   }
 }
 

@@ -27,11 +27,16 @@ LazyLord.liveStamp = function () {
   var d = app.activeDocument;
   var out = [];
   try { out.push(d.id, d.historyStates.length, d.activeHistoryState.name); } catch (e) {}
-  try { out.push(LazyLord._psr_selectedIds(d).join(",")); } catch (e2) {}
-  try {
-    var a = d.activeLayer;
-    out.push(LazyLord.printValue([a.id, a.name, a.opacity, a.visible]), String(a.bounds));
-  } catch (e3) {}
+  // Every selected layer, not just the active one: once the history is full,
+  // its length stops growing and a repeated edit keeps the same state name.
+  var sel = [];
+  try { sel = LazyLord._psr_selectedLayers(d); } catch (e2) {}
+  for (var i = 0; i < sel.length && i < 100; i++) {
+    try {
+      var l = sel[i];
+      out.push(LazyLord.printValue([l.id, l.name, l.opacity, l.visible, String(l.blendMode)]), String(l.bounds));
+    } catch (e3) {}
+  }
   return LazyLord.hashText(out.join("|"));
 };
 
@@ -277,7 +282,17 @@ LazyLord._psr_shift = function (list, dx, dy) {
     if (l.frame) { l.frame.x += dx; l.frame.y += dy; }
     if (typeof l.baseline === "number") l.baseline += dy;
     if (typeof l.anchorX === "number") l.anchorX += dx;
+    // A group's vector mask is read in document space, like the frames.
+    if (l.clip && l.clip.subpaths) LazyLord._psr_shiftSubPaths(l.clip.subpaths, dx, dy);
     if (l.children) LazyLord._psr_shift(l.children, dx, dy);
+  }
+};
+
+/** Move contour vertices (tangents are relative, so they stay). */
+LazyLord._psr_shiftSubPaths = function (subs, dx, dy) {
+  for (var s = 0; s < subs.length; s++) {
+    var v = subs[s].vertices || [];
+    for (var i = 0; i < v.length; i++) v[i] = [v[i][0] + dx, v[i][1] + dy];
   }
 };
 
@@ -286,6 +301,20 @@ LazyLord._psr_shift = function (list, dx, dy) {
  * ---------------------------------------------------------------------- */
 
 LazyLord._psr_layer = function (ctx, lyr) {
+  var out = LazyLord._psr_convert(ctx, lyr);
+  // Its blend mode travels whatever it became, rasterised layers included.
+  if (out) {
+    var bm = null;
+    try {
+      bm = LazyLord.blendFromHost(lyr.blendMode, typeof BlendMode !== "undefined" ? BlendMode : null,
+        LazyLord._ps_BLEND || {}, lyr.name);
+    } catch (e) {}
+    if (bm) out.blendMode = bm;
+  }
+  return out;
+};
+
+LazyLord._psr_convert = function (ctx, lyr) {
   try { if (lyr.visible === false) return null; } catch (e) {}
 
   if (lyr.typename === "LayerSet") return LazyLord._psr_group(ctx, lyr);
@@ -358,22 +387,92 @@ LazyLord._psr_shape = function (ctx, lyr) {
   var box = LazyLord._psr_box(lyr);
   if (!box) return null;
 
-  var subpaths = LazyLord._psr_maskPaths(ctx, lyr, box.x, box.y);
+  var ops = [];
+  var subpaths = LazyLord._psr_maskPaths(ctx, lyr, box.x, box.y, ops);
   if (!subpaths || !subpaths.length) return null;
 
   var colour = LazyLord._psr_solidColour(lyr);
   if (!colour) return null;
 
+  var name = lyr.name || "Shape";
+  var fills = [{ type: "solid", color: colour }];
+  var strokes = [];
+  // The shape's own fill and stroke switches and its stroke (Properties panel).
+  var style = LazyLord._psr_shapeStyle(ctx, lyr);
+  if (style) {
+    if (style.fill === false) fills = [];
+    if (style.stroke) strokes = [{ paint: { type: "solid", color: style.stroke.color }, weight: style.stroke.weight, align: style.stroke.align }];
+  }
+  if (LazyLord._psr_hasStyles(lyr)) {
+    LazyLord.warn(name, "Its layer style (shadows, glows, Layer Style strokes) is not transferred", "skipped");
+  }
+
   return {
     id: LazyLord._psr_id(ctx, lyr),
-    name: lyr.name || "Shape",
+    name: name,
     type: "vector",
     frame: LazyLord._psr_frame(lyr, box),
     subpaths: subpaths,
-    fills: [{ type: "solid", color: colour }],
-    strokes: [],
-    windingRule: "evenodd"
+    fills: fills,
+    strokes: strokes,
+    windingRule: LazyLord._psr_winding(subpaths, ops, name)
   };
+};
+
+/**
+ * A shape layer's fill switch and stroke, through ActionManager
+ * (AGMStrokeStyleInfo); null when it cannot be read, which keeps the filled,
+ * unstroked shape the DOM alone can see.
+ */
+LazyLord._psr_shapeStyle = function (ctx, lyr) {
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(LazyLord._ps_cid("Lyr "), lyr.id);
+    var desc = executeActionGet(ref);
+    var key = LazyLord._ps_sid("AGMStrokeStyleInfo");
+    if (!desc.hasKey(key)) return null;
+    var ss = desc.getObjectValue(key);
+    var out = { fill: true, stroke: null };
+    try { out.fill = ss.getBoolean(LazyLord._ps_sid("fillEnabled")); } catch (eF) {}
+    var on = false;
+    try { on = ss.getBoolean(LazyLord._ps_sid("strokeEnabled")); } catch (eS) {}
+    if (!on) return out;
+    var w = 1;
+    try { w = ss.getUnitDoubleValue(LazyLord._ps_sid("strokeStyleLineWidth")) * (ctx.pathK || 1); } catch (eW) {}
+    var col = { r: 0, g: 0, b: 0, a: 1 };
+    try {
+      var c = ss.getObjectValue(LazyLord._ps_sid("strokeStyleContent")).getObjectValue(LazyLord._ps_sid("color"));
+      col = { r: c.getDouble(LazyLord._ps_sid("red")) / 255, g: c.getDouble(LazyLord._ps_sid("grain")) / 255,
+              b: c.getDouble(LazyLord._ps_sid("blue")) / 255, a: 1 };
+    } catch (eC) {
+      LazyLord.warn(lyr.name || "Shape", "Its stroke is not a flat colour, so it is sent black", "approximated");
+    }
+    try { col.a = ss.getUnitDoubleValue(LazyLord._ps_sid("strokeStyleOpacity")) / 100; } catch (eO) {}
+    var align = "center";
+    try {
+      var a = typeIDToStringID(ss.getEnumerationValue(LazyLord._ps_sid("strokeStyleLineAlignment")));
+      if (a === "strokeStyleAlignInside") align = "inside";
+      else if (a === "strokeStyleAlignOutside") align = "outside";
+    } catch (eA) {}
+    out.stroke = { weight: w, color: col, align: align };
+    return out;
+  } catch (e) {
+    return null;
+  }
+};
+
+/** Whether a layer wears a visible layer style (shadows, glows, strokes, overlays). */
+LazyLord._psr_hasStyles = function (lyr) {
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(LazyLord._ps_cid("Lyr "), lyr.id);
+    var desc = executeActionGet(ref);
+    if (!desc.hasKey(LazyLord._ps_sid("layerEffects"))) return false;
+    try { if (desc.getBoolean(LazyLord._ps_sid("layerFXVisible")) === false) return false; } catch (eV) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
 };
 
 /**
@@ -381,10 +480,16 @@ LazyLord._psr_shape = function (ctx, lyr) {
  * exposes the active layer's vector mask through document.pathItems, so the
  * layer is made active first; the user's own selection is put back afterwards.
  */
-LazyLord._psr_maskPaths = function (ctx, lyr, ox, oy) {
+LazyLord._psr_maskPaths = function (ctx, lyr, ox, oy, ops) {
   var psDoc = ctx.doc;
   var was = null;
   try { was = psDoc.activeLayer; } catch (e) {}
+  // Making a layer active selects it alone; the DOM can only give back the one
+  // active layer, so a multi-layer selection is put back through ActionManager.
+  if (ctx.selectedIds === undefined) {
+    ctx.selectedIds = null;
+    try { ctx.selectedIds = LazyLord._psr_selectedIds(psDoc); } catch (eS) {}
+  }
 
   var out = null;
   try {
@@ -394,19 +499,34 @@ LazyLord._psr_maskPaths = function (ctx, lyr, ox, oy) {
       var kind = null;
       try { kind = items[i].kind; } catch (eK) {}
       if (kind !== PathKind.VECTORMASK) continue;
-      out = LazyLord._psr_pathToSubPaths(ctx, items[i], ox, oy);
+      out = LazyLord._psr_pathToSubPaths(ctx, items[i], ox, oy, ops);
       break;
     }
   } catch (e2) {
     out = null;
   } finally {
     try { if (was) psDoc.activeLayer = was; } catch (e3) {}
+    if (ctx.selectedIds && ctx.selectedIds.length > 1) LazyLord._psr_reselect(ctx.selectedIds);
   }
   return out;
 };
 
+/** Select these layers (by id) again, as the user had them. */
+LazyLord._psr_reselect = function (ids) {
+  try {
+    var ref = new ActionReference();
+    for (var i = 0; i < ids.length; i++) ref.putIdentifier(LazyLord._ps_cid("Lyr "), ids[i]);
+    var desc = new ActionDescriptor();
+    desc.putReference(LazyLord._ps_cid("null"), ref);
+    desc.putBoolean(LazyLord._ps_cid("MkVs"), false);
+    executeAction(LazyLord._ps_cid("slct"), desc, DialogModes.NO);
+  } catch (e) {
+    // The active layer is back at least.
+  }
+};
+
 /** A Photoshop PathItem as IR subpaths, converted from points to pixels. */
-LazyLord._psr_pathToSubPaths = function (ctx, pathItem, ox, oy) {
+LazyLord._psr_pathToSubPaths = function (ctx, pathItem, ox, oy, ops) {
   var subs = [];
   var k = ctx.pathK;
   var list;
@@ -432,8 +552,67 @@ LazyLord._psr_pathToSubPaths = function (ctx, pathItem, ox, oy) {
     var closed = false;
     try { closed = sp.closed === true; } catch (eC) {}
     subs.push({ closed: closed, vertices: verts, inTangents: ins, outTangents: outs });
+    // How this contour combines with the ones before it (Combine, Subtract, ...).
+    if (ops) {
+      var op = null;
+      try { op = sp.operation; } catch (eO) {}
+      ops.push(op);
+    }
   }
   return subs.length ? subs : null;
+};
+
+/**
+ * The fill rule for a shape layer's contours, from how each combines with the
+ * ones before it. Photoshop's default, Combine, is a union: under even-odd two
+ * overlapping contours would cut a hole. So combined contours are turned one
+ * way round and subtracted ones the other, and filled non-zero. Exclude is
+ * even-odd; Intersect has no fill rule and is reported. Without the operations
+ * (an older Photoshop) it stays even-odd, as before.
+ */
+LazyLord._psr_winding = function (subs, ops, name) {
+  if (typeof ShapeOperation === "undefined" || !ops || ops.length !== subs.length) return "evenodd";
+  var add = ShapeOperation.SHAPEADD, sub = ShapeOperation.SHAPESUBTRACT;
+  var xor = ShapeOperation.SHAPEXOR, inter = ShapeOperation.SHAPEINTERSECT;
+  var i, hasXor = false, hasInter = false, mixed = false;
+  for (i = 0; i < ops.length; i++) {
+    if (ops[i] === xor) hasXor = true;
+    else if (ops[i] === inter) hasInter = true;
+    else if (ops[i] !== add && ops[i] !== sub) return "evenodd";
+    if (i > 0 && ops[i] !== ops[0]) mixed = true;
+  }
+  if (hasInter || (hasXor && mixed)) {
+    LazyLord.warn(name, "The shape's contours intersect or mix Exclude with other operations; they are sent with an even-odd fill", "approximated");
+    return "evenodd";
+  }
+  if (hasXor) return "evenodd";
+  for (i = 0; i < subs.length; i++) {
+    var a = LazyLord._psr_area(subs[i].vertices);
+    var want = ops[i] === sub ? -1 : 1;
+    if (a !== 0 && (a > 0 ? 1 : -1) !== want) subs[i] = LazyLord._psr_reverse(subs[i]);
+  }
+  return "nonzero";
+};
+
+/** Twice the signed area of a polygon (its anchors), for which way round it goes. */
+LazyLord._psr_area = function (v) {
+  var s = 0;
+  for (var i = 0; v && i < v.length; i++) {
+    var p = v[i], q = v[(i + 1) % v.length];
+    s += p[0] * q[1] - q[0] * p[1];
+  }
+  return s;
+};
+
+/** The same contour, the other way round. */
+LazyLord._psr_reverse = function (sp) {
+  var n = sp.vertices.length, verts = [], ins = [], outs = [];
+  for (var i = n - 1; i >= 0; i--) {
+    verts.push(sp.vertices[i]);
+    ins.push(sp.outTangents[i]);
+    outs.push(sp.inTangents[i]);
+  }
+  return { closed: sp.closed, vertices: verts, inTangents: ins, outTangents: outs };
 };
 
 /** A group's vector mask as an IR clip path, in frame space. */
@@ -488,6 +667,15 @@ LazyLord._psr_text = function (ctx, lyr) {
   var name = lyr.name || "Text";
   var size = 24;
   try { size = LazyLord._pv(ti.size); } catch (e1) {}
+  // Free Transform leaves the text live, with a transform on top that
+  // TextItem.size does not include.
+  var tf = LazyLord._psr_textTransform(lyr);
+  if (tf) {
+    size = size * tf.scale;
+    if (Math.abs(tf.rotation) > 0.05 || tf.skewed) {
+      LazyLord.warn(name, "The text is turned or slanted in Photoshop; it is sent upright", "approximated");
+    }
+  }
 
   var colour = { r: 0, g: 0, b: 0, a: 1 };
   try {
@@ -543,6 +731,33 @@ LazyLord._psr_text = function (ctx, lyr) {
     baseline: baseline,
     anchorX: anchorX
   };
+};
+
+/**
+ * A text layer's transform (ActionManager textKey.transform): its vertical
+ * scale, turn (degrees, clockwise) and whether it is slanted or stretched.
+ * null when there is none, or it cannot be read.
+ */
+LazyLord._psr_textTransform = function (lyr) {
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(LazyLord._ps_cid("Lyr "), lyr.id);
+    var desc = executeActionGet(ref);
+    var tk = desc.getObjectValue(LazyLord._ps_sid("textKey"));
+    if (!tk.hasKey(LazyLord._ps_sid("transform"))) return null;
+    var t = tk.getObjectValue(LazyLord._ps_sid("transform"));
+    var xx = t.getDouble(LazyLord._ps_sid("xx")), xy = t.getDouble(LazyLord._ps_sid("xy"));
+    var yx = t.getDouble(LazyLord._ps_sid("yx")), yy = t.getDouble(LazyLord._ps_sid("yy"));
+    var sx = Math.sqrt(xx * xx + xy * xy), sy = Math.sqrt(yx * yx + yy * yy);
+    if (!(sx > 0) || !(sy > 0)) return null;
+    return {
+      scale: sy,
+      rotation: Math.atan2(xy, xx) * 180 / Math.PI,
+      skewed: Math.abs(xx * yx + xy * yy) > 1e-3 * sx * sy || Math.abs(sx - sy) > 0.01 * sy
+    };
+  } catch (e) {
+    return null;
+  }
 };
 
 LazyLord._psr_contents = function (ti) {

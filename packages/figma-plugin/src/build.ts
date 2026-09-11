@@ -29,7 +29,7 @@ import type {
   TextLayer,
   VectorLayer,
 } from "@lazylord/core";
-import { gradientTransformFromHandles, subPathsToSvg, transferOptions } from "@lazylord/core";
+import { gradientTransformFromHandles, moveLayers, subPathsToSvg, transferOptions } from "@lazylord/core";
 
 export type BuildResult = {
   ok: boolean;
@@ -74,13 +74,12 @@ export async function buildDocument(doc: Document): Promise<BuildResult> {
   if (opts.destination === "new") {
     frame = makeFrame(doc);
     parent = frame;
+    // A frame the size of the source page: the artwork goes where it sat on
+    // that page (frames are measured from the selection's corner), as the guides do.
+    if (doc.originSpace === "document" && doc.canvas && doc.bounds) moveLayers(layers, doc.bounds.x || 0, doc.bounds.y || 0);
   }
 
-  const made: SceneNode[] = [];
-  for (const layer of layers) {
-    const node = await buildLayer(layer, ctx, parent);
-    if (node) made.push(node);
-  }
+  const made = await buildList(layers, ctx, parent);
 
   if (frame) {
     placeFrame(frame, doc);
@@ -229,6 +228,49 @@ function placeFrame(frame: FrameNode, doc: Document) {
 // Layers
 // ---------------------------------------------------------------------------
 
+/**
+ * Build `list` (bottom to top) into `parent`. Layers carry their clip each, in
+ * frame space; a run of siblings sharing one clip is built as a group masked
+ * by that clip, which is how Figma expresses it.
+ */
+async function buildList(list: ReadonlyArray<Layer>, ctx: Ctx, parent: BaseNode & ChildrenMixin): Promise<SceneNode[]> {
+  const out: SceneNode[] = [];
+  const clipOf = (l: Layer | undefined) => (l && l.type !== "group" ? l.clip : undefined);
+  let i = 0;
+  while (i < list.length) {
+    const clip = clipOf(list[i]);
+    if (!clip) {
+      const node = await buildLayer(list[i], ctx, parent);
+      if (node) out.push(node);
+      i++;
+      continue;
+    }
+    const first = list[i];
+    const run: SceneNode[] = [];
+    while (i < list.length && clipOf(list[i]) && clipOf(list[i])!.id === clip.id) {
+      const node = await buildLayer(list[i], ctx, parent);
+      if (node) run.push(node);
+      i++;
+    }
+    if (!run.length) continue;
+    const mask = buildMask(clip, first.name || "Layer", ctx, parent, run[0]);
+    if (!mask) {
+      out.push(...run);
+      continue;
+    }
+    try {
+      const group = figma.group([mask, ...run], parent);
+      group.name = `${first.name || "Layer"} (clipped)`;
+      out.push(group);
+    } catch (e) {
+      warn(ctx, first.name, `The clip could not be applied (${message(e)}), so the layer is not clipped`, "approximated");
+      try { mask.remove(); } catch { /* already gone */ }
+      out.push(...run);
+    }
+  }
+  return out;
+}
+
 async function buildLayer(
   layer: Layer,
   ctx: Ctx,
@@ -325,10 +367,25 @@ function buildText(layer: TextLayer, ctx: Ctx, parent: BaseNode & ChildrenMixin)
   if (layer.lineHeight) node.lineHeight = { unit: "PIXELS", value: layer.lineHeight };
   applyRuns(node, layer, ctx);
 
+  // The whole text's own decoration and case; runs override them where they differ.
+  if (layer.decoration === "underline") node.textDecoration = "UNDERLINE";
+  else if (layer.decoration === "strikethrough") node.textDecoration = "STRIKETHROUGH";
+  if (layer.textCase === "upper") node.textCase = "UPPER";
+  else if (layer.textCase === "lower") node.textCase = "LOWER";
+  else if (layer.textCase === "title") node.textCase = "TITLE";
+
   const align = layer.textAlignHorizontal;
   if (align === "center") node.textAlignHorizontal = "CENTER";
   else if (align === "right") node.textAlignHorizontal = "RIGHT";
   else if (align === "justified") node.textAlignHorizontal = "JUSTIFIED";
+  // Aligned text needs its box: an auto-width box hugs the glyphs, and
+  // centring inside it changes nothing.
+  if (align && align !== "left" && layer.frame.width > 0) {
+    try {
+      node.textAutoResize = "HEIGHT";
+      node.resize(layer.frame.width, Math.max(1, node.height));
+    } catch { /* keeps the auto-width box */ }
+  }
 
   // Figma positions text by its box, and the box hugs the glyphs once it is
   // auto-sized. A source that knew its baseline places the box that far above
@@ -370,11 +427,7 @@ async function buildGroup(
   ctx: Ctx,
   parent: BaseNode & ChildrenMixin
 ): Promise<SceneNode | null> {
-  const children: SceneNode[] = [];
-  for (const child of layer.children || []) {
-    const node = await buildLayer(child, ctx, parent);
-    if (node) children.push(node);
-  }
+  const children = await buildList(layer.children || [], ctx, parent);
   if (children.length === 0) {
     warn(ctx, layer.name, "The group held nothing that could be rebuilt", "skipped");
     return null;
@@ -382,7 +435,7 @@ async function buildGroup(
 
   // A clip becomes a mask sitting under its siblings, which is how Figma
   // expresses one; the group is what confines it.
-  const mask = layer.clip ? buildMask(layer.clip, layer, ctx, parent) : null;
+  const mask = layer.clip ? buildMask(layer.clip, layer.name || "Group", ctx, parent, children[0]) : null;
   const members = mask ? [mask, ...children] : children;
 
   let group: GroupNode;
@@ -397,18 +450,25 @@ async function buildGroup(
   return group;
 }
 
+/**
+ * A clip as a mask vector, put directly under `below`: Figma masks the layers
+ * above a mask, and grouping keeps the order the layers already have.
+ */
 function buildMask(
   clip: ClipPath,
-  layer: GroupLayer,
+  name: string,
   ctx: Ctx,
-  parent: BaseNode & ChildrenMixin
+  parent: BaseNode & ChildrenMixin,
+  below: SceneNode
 ): SceneNode | null {
   const data = subPathsToSvg(clip.subpaths || []);
   if (!data) return null;
   try {
     const mask = figma.createVector();
-    parent.appendChild(mask);
-    mask.name = `${layer.name || "Group"} clip`;
+    const at = parent.children.indexOf(below);
+    if (at >= 0) parent.insertChild(at, mask);
+    else parent.appendChild(mask);
+    mask.name = `${name} clip`;
     mask.vectorPaths = [
       { windingRule: clip.windingRule === "evenodd" ? "EVENODD" : "NONZERO", data },
     ];
@@ -419,7 +479,7 @@ function buildMask(
     mask.isMask = true;
     return mask;
   } catch (e) {
-    warn(ctx, layer.name, `The clip could not be rebuilt (${message(e)}), so the group is not clipped`, "approximated");
+    warn(ctx, name, `The clip could not be rebuilt (${message(e)}), so it is not clipped`, "approximated");
     return null;
   }
 }
@@ -441,18 +501,24 @@ function place(node: SceneNode, layer: Layer) {
 }
 
 /**
- * The IR turns clockwise; Figma's `rotation` turns counter-clockwise about the
- * node's own origin, so the sign flips and the node is put back where its box
- * should be afterwards.
+ * The IR turns clockwise about the box's centre; Figma's rotation turns
+ * counter-clockwise about the node's top-left. So the whole transform is set:
+ * the node, placed unrotated at x/y, is turned about its own centre.
  */
 function applyRotation(node: SceneNode, layer: Layer) {
   const deg = layer.frame.rotation || 0;
-  if (!deg || !("rotation" in node)) return;
-  const x = node.x;
-  const y = node.y;
-  (node as SceneNode & LayoutMixin).rotation = -deg;
-  node.x = x;
-  node.y = y;
+  if (!deg) return;
+  const w = node.width;
+  const h = node.height;
+  const cx = node.x + w / 2;
+  const cy = node.y + h / 2;
+  const r = (-deg * Math.PI) / 180;
+  const cos = Math.cos(r);
+  const sin = Math.sin(r);
+  (node as SceneNode & LayoutMixin).relativeTransform = [
+    [cos, sin, cx - (cos * w) / 2 - (sin * h) / 2],
+    [-sin, cos, cy + (sin * w) / 2 - (cos * h) / 2],
+  ];
 }
 
 function applyStroke(node: VectorNode, layer: VectorLayer, ctx: Ctx) {
@@ -501,7 +567,13 @@ function gradientPaint(
   ctx: Ctx
 ): GradientPaint {
   const kind = paint.type === "radial-gradient" ? "radial" : "linear";
-  const transform = gradientTransformFromHandles(paint.from, paint.to, kind);
+  // Handles are normalised to the box, but "perpendicular" means in pixels:
+  // on a box that is not square, the third handle has to say so.
+  const w = layer.frame.width;
+  const h = layer.frame.height;
+  const d = { x: paint.to.x - paint.from.x, y: paint.to.y - paint.from.y };
+  const edge = w > 0 && h > 0 ? { x: paint.from.x - (d.y * h) / w, y: paint.from.y + (d.x * w) / h } : undefined;
+  const transform = gradientTransformFromHandles(paint.from, paint.to, kind, edge);
   const stops = (paint.stops || []).map((s) => ({
     position: clamp01(s.position),
     color: {

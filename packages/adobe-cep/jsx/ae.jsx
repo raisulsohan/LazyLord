@@ -64,7 +64,10 @@ LazyLord.build = function (doc) {
       updated: 0,
       index: null,
       time: 0,
-      always: opts.keyframes === "always"
+      always: opts.keyframes === "always",
+      seal: [],      // layers written, fingerprinted once the build is done
+      conflicts: 0,  // matched layers edited here since the last send
+      keep: opts.conflict === "keep"
     };
     if (update) {
       ctx.index = LazyLord._ae_index(ctx.comp);
@@ -82,6 +85,7 @@ LazyLord.build = function (doc) {
     if (opts.layout === "combine") ctx.combo = LazyLord._ae_planCombine(doc, layers);
     LazyLord._ae_tree(ctx, layers, 1, { separate: 0, combined: false });
     LazyLord._ae_extras(ctx, doc);
+    LazyLord._ae_seal(ctx);
   } finally {
     app.endUndoGroup();
   }
@@ -98,9 +102,15 @@ LazyLord.build = function (doc) {
     notes.push("The shape layer '" + ctx.combo.name + "' holds " + LazyLord._ae_plural(ctx.combo.drawn, "shape") + ".");
   }
   if (ctx.update) {
+    if (ctx.conflicts) {
+      notes.push(LazyLord._ae_plural(ctx.conflicts, "layer") + (ctx.conflicts === 1 ? " was" : " were") +
+        " changed here since the last send: " + (ctx.keep ? "left as you made them." : "your changes were replaced."));
+    }
     if (ctx.updated) {
       notes.push("Updated " + LazyLord._ae_plural(ctx.updated, "layer") +
         (ctx.always ? " with a key at the playhead on every property." : ", keying the ones already animated."));
+    } else if (ctx.conflicts && ctx.keep) {
+      // Every match was kept as the user left it: nothing to add either.
     } else {
       notes.push("Nothing matched a layer from an earlier transfer, so everything was added.");
     }
@@ -1753,9 +1763,118 @@ LazyLord._ae_tag = function (ctx, lyr, layer, role) {
   if (!ctx || !ctx.doc || !lyr || !layer) return;
   try {
     lyr.comment = LazyLord.withTag(lyr.comment, LazyLord.makeTag(ctx.doc, layer, role));
+    if (ctx.seal) ctx.seal.push(lyr);
   } catch (e) {
     // A layer that cannot be tagged simply will not match next time.
   }
+};
+
+/*
+ * Conflict detection. When a build or an update is finished — after parenting,
+ * which rewrites a transform — every layer LazyLord wrote gets a fingerprint of
+ * what an update would write to it (transform, outline, paint, text, footage)
+ * in its tag. The next update reads the same things back: a different
+ * fingerprint means the layer was edited here since. An animated property is
+ * read as its keys and a still one as its value before expressions, so neither
+ * the playhead nor an expression reads as an edit.
+ */
+
+LazyLord._ae_state = function (lyr) {
+  var out = [];
+  function add(prop) { out.push(LazyLord._ae_propPrint(prop)); }
+  try {
+    var tg = lyr.property("ADBE Transform Group");
+    add(tg.property("ADBE Anchor Point"));
+    add(tg.property("ADBE Position"));
+    add(tg.property("ADBE Scale"));
+    add(tg.property("ADBE Rotate Z"));
+    add(tg.property("ADBE Opacity"));
+  } catch (e) {
+    out.push("no transform");
+  }
+  var parts = LazyLord._ae_findParts(lyr);
+  for (var i = 0; i < parts.paths.length; i++) add(parts.paths[i]);
+  try {
+    if (parts.rect) {
+      add(parts.rect.property("ADBE Vector Rect Size"));
+      add(parts.rect.property("ADBE Vector Rect Position"));
+      add(parts.rect.property("ADBE Vector Rect Roundness"));
+    }
+    if (parts.ellipse) {
+      add(parts.ellipse.property("ADBE Vector Ellipse Size"));
+      add(parts.ellipse.property("ADBE Vector Ellipse Position"));
+    }
+    if (parts.fill) {
+      add(parts.fill.property("ADBE Vector Fill Color"));
+      add(parts.fill.property("ADBE Vector Fill Opacity"));
+    }
+    if (parts.stroke) {
+      add(parts.stroke.property("ADBE Vector Stroke Color"));
+      add(parts.stroke.property("ADBE Vector Stroke Width"));
+      add(parts.stroke.property("ADBE Vector Stroke Opacity"));
+    }
+  } catch (eP) {}
+  try {
+    var tp = lyr.property("ADBE Text Properties");
+    if (tp) add(tp.property("ADBE Text Document"));
+  } catch (eT) {}
+  try {
+    if (lyr.source && lyr.source.file) out.push("file " + lyr.source.file.fsName);
+  } catch (eF) {}
+  return LazyLord.hashText(out.join("|"));
+};
+
+/** One property for a fingerprint: its keys when animated, else its value. */
+LazyLord._ae_propPrint = function (prop) {
+  if (!prop) return "-";
+  try {
+    var n = 0;
+    try { n = prop.numKeys || 0; } catch (eK) {}
+    if (n > 0) {
+      var keys = [];
+      for (var k = 1; k <= n; k++) {
+        keys.push(LazyLord.printValue(prop.keyTime(k)) + "=" + LazyLord._ae_valuePrint(prop.keyValue(k)));
+      }
+      return "k" + keys.join(";");
+    }
+    var v;
+    try { v = prop.valueAtTime(0, true); } catch (eV) { v = prop.value; }
+    return LazyLord._ae_valuePrint(v);
+  } catch (e) {
+    return "?";
+  }
+};
+
+/** A property value as text: a Shape and a TextDocument by their parts. */
+LazyLord._ae_valuePrint = function (v) {
+  if (v && typeof v === "object" && v.vertices) {
+    return "S" + LazyLord.printValue(v.vertices) + LazyLord.printValue(v.inTangents) +
+      LazyLord.printValue(v.outTangents) + (v.closed ? "c" : "o");
+  }
+  if (v && typeof v === "object" && typeof v.text === "string") {
+    var names = ["text", "font", "fontSize", "applyFill", "fillColor", "tracking", "leading", "justification"];
+    var parts = [];
+    for (var i = 0; i < names.length; i++) {
+      // Some fields throw when they do not apply (fillColor without a fill).
+      try { parts.push(LazyLord.printValue(v[names[i]])); } catch (e) { parts.push("-"); }
+    }
+    return "T" + parts.join(",");
+  }
+  return LazyLord.printValue(v);
+};
+
+/** Write the fingerprint of every layer this build or update wrote into its tag. */
+LazyLord._ae_seal = function (ctx) {
+  for (var i = 0; ctx.seal && i < ctx.seal.length; i++) {
+    var lyr = ctx.seal[i];
+    try { lyr.comment = LazyLord.sealTag(lyr.comment, LazyLord._ae_state(lyr)); } catch (e) {}
+  }
+};
+
+/** Whether a tagged layer was edited here since LazyLord last wrote it. */
+LazyLord._ae_edited = function (lyr) {
+  if (!lyr) return false;
+  try { return LazyLord.edited(lyr.comment, LazyLord._ae_state(lyr)); } catch (e) { return false; }
 };
 
 /**
@@ -2009,8 +2128,19 @@ LazyLord._ae_updateImage = function (ctx, lyr, layer) {
 LazyLord._ae_update = function (ctx, layer) {
   var lyr = ctx.index[LazyLord.tagKey(ctx.doc, layer)];
   if (!lyr) return false;
+  var strokeLyr = layer.type === "vector" ? ctx.index[LazyLord.tagKey(ctx.doc, layer, "stroke")] : null;
 
   var name = layer.name || "Layer";
+  // Edited here since LazyLord last wrote it: keep those edits, or say they went.
+  if (LazyLord._ae_edited(lyr) || LazyLord._ae_edited(strokeLyr)) {
+    ctx.conflicts++;
+    if (ctx.keep) {
+      LazyLord.warn(name, "Was changed in After Effects since it was last sent, so it was left as you made it " +
+        "(On conflict: Keep my edits)", "skipped");
+      return true; // matched: do not add a duplicate either
+    }
+    LazyLord.warn(name, "Was changed in After Effects since it was last sent; the update replaced those changes", "approximated");
+  }
   try {
     if (layer.type === "vector") LazyLord._ae_updateVector(ctx, lyr, layer);
     else if (layer.type === "text") LazyLord._ae_updateText(ctx, lyr, layer);
@@ -2019,25 +2149,25 @@ LazyLord._ae_update = function (ctx, layer) {
   } catch (e) {
     var why = (e && e.message) ? e.message : String(e);
     LazyLord.warn(name, "Could not be updated (" + why + "), so it was left as it was", "skipped");
+    ctx.seal.push(lyr); // whatever was written before the failure is LazyLord's
     return true; // matched: do not also add a duplicate
   }
 
   // A gradient-filled shape keeps its stroke on a layer of its own; it carries
   // its own tag, so update it alongside (it has no fill to touch).
-  if (layer.type === "vector") {
-    var strokeLyr = ctx.index[LazyLord.tagKey(ctx.doc, layer, "stroke")];
-    if (strokeLyr) {
-      try {
-        LazyLord._ae_updateVector(ctx, strokeLyr, layer);
-        try { if (layer.name) strokeLyr.name = layer.name + " stroke"; } catch (eSN) {}
-      } catch (eS) {
-        LazyLord.warn(name, "The shape updated but its separate stroke layer did not", "approximated");
-      }
+  if (strokeLyr) {
+    try {
+      LazyLord._ae_updateVector(ctx, strokeLyr, layer);
+      try { if (layer.name) strokeLyr.name = layer.name + " stroke"; } catch (eSN) {}
+    } catch (eS) {
+      LazyLord.warn(name, "The shape updated but its separate stroke layer did not", "approximated");
     }
+    ctx.seal.push(strokeLyr);
   }
 
   // Keep the layer's name in step with the source; the comment tag stays.
   try { if (layer.name) lyr.name = layer.name; } catch (eN) {}
+  ctx.seal.push(lyr);
   ctx.updated++;
   return true;
 };

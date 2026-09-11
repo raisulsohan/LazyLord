@@ -122,6 +122,7 @@ type Prefs = {
   hierarchy: "flatten" | "groups" | "precomps";
   existing: "add" | "update";
   keyframes: "auto" | "always";
+  conflict: "overwrite" | "keep";
   guides: boolean;
   swatches: boolean;
   /** Updating: leave out what the destination has unchanged since the last send. */
@@ -144,6 +145,7 @@ function cleanPrefs(raw: any): Prefs {
     hierarchy: options.hierarchy,
     existing: options.existing,
     keyframes: options.keyframes,
+    conflict: options.conflict,
     guides: options.guides,
     swatches: options.swatches,
     onlyChanged: !(raw && raw.onlyChanged === false),

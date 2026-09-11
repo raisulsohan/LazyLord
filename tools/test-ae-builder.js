@@ -203,6 +203,10 @@ PNode.prototype.setValueAtTime = function (t, v) {
     this.keys.push({ time: t, value: v });
     this.numKeys = this.keys.length;
 };
+PNode.prototype.keyTime = function (k) { stale(this); return this.keys[k - 1].time; };
+PNode.prototype.keyValue = function (k) { stale(this); return this.keys[k - 1].value; };
+// Nothing here is animated between keys or driven by expressions.
+PNode.prototype.valueAtTime = function (t, preExpression) { stale(this); return this.value; };
 PNode.prototype.remove = function () {
     stale(this);
     if (mock.rejectRemove[this.matchName]) throw new Error("After Effects could not remove " + this.matchName);
@@ -1901,6 +1905,120 @@ function fillColorOf(l) { return findIn(contents(l), "ADBE Vector Fill Color"); 
                       { comp: first.comp });
     ok("nokey: a keyed source does not match a keyless layer", third.res.layersUpdated === 0,
        String(third.res.layersUpdated));
+})();
+
+/* -------------------------------------------------------------------------
+ * Conflict detection: the tag remembers what LazyLord last wrote
+ * ---------------------------------------------------------------------- */
+
+function positionOf(l) { return l.property("ADBE Transform Group").property("ADBE Position"); }
+function box(x, y) { return vector("Box", { x: x, y: y, width: 100, height: 50 }); }
+
+// C1) A finished build leaves a fingerprint in the tag, outside the lookup key;
+//     an update of an untouched layer is no conflict.
+(function () {
+    var first = build(taggedDoc([box(10, 20)]));
+    var l = first.comp.list[0];
+    var t = LazyLord.readTag(l.comment);
+    ok("fp: the tag carries a fingerprint", t && /^[0-9a-z]+\.[0-9a-z]+$/.test(t.fp), l.comment);
+    ok("fp: the id reads without it", t && t.id === "Box", t && t.id);
+    ok("fp: the lookup key ignores it", LazyLord.readTagKey(l.comment) === LazyLord.tagKey(taggedDoc([]), { id: "Box" }));
+    ok("fp: it matches the layer as built", t && t.fp === LazyLord._ae_state(l));
+
+    first.comp.time = 4; // moving the playhead is not an edit
+    var second = build(taggedDoc([box(80, 90)], "file-A", updateOpts()), { comp: first.comp });
+    ok("fp: an untouched layer updates without a conflict",
+       second.res.layersUpdated === 1 && diagsMatching(second.diags, /since it was last sent/).length === 0, dump(second.diags));
+    ok("fp: the update wrote a new fingerprint", LazyLord.readTag(l.comment).fp === LazyLord._ae_state(l) &&
+       LazyLord.readTag(l.comment).fp !== t.fp, l.comment);
+})();
+
+// C2) Edited here, then updated with the default: the edit is replaced, and said so.
+(function () {
+    var first = build(taggedDoc([box(10, 20)]));
+    var l = first.comp.list[0];
+    positionOf(l).setValue([300, 300]); // the user moves it in After Effects
+
+    var second = build(taggedDoc([box(80, 90)], "file-A", updateOpts()), { comp: first.comp });
+    ok("overwrite: the conflict is reported",
+       diagsMatching(second.diags, /changed in After Effects since it was last sent; the update replaced/).length === 1, dump(second.diags));
+    ok("overwrite: the source wins", nearPt(positionOf(l).value, [80, 90]), xy(positionOf(l).value));
+    ok("overwrite: counted as updated", second.res.layersUpdated === 1 && second.res.layersCreated === 0);
+    ok("overwrite: the summary says so", /1 layer was changed here since the last send: your changes were replaced/.test(second.res.message),
+       second.res.message);
+
+    var third = build(taggedDoc([box(5, 5)], "file-A", updateOpts()), { comp: first.comp });
+    ok("overwrite: once replaced, the next update is clean",
+       diagsMatching(third.diags, /since it was last sent/).length === 0, dump(third.diags));
+})();
+
+// C3) On conflict "keep": the edited layer is left as the user made it.
+(function () {
+    var first = build(taggedDoc([box(10, 20)]));
+    var l = first.comp.list[0];
+    fillColorOf(l).setValue([0, 1, 0, 1]); // recoloured in After Effects
+
+    var keep = updateOpts({ conflict: "keep" });
+    var second = build(taggedDoc([box(80, 90)], "file-A", keep), { comp: first.comp });
+    ok("keep: reported", diagsMatching(second.diags, /left as you made it/).length === 1, dump(second.diags));
+    ok("keep: the layer was not touched", nearPt(positionOf(l).value, [10, 20]) && nearArr(fillColorOf(l).value, [0, 1, 0, 1]),
+       xy(positionOf(l).value) + " " + xy(fillColorOf(l).value));
+    ok("keep: nothing added in its place", second.comp.list.length === 1 && second.res.layersCreated === 0 &&
+       second.res.layersUpdated === 0, second.comp.list.length + " " + second.res.layersCreated);
+    ok("keep: the summary says so", /left as you made them/.test(second.res.message) && !/Nothing matched/.test(second.res.message),
+       second.res.message);
+    var third = build(taggedDoc([box(80, 90)], "file-A", keep), { comp: first.comp });
+    ok("keep: it stays a conflict until overwritten", diagsMatching(third.diags, /left as you made it/).length === 1, dump(third.diags));
+})();
+
+// C4) Keys LazyLord itself wrote are part of what it remembers; keys the user
+//     adds are an edit.
+(function () {
+    var first = build(taggedDoc([box(10, 20)]));
+    var l = first.comp.list[0];
+    first.comp.time = 2;
+    build(taggedDoc([box(80, 90)], "file-A", updateOpts({ keyframes: "always" })), { comp: first.comp });
+    first.comp.time = 5;
+    var again = build(taggedDoc([box(40, 40)], "file-A", updateOpts()), { comp: first.comp });
+    ok("keys: LazyLord's own keys are no conflict", diagsMatching(again.diags, /since it was last sent/).length === 0, dump(again.diags));
+
+    positionOf(l).setValueAtTime(8, [1, 1]); // the user adds a key
+    var last = build(taggedDoc([box(40, 40)], "file-A", updateOpts()), { comp: first.comp });
+    ok("keys: a key the user added is", diagsMatching(last.diags, /since it was last sent/).length === 1, dump(last.diags));
+})();
+
+// C5) Text edited in After Effects is a conflict; a tag from before fingerprints is not.
+(function () {
+    var first = build(taggedDoc([textLayer("Title", { x: 0, y: 0, width: 100, height: 30 })]));
+    var l = first.comp.list[0];
+    var prop = l.property("ADBE Text Properties").property("ADBE Text Document");
+    var td = prop.value;
+    td.text = "Typed in AE";
+    prop.setValue(td);
+    var second = build(taggedDoc([textLayer("Title", { x: 0, y: 0, width: 100, height: 30 })], "file-A",
+                                 updateOpts({ conflict: "keep" })), { comp: first.comp });
+    ok("text: the retyped layer is a conflict, and kept", diagsMatching(second.diags, /left as you made it/).length === 1 &&
+       prop.value.text === "Typed in AE", dump(second.diags) + " " + prop.value.text);
+
+    var old = build(taggedDoc([box(10, 20)]));
+    var ol = old.comp.list[0];
+    ol.comment = LazyLord.sealTag(ol.comment, ""); // as an older LazyLord left it
+    positionOf(ol).setValue([300, 300]);
+    var upd = build(taggedDoc([box(80, 90)], "file-A", updateOpts({ conflict: "keep" })), { comp: old.comp });
+    ok("old tag: without a fingerprint there is no conflict", upd.res.layersUpdated === 1 &&
+       diagsMatching(upd.diags, /since it was last sent/).length === 0, dump(upd.diags));
+    ok("old tag: and it gains one", LazyLord.readTag(ol.comment).fp !== "", ol.comment);
+})();
+
+// C6) Fingerprint text helpers.
+(function () {
+    ok("sealTag: sets the fingerprint", LazyLord.sealTag("note\n[[LazyLord figma|f|1]]", "ab.c") === "note\n[[LazyLord figma|f|1~ab.c]]");
+    ok("sealTag: replaces one", LazyLord.sealTag("[[LazyLord figma|f|1~ab.c]]", "zz.1") === "[[LazyLord figma|f|1~zz.1]]");
+    ok("sealTag: a field with no tag is left alone", LazyLord.sealTag("mine", "ab.c") === "mine");
+    ok("tagKey: a ~ in an id cannot pose as a fingerprint", LazyLord.tagKey(taggedDoc([]), { id: "a~b" }) === "figma|file-A|ab");
+    ok("edited: same print", !LazyLord.edited("[[LazyLord figma|f|1~ab.c]]", "ab.c"));
+    ok("edited: different print", LazyLord.edited("[[LazyLord figma|f|1~ab.c]]", "zz.1"));
+    ok("printValue: float noise is not an edit", LazyLord.printValue([1.00000001, 2]) === LazyLord.printValue([1, 2.0000004]));
 })();
 
 /* -------------------------------------------------------------------------

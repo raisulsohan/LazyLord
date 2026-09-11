@@ -446,6 +446,7 @@ LazyLord.options = function (doc) {
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto",
+    conflict: o.conflict === "keep" ? "keep" : "overwrite",
     guides: o.guides === true,
     swatches: o.swatches === true
   };
@@ -487,13 +488,43 @@ LazyLord.wantsUpdate = function (doc) {
  * The document key is what stops a layer id from one file matching the same id
  * in another; when the source could not offer one it is empty, and a tag with
  * an empty key only ever matches another empty one.
+ *
+ * Once a build or an update is finished, the tag also carries a fingerprint of
+ * what LazyLord wrote to the layer — `[[LazyLord figma|abc123|1:42~k3f9.2a]]`.
+ * The next update compares it with the layer as it is now: a difference means
+ * the layer was edited in this app since, which is a conflict (see
+ * TransferOptions.conflict). The fingerprint is not part of the lookup key.
  * ---------------------------------------------------------------------- */
 
 LazyLord.TAG_RE = /\[\[LazyLord ([a-zA-Z]+)\|([^|\]]*)\|([^\]]*)\]\]/;
 
-/** Strip the characters that would end the tag early. */
+/** Strip the characters that would end the tag, or its id, early. */
 LazyLord._tagSafe = function (s) {
-  return String(s === undefined || s === null ? "" : s).replace(/[\[\]|]/g, "");
+  return String(s === undefined || s === null ? "" : s).replace(/[\[\]|~]/g, "");
+};
+
+/** A short, stable hash of a string (djb2 plus the length), as the panels use. */
+LazyLord.hashText = function (s) {
+  s = String(s);
+  var h = 5381;
+  for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + "." + s.length.toString(36);
+};
+
+/**
+ * A value read back from a host, as text for a fingerprint: numbers rounded to
+ * a thousandth so float noise never reads as an edit, arrays element by element.
+ */
+LazyLord.printValue = function (v) {
+  if (v === undefined || v === null) return "-";
+  if (typeof v === "number") return String(Math.round(v * 1000) / 1000);
+  if (typeof v === "boolean" || typeof v === "string") return String(v);
+  if (typeof v.length === "number" && typeof v !== "function") {
+    var parts = [];
+    for (var i = 0; i < v.length; i++) parts.push(LazyLord.printValue(v[i]));
+    return "[" + parts.join(",") + "]";
+  }
+  return String(v);
 };
 
 /**
@@ -514,12 +545,38 @@ LazyLord.makeTag = function (doc, layer, role) {
   return "[[LazyLord " + LazyLord.tagKey(doc, layer, role) + "]]";
 };
 
-/** Parse a tag out of a host's comment/note field, or null when there is none. */
+/**
+ * Parse a tag out of a host's comment/note field, or null when there is none.
+ * `fp` is the fingerprint of what LazyLord last wrote ("" on an older tag).
+ */
 LazyLord.readTag = function (text) {
   if (!text) return null;
   var m = LazyLord.TAG_RE.exec(String(text));
   if (!m) return null;
-  return { app: m[1], key: m[2], id: m[3], token: m[0] };
+  var id = m[3], fp = "";
+  var cut = id.indexOf("~");
+  if (cut >= 0) {
+    fp = id.substring(cut + 1);
+    id = id.substring(0, cut);
+  }
+  return { app: m[1], key: m[2], id: id, fp: fp, token: m[0] };
+};
+
+/** The field with its tag's fingerprint set to `fp` (unchanged when it holds no tag). */
+LazyLord.sealTag = function (text, fp) {
+  var t = LazyLord.readTag(text);
+  if (!t) return text;
+  var token = "[[LazyLord " + t.app + "|" + t.key + "|" + t.id + (fp ? "~" + LazyLord._tagSafe(fp) : "") + "]]";
+  return String(text).replace(t.token, token);
+};
+
+/**
+ * Whether a tagged layer was edited since LazyLord last wrote it: its tag holds
+ * a fingerprint and `current` (the layer's fingerprint now) differs from it.
+ */
+LazyLord.edited = function (text, current) {
+  var t = LazyLord.readTag(text);
+  return !!(t && t.fp && current && t.fp !== current);
 };
 
 /** The lookup key of whatever tag a comment/note holds, or null. */

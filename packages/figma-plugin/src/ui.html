@@ -73,6 +73,13 @@
             <option value="always">Always</option>
           </select>
         </div>
+        <div class="a-opt" id="conflict-opt" title="While updating in After Effects or Illustrator: what to do with a layer that was edited there since it was last sent. Overwrite: the update replaces those edits. Keep my edits: the layer is left as it is. Either way it is reported." hidden>
+          <label for="conflict">On conflict</label>
+          <select id="conflict">
+            <option value="overwrite">Overwrite</option>
+            <option value="keep">Keep my edits</option>
+          </select>
+        </div>
         <div class="a-row" id="only-changed-opt" title="While updating: leave out everything the destination already has unchanged since the last send. Turn off to send everything again, for example after deleting a layer there." hidden>
           <label class="a-check"><input type="checkbox" id="only-changed" checked /> Only what changed</label>
         </div>

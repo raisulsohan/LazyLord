@@ -1939,8 +1939,15 @@ await block("ui, smart diff", async () => {
   const ui = await loadUi();
   const ws = ui.connect();
   ok("diff: the checkbox shows only while updating", ui.$("#only-changed-opt").hidden === true);
+  ok("conflict: hidden while adding", ui.$("#conflict-opt").hidden === true);
   ui.choose("#existing", "update");
   ok("diff: shown, and on by default", ui.$("#only-changed-opt").hidden === false && ui.$("#only-changed").checked === true);
+  ok("conflict: shown while updating, Overwrite first", ui.$("#conflict-opt").hidden === false &&
+    optionValues(ui.$("#conflict")) === "overwrite,keep" && ui.$("#conflict").value === "overwrite");
+  ui.choose("#conflict", "keep");
+  ok("conflict: named on the folded label", ui.$("#opts-note").textContent === "Update, Keep edits");
+  const savedConflict = ui.toPlugin.filter((m) => m.type === "prefs").pop();
+  ok("conflict: saved with the prefs", savedConflict && savedConflict.conflict === "keep");
 
   const sendIr = (doc) => {
     ws.sent.length = 0;
@@ -1951,6 +1958,7 @@ await block("ui, smart diff", async () => {
 
   const t1 = sendIr(groupedDoc());
   ok("diff: the first update sends everything", t1 && countTree(t1.document.layers) === 3);
+  ok("conflict: Keep my edits travels on the options", t1 && t1.document.options.conflict === "keep");
   ack(t1, true);
   ok("diff: nothing changed, nothing sent", !sendIr(groupedDoc()) && ui.$("#status").textContent === "Nothing changed since the last send, so nothing was sent.");
 

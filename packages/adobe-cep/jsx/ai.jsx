@@ -39,7 +39,10 @@ LazyLord.build = function (doc) {
     created: 0,      // leaf layers built (groups themselves are not counted)
     update: update,
     updated: 0,
-    index: update ? LazyLord._ai_index(aiDoc) : null
+    index: update ? LazyLord._ai_index(aiDoc) : null,
+    seal: [],        // sets of items tagged, fingerprinted once the build is done
+    conflicts: 0,    // matched artwork edited here since the last send
+    keep: opts.conflict === "keep"
   };
 
   var root = LazyLord._ai_scope(aiDoc);
@@ -50,12 +53,21 @@ LazyLord.build = function (doc) {
   LazyLord._ai_closeClips(ctx, root);
   LazyLord._ai_extras(ctx, doc, rect);
   try { app.redraw(); } catch (eR) {}
+  // After the redraw, so text frames report the bounds they will keep.
+  LazyLord._ai_seal(ctx);
 
   var message = "";
   if (update) {
-    message = ctx.updated
-      ? "Replaced " + ctx.updated + " item" + (ctx.updated === 1 ? "" : "s") + " where they already stood."
-      : "Nothing matched artwork from an earlier transfer, so everything was added.";
+    if (ctx.conflicts) {
+      message = ctx.conflicts + " item" + (ctx.conflicts === 1 ? " was" : "s were") + " changed here since the last send: " +
+        (ctx.keep ? "left as you made them." : "your changes were replaced.") + " ";
+    }
+    if (ctx.updated) {
+      message += "Replaced " + ctx.updated + " item" + (ctx.updated === 1 ? "" : "s") + " where they already stood.";
+    } else if (!(ctx.conflicts && ctx.keep)) {
+      message += "Nothing matched artwork from an earlier transfer, so everything was added.";
+    }
+    message = message.replace(/\s+$/, "");
   }
   return { ok: true, layersCreated: ctx.created, layersUpdated: ctx.updated, message: message };
 };
@@ -1346,6 +1358,108 @@ LazyLord._ai_tagItems = function (ctx, items, layer) {
     // An item that cannot be tagged simply will not match next time.
     try { items[i].note = LazyLord.withTag(items[i].note, tag); } catch (eI) {}
   }
+  if (ctx.seal) ctx.seal.push(items);
+};
+
+/*
+ * Conflict detection. Once the build is done, the items made from one layer
+ * get a fingerprint of how they stand — geometry, paint, text, linked file —
+ * in their tag. The next update reads the same items back: a different
+ * fingerprint means they were edited here since, and replacing them would
+ * throw that work away (TransferOptions.conflict decides whether it does).
+ * The set is read in any order, since moving items reorders the document.
+ */
+
+LazyLord._ai_state = function (items) {
+  var prints = [];
+  for (var i = 0; i < items.length; i++) prints.push(LazyLord._ai_itemPrint(items[i]));
+  prints.sort();
+  return LazyLord.hashText(prints.join("|"));
+};
+
+LazyLord._ai_itemPrint = function (it) {
+  var out = [];
+  function add(get) {
+    try { out.push(LazyLord.printValue(get())); } catch (e) { out.push("-"); }
+  }
+  var tn = "";
+  try { tn = it.typename; } catch (eT) {}
+  out.push(tn);
+  add(function () { return it.geometricBounds; });
+  add(function () { return it.opacity; });
+  var i;
+  if (tn === "PathItem") {
+    LazyLord._ai_pathPrint(it, out);
+  } else if (tn === "CompoundPathItem") {
+    try { for (i = 0; i < it.pathItems.length; i++) LazyLord._ai_pathPrint(it.pathItems[i], out); } catch (eC) {}
+  } else if (tn === "GroupItem") {
+    try { for (i = 0; i < it.pageItems.length; i++) out.push("(" + LazyLord._ai_itemPrint(it.pageItems[i]) + ")"); } catch (eG) {}
+  } else if (tn === "TextFrame") {
+    add(function () { return it.contents; });
+    try {
+      var ca = it.textRange.characterAttributes;
+      add(function () { return ca.size; });
+      add(function () { return ca.textFont.name; });
+      out.push(LazyLord._ai_colorPrint(ca.fillColor));
+    } catch (eX) {}
+  } else if (tn === "PlacedItem") {
+    add(function () { return it.file.fsName; });
+  }
+  return out.join(";");
+};
+
+LazyLord._ai_pathPrint = function (p, out) {
+  try {
+    var pts = p.pathPoints;
+    for (var i = 0; i < pts.length; i++) {
+      out.push(LazyLord.printValue([pts[i].anchor, pts[i].leftDirection, pts[i].rightDirection]));
+    }
+  } catch (e) {}
+  var bits = [];
+  try { bits.push(p.closed, p.filled, p.stroked, p.strokeWidth); } catch (eB) {}
+  out.push(LazyLord.printValue(bits));
+  try { if (p.filled) out.push("f" + LazyLord._ai_colorPrint(p.fillColor)); } catch (eF) {}
+  try { if (p.stroked) out.push("s" + LazyLord._ai_colorPrint(p.strokeColor)); } catch (eS) {}
+};
+
+LazyLord._ai_colorPrint = function (c) {
+  if (!c) return "-";
+  var tn = "";
+  try { tn = c.typename; } catch (e) {}
+  try {
+    if (tn === "RGBColor") return "rgb" + LazyLord.printValue([c.red, c.green, c.blue]);
+    if (tn === "CMYKColor") return "cmyk" + LazyLord.printValue([c.cyan, c.magenta, c.yellow, c.black]);
+    if (tn === "GrayColor") return "gray" + LazyLord.printValue(c.gray);
+    if (tn === "SpotColor") return "spot" + c.spot.name + LazyLord.printValue(c.tint);
+    if (tn === "GradientColor") {
+      var g = c.gradient, stops = [];
+      for (var i = 0; i < g.gradientStops.length; i++) {
+        var s = g.gradientStops[i];
+        stops.push(LazyLord.printValue([s.rampPoint, s.midPoint, s.opacity]) + LazyLord._ai_colorPrint(s.color));
+      }
+      return "grad" + g.type + LazyLord.printValue([c.angle, c.origin, c.length]) + stops.join("");
+    }
+  } catch (eC) {
+    return tn + "?";
+  }
+  return tn;
+};
+
+/** Write the fingerprint of every set of items this build wrote into their tags. */
+LazyLord._ai_seal = function (ctx) {
+  for (var i = 0; ctx.seal && i < ctx.seal.length; i++) {
+    var items = ctx.seal[i];
+    var fp;
+    try { fp = LazyLord._ai_state(items); } catch (e) { continue; }
+    for (var k = 0; k < items.length; k++) {
+      try { items[k].note = LazyLord.sealTag(items[k].note, fp); } catch (eN) {}
+    }
+  }
+};
+
+/** Whether the items an earlier transfer made were edited here since. */
+LazyLord._ai_edited = function (items) {
+  try { return LazyLord.edited(items[0].note, LazyLord._ai_state(items)); } catch (e) { return false; }
 };
 
 /**
@@ -1362,6 +1476,16 @@ LazyLord._ai_update = function (ctx, layer) {
   if (!parent) return false;
 
   var name = layer.name || "Layer";
+  // Edited here since LazyLord last wrote it: keep that work, or say it went.
+  if (LazyLord._ai_edited(old)) {
+    ctx.conflicts++;
+    if (ctx.keep) {
+      LazyLord.warn(name, "Was changed in Illustrator since it was last sent, so it was left as you made it " +
+        "(On conflict: Keep my edits)", "skipped");
+      return true; // matched: do not add a second copy either
+    }
+    LazyLord.warn(name, "Was changed in Illustrator since it was last sent; the update replaced it, and those changes with it", "approximated");
+  }
   var before, made;
   var saved = ctx.container;
   ctx.container = parent;

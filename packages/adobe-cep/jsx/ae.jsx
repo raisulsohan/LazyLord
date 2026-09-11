@@ -670,6 +670,132 @@ LazyLord.rollback = function (s) {
   return complete;
 };
 
+/* -------------------------------------------------------------------------
+ * Precomp helpers — the panel's Precompose / Decompose buttons. Each returns
+ * JSON { ok, message } for the panel's log, and is one undo step.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._ae_activeComp = function () {
+  var comp = app.project.activeItem;
+  return (comp && comp instanceof CompItem) ? comp : null;
+};
+
+/** Precompose the selected layers, keeping their attributes, into one precomp. */
+LazyLord.precomposeSelection = function (name) {
+  var res = { ok: false, message: "" };
+  var comp = LazyLord._ae_activeComp();
+  var sel = comp ? comp.selectedLayers : null;
+  if (!sel || !sel.length) {
+    res.message = "Open a composition and select the layers to precompose.";
+    return JSON.stringify(res);
+  }
+  var idx = [];
+  for (var i = 0; i < sel.length; i++) idx.push(sel[i].index);
+  idx.sort(function (a, b) { return a - b; });
+  var nm = name || (sel.length === 1 ? sel[0].name + " precomp" : "Precomp of " + sel.length + " layers");
+  app.beginUndoGroup("LazyLord Precompose");
+  try {
+    var sub = comp.layers.precompose(idx, nm, true);
+    res.ok = true;
+    res.message = "Precomposed " + LazyLord._ae_plural(idx.length, "layer") + " into '" + ((sub && sub.name) || nm) + "'.";
+  } catch (e) {
+    res.message = "Precompose failed: " + ((e && e.message) || String(e));
+  } finally {
+    app.endUndoGroup();
+  }
+  return JSON.stringify(res);
+};
+
+/**
+ * Decompose the selected precomp layers: their contents move into this comp,
+ * where they showed, and the precomp layer goes (the precomp itself stays in
+ * the project). A null carrying the precomp layer's transform does the maths:
+ * the copies are parented to it keeping their raw values, then unparented
+ * keeping what they show.
+ */
+LazyLord.decomposeSelection = function () {
+  var res = { ok: false, message: "" };
+  var comp = LazyLord._ae_activeComp();
+  var sel = comp ? comp.selectedLayers : null;
+  var targets = [];
+  for (var i = 0; sel && i < sel.length; i++) {
+    try { if (sel[i].source && sel[i].source instanceof CompItem) targets.push(sel[i]); } catch (e) {}
+  }
+  if (!targets.length) {
+    res.message = "Select a precomp layer to decompose.";
+    return JSON.stringify(res);
+  }
+  var notes = [], moved = 0;
+  app.beginUndoGroup("LazyLord Decompose");
+  try {
+    for (var t = 0; t < targets.length; t++) moved += LazyLord._ae_decompose(comp, targets[t], notes);
+    res.ok = true;
+    res.message = "Decomposed " + LazyLord._ae_plural(targets.length, "precomp") + " into " +
+      LazyLord._ae_plural(moved, "layer") + "." + (notes.length ? " Not carried: " + notes.join("; ") + "." : "");
+  } catch (e2) {
+    res.message = "Decompose failed: " + ((e2 && e2.message) || String(e2));
+  } finally {
+    app.endUndoGroup();
+  }
+  return JSON.stringify(res);
+};
+
+LazyLord._ae_decompose = function (comp, pl, notes) {
+  var sub = pl.source;
+  var name = pl.name;
+  var tg = pl.property("ADBE Transform Group");
+  var keys = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale", "ADBE Rotate Z"];
+
+  // What the precomp layer itself carries, which its contents cannot.
+  try { if (pl.property("ADBE Effect Parade").numProperties) notes.push(name + "'s effects"); } catch (e1) {}
+  try { if (pl.property("ADBE Mask Parade").numProperties) notes.push(name + "'s masks"); } catch (e2) {}
+  for (var a = 0; a < keys.length; a++) {
+    try { if (tg.property(keys[a]).numKeys > 0) { notes.push(name + "'s animated transform (its current value was used)"); break; } } catch (e3) {}
+  }
+  try { if (pl.timeRemapEnabled) notes.push(name + "'s time remapping"); } catch (e4) {}
+  for (var j = 1; j <= sub.numLayers; j++) {
+    try { if (sub.layer(j).parent) { notes.push("parenting inside " + name); break; } } catch (e5) {}
+  }
+
+  var nl = comp.layers.addNull();
+  var ng = nl.property("ADBE Transform Group");
+  for (var k = 0; k < keys.length; k++) ng.property(keys[k]).setValue(tg.property(keys[k]).value);
+  var fade = tg.property("ADBE Opacity").value / 100;
+  var offset = 0;
+  try { offset = pl.startTime || 0; } catch (e6) {}
+
+  // Top to bottom, each copy placed just above the precomp layer: the stack keeps its order.
+  var copies = [];
+  try {
+    for (var i = 1; i <= sub.numLayers; i++) {
+      var before = comp.numLayers;
+      sub.layer(i).copyToComp(comp);
+      if (comp.numLayers !== before + 1) throw new Error("After Effects did not copy '" + sub.layer(i).name + "'");
+      var copy = comp.layer(1);
+      copy.moveBefore(pl);
+      copies.push(copy);
+    }
+    for (var c = 0; c < copies.length; c++) {
+      copies[c].setParentWithJump(nl);
+      copies[c].parent = null;
+      if (offset) copies[c].startTime += offset;
+      if (fade < 1) {
+        var op = copies[c].property("ADBE Transform Group").property("ADBE Opacity");
+        if (op.numKeys > 0) notes.push("the precomp's opacity on animated layers");
+        else op.setValue(op.value * fade);
+      }
+    }
+  } catch (e) {
+    // Leave the comp as it was: the copies and the helper null go.
+    for (var r = 0; r < copies.length; r++) { try { copies[r].remove(); } catch (eR) {} }
+    try { nl.remove(); } catch (eN) {}
+    throw e;
+  }
+  nl.remove();
+  pl.remove();
+  return copies.length;
+};
+
 LazyLord._ae_comp = function (doc) {
   var item = app.project.activeItem;
   if (item && item instanceof CompItem && !LazyLord.wantsNewDocument(doc)) return item;

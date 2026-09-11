@@ -1508,6 +1508,24 @@
     });
   }
 
+  // After Effects only: precompose / decompose the selection, in the host.
+  var aeTools = document.getElementById("ae-tools");
+  function runHelper(fn, label) {
+    if (!jsxReady) { log("The host scripts are not loaded yet.", "err"); return; }
+    cs.evalScript("LazyLord." + fn + "()", function (res) {
+      var r;
+      try { r = JSON.parse(res); } catch (e) { r = { ok: false, message: label + " failed: " + res }; }
+      log(r.message || (label + (r.ok ? " done." : " failed.")), r.ok ? "ok" : "err");
+    });
+  }
+  if (aeTools && role === "aftereffects") {
+    aeTools.hidden = false;
+    var pre = document.getElementById("ae-precompose");
+    var dec = document.getElementById("ae-decompose");
+    if (pre) pre.addEventListener("click", function () { runHelper("precomposeSelection", "Precompose"); });
+    if (dec) dec.addEventListener("click", function () { runHelper("decomposeSelection", "Decompose"); });
+  }
+
   if (presetSel) presetSel.addEventListener("change", function () { usePreset(presetSel.value); });
   if (presetSave) presetSave.addEventListener("click", savePreset);
   if (presetDelete) presetDelete.addEventListener("click", deletePreset);

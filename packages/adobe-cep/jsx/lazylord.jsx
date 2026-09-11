@@ -1,0 +1,387 @@
+/*
+ * LazyLord ExtendScript router + shared helpers.
+ * The relevant host builder (ae/ai/ps) defines LazyLord.build(doc). This file is
+ * host-agnostic and loaded first.
+ */
+#target none
+
+if (typeof LazyLord === "undefined") { var LazyLord = {}; }
+
+LazyLord.VERSION = "0.1.0";
+
+/** Read a UTF-8 text file and return its contents. */
+LazyLord.readFile = function (path) {
+  var f = new File(path);
+  f.encoding = "UTF-8";
+  if (!f.exists) throw new Error("IR file not found: " + path);
+  if (!f.open("r")) throw new Error("Could not open IR file: " + path);
+  var content = f.read();
+  f.close();
+  return content;
+};
+
+/** Write a UTF-8 text file, creating parent folders as needed. */
+LazyLord.writeFile = function (path, text) {
+  var f = new File(path);
+  f.parent.create();
+  f.encoding = "UTF-8";
+  if (!f.open("w")) throw new Error("Could not write: " + path);
+  f.write(text);
+  f.close();
+  return f.fsName;
+};
+
+/** Join a directory and a name with a separator ExtendScript accepts anywhere. */
+LazyLord.join = function (dir, name) {
+  return String(dir).replace(/[\\\/]+$/, "") + "/" + name;
+};
+
+/* -------------------------------------------------------------------------
+ * Diagnostics — every conversion that could not run natively
+ * ---------------------------------------------------------------------- */
+
+LazyLord.diagnostics = [];
+
+LazyLord.resetDiagnostics = function () { LazyLord.diagnostics = []; };
+
+/**
+ * Record a fallback. `resolution` is the rung of the ladder that ran:
+ * "approximated", "rasterized" or "skipped".
+ */
+LazyLord.warn = function (object, reason, resolution) {
+  LazyLord.diagnostics.push({
+    object: String(object || "(unnamed)"),
+    reason: String(reason || "unsupported"),
+    resolution: resolution || "approximated"
+  });
+};
+
+/** Entry point invoked from the panel: LazyLord.run("/path/to/ir.json"). */
+LazyLord.run = function (irPath) {
+  var result = { ok: false, layersCreated: 0, message: "", diagnostics: [] };
+  LazyLord.resetDiagnostics();
+  try {
+    if (typeof LazyLord.build !== "function") {
+      throw new Error("No host builder is loaded for this application.");
+    }
+    var raw = LazyLord.readFile(irPath);
+    var doc = JSON.parse(raw);
+    if (!doc || !doc.layers) throw new Error("Invalid IR payload.");
+    result = LazyLord.build(doc);
+  } catch (e) {
+    result.ok = false;
+    result.message = (e && e.message) ? e.message : String(e);
+  }
+  result.diagnostics = LazyLord.diagnostics;
+  return JSON.stringify(result);
+};
+
+/**
+ * Push entry point: LazyLord.runRead("/tmp/dir") serialises the host's current
+ * selection to <dir>/ir.json and returns a summary for the panel.
+ */
+LazyLord.runRead = function (outDir) {
+  var result = { ok: false, layerCount: 0, irPath: "", message: "", diagnostics: [] };
+  LazyLord.resetDiagnostics();
+  try {
+    if (typeof LazyLord.readSelection !== "function") {
+      throw new Error("This application cannot push yet.");
+    }
+    var doc = LazyLord.readSelection(outDir);
+    if (!doc || !doc.layers || doc.layers.length === 0) {
+      throw new Error("Nothing to send — select at least one object.");
+    }
+    doc.diagnostics = LazyLord.diagnostics;
+    result.irPath = LazyLord.writeFile(LazyLord.join(outDir, "ir.json"), JSON.stringify(doc));
+    result.layerCount = LazyLord.countLeaves(doc.layers);
+    result.ok = true;
+  } catch (e) {
+    result.ok = false;
+    result.message = (e && e.message) ? e.message : String(e);
+  }
+  result.diagnostics = LazyLord.diagnostics;
+  return JSON.stringify(result);
+};
+
+/* -------------------------------------------------------------------------
+ * Shared geometry / colour helpers (host builders use these)
+ * ---------------------------------------------------------------------- */
+
+/** RGBA (0..1) -> [r,g,b] 0..255 array. */
+LazyLord.to255 = function (c) {
+  return [
+    Math.round((c.r || 0) * 255),
+    Math.round((c.g || 0) * 255),
+    Math.round((c.b || 0) * 255)
+  ];
+};
+
+/** First solid fill colour of a layer, or black. */
+LazyLord.fillColor = function (layer) {
+  if (layer.fills) {
+    for (var i = 0; i < layer.fills.length; i++) {
+      if (layer.fills[i].type === "solid") return layer.fills[i].color;
+    }
+    for (var j = 0; j < layer.fills.length; j++) {
+      var g = layer.fills[j];
+      if (g.stops && g.stops.length) return g.stops[0].color;
+    }
+  }
+  if (layer.color) return layer.color;
+  return { r: 0, g: 0, b: 0, a: 1 };
+};
+
+LazyLord.firstStroke = function (layer) {
+  if (layer.strokes && layer.strokes.length) return layer.strokes[0];
+  return null;
+};
+
+/** The paint a host will actually use for a layer's fill, or null. */
+LazyLord.fillPaint = function (layer) {
+  if (layer.fills && layer.fills.length) return layer.fills[0];
+  return null;
+};
+
+/**
+ * Record the loss when a gradient fill is about to be flattened to a single
+ * colour. Call it only on the paths where a host gives up on a native gradient.
+ */
+LazyLord.noteGradient = function (layer) {
+  var p = LazyLord.fillPaint(layer);
+  if (p && p.type && p.type !== "solid") {
+    LazyLord.warn(layer.name || "Shape",
+      "Gradient fill rebuilt as flat colour from its first stop", "approximated");
+  }
+};
+
+/** True when a paint is a linear or radial gradient with at least one stop. */
+LazyLord.isGradient = function (paint) {
+  return !!(paint && (paint.type === "linear-gradient" || paint.type === "radial-gradient") &&
+    paint.stops && paint.stops.length);
+};
+
+/**
+ * A gradient's handles in the same space as `frame.x` / `frame.y` (after
+ * applyOrigin, that is document space):
+ *   { type, stops, from: [x, y], to: [x, y], radius }
+ * `radius` is |to - from| in px — the radial radius, or the linear length.
+ */
+LazyLord.gradientPx = function (layer, paint) {
+  var f = layer.frame;
+  var w = f.width || 0, h = f.height || 0;
+  var from = paint.from || { x: 0, y: 0.5 };
+  var to = paint.to || { x: 1, y: 0.5 };
+  var fx = f.x + from.x * w, fy = f.y + from.y * h;
+  var tx = f.x + to.x * w, ty = f.y + to.y * h;
+  var dx = tx - fx, dy = ty - fy;
+  return {
+    type: paint.type,
+    stops: paint.stops,
+    from: [fx, fy],
+    to: [tx, ty],
+    radius: Math.sqrt(dx * dx + dy * dy)
+  };
+};
+
+/**
+ * Size for a document or composition a builder has to create: the source
+ * page when the artwork is placed in document space (so it lands inside),
+ * otherwise the selection bounds. Never smaller than 1x1.
+ */
+LazyLord.canvasSize = function (doc, fallbackW, fallbackH) {
+  var src = (doc.originSpace === "document" && doc.canvas) ? doc.canvas : doc.bounds;
+  var w = Math.round((src && src.width) || 0) || fallbackW || 1000;
+  var h = Math.round((src && src.height) || 0) || fallbackH || 1000;
+  return { width: Math.max(1, w), height: Math.max(1, h) };
+};
+
+/** Centre of a frame's unrotated box, as [x, y]. */
+LazyLord.frameCenter = function (frame) {
+  return [frame.x + (frame.width || 0) / 2, frame.y + (frame.height || 0) / 2];
+};
+
+/**
+ * Rotate `pt` clockwise by `deg` around `center` in the IR's y-down space
+ * (clockwise on screen, matching Frame.rotation).
+ */
+LazyLord.rotatePoint = function (pt, center, deg) {
+  if (!deg) return [pt[0], pt[1]];
+  var r = deg * Math.PI / 180;
+  var cos = Math.cos(r), sin = Math.sin(r);
+  var dx = pt[0] - center[0], dy = pt[1] - center[1];
+  return [center[0] + dx * cos - dy * sin, center[1] + dx * sin + dy * cos];
+};
+
+/**
+ * Where a text layer's first baseline starts, as [x, y].
+ * Sources that know the real anchor (Illustrator point text) send it; otherwise
+ * fall back to estimating the baseline at 80% of the font size below the box.
+ */
+LazyLord.textAnchor = function (layer) {
+  var y = (typeof layer.baseline === "number")
+    ? layer.baseline
+    : layer.frame.y + (layer.fontSize || 24) * 0.8;
+
+  var x;
+  if (typeof layer.anchorX === "number") x = layer.anchorX;
+  else if (layer.textAlignHorizontal === "center") x = layer.frame.x + layer.frame.width / 2;
+  else if (layer.textAlignHorizontal === "right") x = layer.frame.x + layer.frame.width;
+  else x = layer.frame.x;
+
+  return [x, y];
+};
+
+/**
+ * textAnchor, carried through the frame's rotation about its centre. Place a
+ * text layer's origin here and then rotate the layer about that origin by
+ * frame.rotation: the result equals rotating the whole box about its centre.
+ */
+LazyLord.rotatedTextAnchor = function (layer) {
+  var a = LazyLord.textAnchor(layer);
+  return LazyLord.rotatePoint(a, LazyLord.frameCenter(layer.frame), layer.frame.rotation || 0);
+};
+
+/** Absolute path of a layer's image file, whichever field carries it. */
+LazyLord.imagePath = function (layer) {
+  return layer.filePath || layer.pngPath || null;
+};
+
+/**
+ * Shift every layer by the document origin when the source measured its bounds
+ * against a real page, so artwork lands where it sat on the artboard. A no-op
+ * for canvas-space sources such as Figma. Clip paths live in frame space, so
+ * they move with the frames.
+ */
+LazyLord.applyOrigin = function (doc) {
+  if (!doc || doc.originSpace !== "document" || !doc.bounds) return;
+  var ox = doc.bounds.x || 0;
+  var oy = doc.bounds.y || 0;
+  if (!ox && !oy) return;
+  LazyLord.eachLayer(doc.layers, function (layer) {
+    if (layer.frame) {
+      layer.frame.x += ox;
+      layer.frame.y += oy;
+    }
+    if (typeof layer.baseline === "number") layer.baseline += oy;
+    if (typeof layer.anchorX === "number") layer.anchorX += ox;
+    if (layer.clip && layer.clip.subpaths) {
+      for (var s = 0; s < layer.clip.subpaths.length; s++) {
+        var vs = layer.clip.subpaths[s].vertices;
+        for (var v = 0; v < vs.length; v++) vs[v] = [vs[v][0] + ox, vs[v][1] + oy];
+      }
+    }
+  });
+};
+
+/* -------------------------------------------------------------------------
+ * Hierarchy and transfer options
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Depth-first walk over layers and group children, bottom-to-top, calling
+ * cb(layer, parents) for groups and leaves alike. `parents` lists the
+ * enclosing groups, outermost first (do not keep a reference to it).
+ */
+LazyLord.eachLayer = function (layers, cb, parents) {
+  if (!layers) return;
+  parents = parents || [];
+  for (var i = 0; i < layers.length; i++) {
+    var layer = layers[i];
+    cb(layer, parents);
+    if (layer.type === "group" && layer.children) {
+      parents.push(layer);
+      LazyLord.eachLayer(layer.children, cb, parents);
+      parents.pop();
+    }
+  }
+};
+
+/**
+ * The leaves of a layer tree in stacking order (bottom-to-top), for targets
+ * that flatten hierarchy. Each group's opacity is multiplied into its
+ * leaves' frame.opacity, which is exact unless leaves overlap; `lossy` counts
+ * the groups where that approximation applied.
+ */
+LazyLord.flattenLayers = function (layers) {
+  var out = [];
+  var lossy = 0;
+  function walk(list, opacity) {
+    for (var i = 0; i < list.length; i++) {
+      var layer = list[i];
+      if (layer.type === "group") {
+        var go = (layer.frame && typeof layer.frame.opacity === "number") ? layer.frame.opacity : 1;
+        // Leaves, not direct children: a faded frame round one group of several
+        // shapes is just as lossy, and one shape beside an empty group is exact.
+        if (go < 1 && LazyLord.countLeaves(layer.children || []) > 1) lossy++;
+        walk(layer.children || [], opacity * go);
+      } else {
+        if (opacity < 1 && layer.frame) {
+          var lo = (typeof layer.frame.opacity === "number") ? layer.frame.opacity : 1;
+          layer.frame.opacity = lo * opacity;
+        }
+        out.push(layer);
+      }
+    }
+  }
+  walk(layers || [], 1);
+  out.lossy = lossy;
+  return out;
+};
+
+/** Number of leaf layers in a tree (groups themselves are not counted). */
+LazyLord.countLeaves = function (layers) {
+  var n = 0;
+  LazyLord.eachLayer(layers, function (layer) { if (layer.type !== "group") n++; });
+  return n;
+};
+
+/** The document's transfer options with defaults applied (mirrors core's transferOptions). */
+LazyLord.options = function (doc) {
+  var o = (doc && doc.options) || {};
+  return {
+    layout: o.layout === "combine" ? "combine" : "split",
+    hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
+    destination: o.destination === "new" ? "new" : "active"
+  };
+};
+
+/** True when the builder must make a new document / comp even if one is open. */
+LazyLord.wantsNewDocument = function (doc) {
+  return LazyLord.options(doc).destination === "new";
+};
+
+/**
+ * Name for a document or comp a builder creates: the source page (artboard,
+ * comp, Figma frame) when the transfer names one, otherwise the document's own
+ * name (Figma uses the selected object's name when one thing is sent).
+ */
+LazyLord.docName = function (doc, fallback) {
+  return String((doc.canvas && doc.canvas.name) || doc.name || fallback || "LazyLord");
+};
+
+/**
+ * Iterate a layer's subpaths, calling cb(subpath) for each. Subpath shape:
+ *   { closed, vertices:[[x,y]...], inTangents:[[dx,dy]...], outTangents:[[dx,dy]...] }
+ */
+LazyLord.eachSubPath = function (layer, cb) {
+  if (!layer.subpaths) return;
+  for (var i = 0; i < layer.subpaths.length; i++) cb(layer.subpaths[i], i);
+};
+
+/** Absolute in/out control points for a vertex index of a subpath. */
+LazyLord.controlPoints = function (sp, i) {
+  var v = sp.vertices[i];
+  var it = sp.inTangents[i] || [0, 0];
+  var ot = sp.outTangents[i] || [0, 0];
+  return {
+    anchor: [v[0], v[1]],
+    inAbs: [v[0] + it[0], v[1] + it[1]],
+    outAbs: [v[0] + ot[0], v[1] + ot[1]]
+  };
+};
+
+/** Convenience: clamp opacity 0..1 to 0..100 percent. */
+LazyLord.pct = function (o) {
+  if (o === undefined || o === null) return 100;
+  return Math.max(0, Math.min(100, Math.round(o * 100)));
+};

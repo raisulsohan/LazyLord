@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db
+*.zxp
+packages/figma-plugin/build/
+packages/**/dist/
+.lazylord-tmp/
+.claude/

@@ -1,0 +1,173 @@
+<!-- LazyLord Figma plugin UI. src/ui.ts is inlined at build time. -->
+<div id="app">
+  <header class="a-head">
+    <div class="a-logo">
+      <span class="a-mark">◆</span>
+      <span class="a-title">LazyLord</span>
+    </div>
+    <div id="conn" class="a-conn a-conn--off"><span class="dot"></span><span id="conn-text">Connecting…</span></div>
+  </header>
+
+  <main class="a-body">
+    <section class="a-block">
+      <label class="a-label">Send to</label>
+      <div id="targets" class="a-targets">
+        <button class="a-target is-active" data-target="">All apps</button>
+        <button class="a-target" data-target="photoshop">Photoshop</button>
+        <button class="a-target" data-target="illustrator">Illustrator</button>
+        <button class="a-target" data-target="aftereffects">After Effects</button>
+      </div>
+      <p id="peers" class="a-peers">No Adobe app connected yet.</p>
+    </section>
+
+    <section class="a-block">
+      <label class="a-label">Image scale</label>
+      <div id="scales" class="a-scales" role="group" aria-label="Image export scale">
+        <button class="a-scale" data-scale="1">1x</button>
+        <button class="a-scale is-active" data-scale="2">2x</button>
+        <button class="a-scale" data-scale="3">3x</button>
+        <button class="a-scale" data-scale="4">4x</button>
+      </div>
+      <p class="a-peers">Used for anything sent as an image.</p>
+    </section>
+
+    <section class="a-block">
+      <label class="a-label" for="place">Destination</label>
+      <select id="place" class="a-place" title="Where the receiving app builds the transfer.">
+        <option value="auto">New document — frame or object size</option>
+        <option value="frame">New document — top-level frame size</option>
+        <option value="open">Open document</option>
+      </select>
+      <p id="place-note" class="a-peers">A whole frame or section gets a document its size; a single object gets one its own size.</p>
+    </section>
+
+    <section class="a-block">
+      <details id="opts" class="a-opts">
+        <summary class="a-label">Options <span id="opts-note" class="a-count a-opts-note"></span></summary>
+        <div class="a-opt" title="Split: one layer per shape. Combine: shapes merged into as few layers as the receiving app allows. Text and images always stay separate.">
+          <label for="layout">Layout</label>
+          <select id="layout">
+            <option value="split">Split</option>
+            <option value="combine">Combine</option>
+          </select>
+        </div>
+        <div class="a-opt" title="Flatten: frames and groups dissolve into their layers. Groups: they are rebuilt in the receiving app (Illustrator groups, Photoshop layer groups, After Effects parent nulls).">
+          <label for="hierarchy">Hierarchy</label>
+          <select id="hierarchy">
+            <option value="flatten">Flatten</option>
+            <option value="groups">Groups</option>
+          </select>
+        </div>
+        <p class="a-peers">Applied by the app that receives the transfer.</p>
+      </details>
+    </section>
+
+    <section class="a-block">
+      <button id="send" class="a-send" disabled>Select something to send</button>
+      <p id="status" class="a-status"></p>
+    </section>
+
+    <section id="diag-block" class="a-block" hidden>
+      <label class="a-label">Fallbacks <span id="diag-count" class="a-count"></span></label>
+      <ul id="diags" class="a-diags"></ul>
+    </section>
+  </main>
+
+  <footer class="a-foot">
+    <span>Bridge: <code>ws://localhost:7878</code></span>
+    <a id="retry" href="#">Reconnect</a>
+  </footer>
+</div>
+
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--figma-color-bg, #fff);
+    --fg: var(--figma-color-text, #1a1a1a);
+    --muted: var(--figma-color-text-secondary, #7a7a7a);
+    --border: var(--figma-color-border, #e6e6e6);
+    --accent: var(--figma-color-bg-brand, #6c4cff);
+    --accent-fg: var(--figma-color-text-onbrand, #fff);
+    --ok: #2ea043;
+    --err: #e5484d;
+    --warn: #c98a00;
+    --chip: var(--figma-color-bg-secondary, #f5f5f5);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    font: 12px/1.4 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+  }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+  .a-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--border);
+  }
+  .a-logo { display: flex; align-items: center; gap: 8px; }
+  .a-mark { color: var(--accent); font-size: 15px; }
+  .a-title { font-weight: 600; letter-spacing: .2px; }
+  .a-conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+  .a-conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .a-conn--on .dot { background: var(--ok); }
+  .a-conn--off .dot { background: var(--err); }
+  .a-body { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 18px; overflow: auto; }
+  .a-block { display: flex; flex-direction: column; gap: 8px; }
+  .a-block[hidden] { display: none; }
+  .a-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .a-targets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .a-target, .a-scale {
+    padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg);
+    color: var(--fg); cursor: pointer; font-size: 12px; transition: .12s;
+  }
+  .a-target:hover, .a-scale:hover { border-color: var(--accent); }
+  .a-target.is-active, .a-scale.is-active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .a-scales { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .a-scale { padding: 6px; }
+  .a-peers { margin: 0; color: var(--muted); font-size: 11px; }
+  .a-opts summary { cursor: pointer; list-style-position: inside; }
+  .a-opts[open] summary { margin-bottom: 8px; }
+  .a-opts-note { margin-left: 4px; color: var(--accent); }
+  .a-opts .a-peers { margin-top: 2px; }
+  .a-opt { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .a-opt label { font-size: 12px; }
+  .a-opt select {
+    min-width: 120px; padding: 5px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
+  }
+  .a-opt select:hover, .a-opt select:focus { border-color: var(--accent); outline: none; }
+  .a-place {
+    width: 100%; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--fg); font: inherit; cursor: pointer;
+  }
+  .a-place:hover, .a-place:focus { border-color: var(--accent); outline: none; }
+  .a-send {
+    padding: 11px; border: none; border-radius: 7px; background: var(--accent);
+    color: var(--accent-fg); font-weight: 600; font-size: 13px; cursor: pointer;
+  }
+  .a-send:disabled { background: var(--chip); color: var(--muted); cursor: not-allowed; }
+  .a-status { margin: 0; min-height: 15px; font-size: 11px; }
+  .a-status.ok { color: var(--ok); }
+  .a-status.err { color: var(--err); }
+  .a-count { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .a-diags {
+    margin: 0; padding: 6px 8px; list-style: none; font-size: 11px;
+    max-height: 140px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--chip);
+  }
+  .a-diag { padding: 3px 0; overflow-wrap: anywhere; }
+  .a-diag + .a-diag { border-top: 1px solid var(--border); }
+  .a-diag-src { color: var(--muted); margin-right: 4px; }
+  .a-diag-obj { font-weight: 600; }
+  .a-diag-res { color: var(--warn); white-space: nowrap; }
+  .a-diag-res.skipped { color: var(--err); }
+  .a-foot {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px;
+  }
+  .a-foot code { font-size: 10px; }
+  .a-foot a { color: var(--accent); text-decoration: none; }
+</style>
+
+<script>/*__LAZYLORD_UI_JS__*/</script>

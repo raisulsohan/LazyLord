@@ -1,0 +1,25 @@
+{
+  "name": "@lazylord/bridge",
+  "version": "0.1.0",
+  "description": "LazyLord local bridge — relays design transfers between the Figma plugin and Adobe CEP panels over WebSocket.",
+  "license": "MIT",
+  "bin": {
+    "lazylord-bridge": "dist/server.js"
+  },
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "dev": "ts-node src/server.ts"
+  },
+  "dependencies": {
+    "@lazylord/core": "0.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.5.4"
+  }
+}

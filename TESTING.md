@@ -1,0 +1,125 @@
+# LazyLord — লাইভ টেস্ট চেকলিস্ট (v0.4)
+
+এই সংস্করণের সব কোড শুধু নকল (mock) Adobe/Figma পরিবেশে টেস্ট করা হয়েছে। আসল অ্যাপে প্রথমবার চালিয়ে দেখার জন্য এই তালিকা।
+**⚠ চিহ্ন দেওয়া ঘরগুলো সবচেয়ে জরুরি।** এগুলো ডকুমেন্টেশন দেখে লেখা অনুমান, আসল অ্যাপ ছাড়া নিশ্চিত হওয়ার উপায় নেই।
+
+## ০. সেটআপ
+
+- [ ] `install.bat` ডাবল-ক্লিক করুন। শেষে "Installed." লেখা আসে কিনা দেখুন। কোনো `[warn]` বা `[!]` এলে সেই লেখাটা কপি করে রাখুন।
+- [ ] "LazyLord bridge" নামে একটা উইন্ডো খোলে, আর তাতে `bridge listening on ws://127.0.0.1:7878` লেখা থাকে।
+- [ ] Photoshop, Illustrator আর After Effects রিস্টার্ট করুন। প্রতিটায় **Window → Extensions (legacy) → LazyLord** খোলে, আর উপরের ডটটা সবুজ হয়।
+- [ ] Figma **desktop** অ্যাপে: Plugins → Development → Import plugin from manifest…, তারপর `packages\figma-plugin\manifest.json` বেছে নিন। প্লাগিন খুললে "Connected" দেখায়, আর চালু থাকা Adobe অ্যাপগুলোর তালিকা দেখায়।
+- [ ] যে অ্যাপে প্যানেল খোলা নেই, সেখানে পাঠালে পরিষ্কার একটা error মেসেজ আসে।
+
+## ১. Figma → After Effects
+
+সব টেস্টের আগে AE-তে কোনো comp খোলা রাখবেন না (নতুন comp তৈরির টেস্ট) — তারপর আবার একটা comp খোলা রেখে চালান।
+
+- [ ] সাধারণ vector shape: আকার, রং, stroke-এর মোটা/cap/join ঠিক আছে।
+- [ ] Rectangle আর Ellipse: shape layer-এর ভেতরে live **Rectangle / Ellipse** আসে (Path নয়), corner radius ঠিক থাকে।
+- [ ] ⚠ **Linear gradient:** একটা বাঁকা (diagonal) gradient দেওয়া লম্বা আয়তক্ষেত্র পাঠান। layer-এ **Gradient Ramp** effect থাকে, আর রং আর দিক Figma-র মতোই দেখায়। দিক বা জায়গা সরে গেলে স্ক্রিনশট নিন — এটাই সবচেয়ে বড় অনিশ্চয়তা।
+- [ ] ⚠ **Radial gradient:** মাঝখান আর ব্যাসার্ধ Figma-র মতো।
+- [ ] Gradient-এর সঙ্গে stroke থাকলে stroke আলাদা "… stroke" layer হয়ে ঠিক উপরে বসে।
+- [ ] তিনটার বেশি রঙের gradient: প্যানেলে "approximated" সতর্কতা আসে।
+- [ ] **Clip content** চালু থাকা frame-এর ভেতরের জিনিস AE-তে **mask** দিয়ে কাটা থাকে।
+- [ ] Figma-র mask (isMask) দিয়ে ঢাকা জিনিসও mask হয়ে আসে।
+- [ ] ⚠ **ঘোরানো** rectangle, text আর image ঠিক জায়গায় আর ঠিক কোণে বসে (আগে উপরের-বাঁ কোণ ঘিরে ঘুরে সরে যেত)।
+- [ ] মাঝখানে (center) আর ডানে (right) সাজানো text-এর অবস্থান ঠিক।
+- [ ] মিশ্র স্টাইলের text outline হয়ে আসে, আর প্যানেলে সতর্কতা দেখায়।
+- [ ] Image scale 1x আর 4x দুটো দিয়ে পাঠান: 4x-এর ছবি বেশি ধারালো।
+- [ ] Background রং দেওয়া frame-এর background আলাদা shape হয়ে আসে।
+- [ ] একটা বড় frame-এর (যেমন 1920×1080) ভেতরের ছোট icon পাঠান, কোনো comp খোলা না রেখে: নতুন comp **frame-এর মাপে** তৈরি হয়, আর icon frame-এ যেখানে ছিল সেখানেই বসে।
+- [ ] যা native হয়নি, প্যানেলের তালিকায় তার নাম আর কারণ দেখায়।
+
+## ২. Figma → Illustrator
+
+- [ ] ⚠ **Gradient:** আসল Illustrator gradient আসে (Gradient panel-এ এডিট করা যায়), আর দিক ও দৈর্ঘ্য Figma-র মতো। বাঁকা gradient আলাদাভাবে পরীক্ষা করুন।
+- [ ] Clip content frame → **Clipping group**।
+- [ ] ঘোরানো text আর image ঠিক কোণে ও জায়গায়।
+- [ ] মাঝখানে আর ডানে সাজানো text ঠিক জায়গায়। (এর একটা fix শেষ হওয়ার পথে — এটা ভুল দেখালে জানাবেন।)
+- [ ] ছবি **embed** হয়ে থাকে (Links panel-এ temp ফাইলের link নয়)।
+- [ ] নতুন document artboard বা frame-এর মাপে তৈরি হয়।
+
+## ৩. Figma → Photoshop
+
+- [ ] ⚠ Vector এখন **এডিটযোগ্য shape layer** (Direct Selection দিয়ে point টানা যায়), রাস্টার নয়। না হলে প্যানেলে "approximated" সতর্কতা আসার কথা — কী লেখা আছে কপি করুন।
+- [ ] ⚠ **Gradient:** **Gradient Fill layer** হয়, আর angle ও scale Figma-র মতো। খুব লম্বা-সরু shape-এ ১৫০% সীমার সতর্কতা আসতে পারে — এটা প্রত্যাশিত।
+- [ ] Stroke-এর রং আর মোটা ঠিক।
+- [ ] ⚠ Clip content frame → vector mask দেওয়া **layer group**।
+- [ ] ঘোরানো text আর image ঠিক।
+- [ ] কোনো document খোলা না থাকলে নতুন document ঠিক মাপে তৈরি হয়।
+
+## ৪. Illustrator → After Effects (Push)
+
+- [ ] সাধারণ path, আর compound path-এ ছিদ্র (hole) ঠিক থাকে।
+- [ ] আয়তক্ষেত্র আর উপবৃত্ত AE-তে live Rect / Ellipse হয়।
+- [ ] **Clipping group** → AE-তে mask।
+- [ ] ⚠ **Gradient:** gradient দেওয়ার **পরে** বস্তুটা ঘুরিয়ে বা বড়-ছোট করে তারপর push করুন: দিক ঠিক থাকে।
+- [ ] Point text নিজের আসল baseline-এ বসে।
+- [ ] ⚠ **ঘোরানো point text** আর **ঘোরানো placed image** ঠিক কোণে আসে (আগে সোজা হয়ে বা চ্যাপ্টা হয়ে আসত)।
+- [ ] Linked image AE-তে **আপনার আসল ফাইল** হিসেবে আসে।
+- [ ] Mesh, symbol বা effect দেওয়া জিনিস PNG হয়ে আসে, আর প্যানেলে সতর্কতা দেখায়।
+- [ ] **স্তরের ক্রম:** Illustrator-এ সামনের জিনিস AE-তেও উপরে থাকে (আগে উল্টো হতো)।
+- [ ] CMYK আর Spot রং মোটামুটি একই দেখায়।
+- [ ] Artboard-এ যেখানে ছিল, AE-তে সেখানেই বসে। নতুন comp **artboard-এর মাপে** হয়।
+- [ ] **Asset folder:** AE project আগে save করা থাকলে তৈরি হওয়া ছবি `.aep`-এর পাশে `LazyLord Assets` ফোল্ডারে যায়। Save না থাকলে "Project" নামে একটা সতর্কতা আসে।
+
+## ৫. After Effects → Illustrator (Pull)
+
+- [ ] ⚠ একই shape layer-এ **লাল বৃত্ত আর নীল বর্গ** (দুটো আলাদা group, আলাদা fill): Illustrator-এ দুটো আলাদা রঙেই আসে।
+- [ ] Rect, Ellipse আর Star shape ঠিক আকারে আসে।
+- [ ] ⚠ **Parent করা layer** (একটা null-এর child, null ঘোরানো বা সরানো): Illustrator-এ AE-র মতোই জায়গায় বসে।
+- [ ] Parent null আর তার child একসঙ্গে select করে Hierarchy "Groups" দিয়ে pull করলে Illustrator-এ group হয়।
+- [ ] **Add mask** → clipping group। Subtract mask দিলে প্যানেলে সতর্কতা আসে।
+- [ ] **Gradient round trip:** Illustrator → AE → Illustrator করলে gradient ফিরে আসে।
+- [ ] দুটো ওভারল্যাপ করা ellipse (Non-Zero fill rule) ফেরত আসার পর মাঝখানে ফাঁকা ছিদ্র হয় না।
+- [ ] ঘোরানো text আর ঘোরানো footage ঠিক কোণে আসে। Footage আসল ফাইল হিসেবে আসে।
+- [ ] Solid layer রঙিন আয়তক্ষেত্র হয়ে আসে।
+- [ ] Track matte দেওয়া layer-এ প্যানেলে সতর্কতা আসে।
+
+## ৫ক. Destination (Figma প্লাগিনে)
+
+প্রতিটা অ্যাপে (PS, AI, AE) একটা document বা comp **খোলা রেখে** পরীক্ষা করুন।
+
+- [ ] **ডিফল্ট (frame or object size) + পুরো frame বা section select করে পাঠান:** নতুন document বা comp তৈরি হয়, frame-এর মাপে আর frame-এর নামে। AE-তে নতুন comp নিজে থেকে খুলে যায়।
+- [ ] **ডিফল্ট + frame-এর ভেতরের একটা object পাঠান:** নতুন document তৈরি হয়, শুধু সেই object-এর মাপে আর নামে।
+- [ ] **New document — top-level frame size + frame-এর ভেতরের object:** নতুন document তৈরি হয় frame-এর মাপে, আর object frame-এ যেখানে ছিল সেখানে বসে।
+- [ ] **Open document:** খোলা document বা comp-এই বসে, নতুন কিছু তৈরি হয় না।
+- [ ] **একাধিক frame একসঙ্গে select করে (নতুন document বাছা থাকলে):** প্রতিটা frame-এর জন্য **আলাদা** comp বা document তৈরি হয়, প্রতিটার নাম আর মাপ নিজ নিজ frame অনুযায়ী। Figma-য় "N of N frames built as separate comps" দেখায়।
+- [ ] **background ছাড়া frame:** comp frame-এর পুরো মাপেই হয়, ভেতরের জিনিসের মাপে নয়, আর জিনিসগুলো frame-এ যেখানে ছিল সেখানেই বসে।
+- [ ] **একাধিক frame + Open document:** সব একসঙ্গে খোলা document-এ যায়।
+- [ ] Figma প্লাগিন বন্ধ করে আবার খুললে বাছাই করা Destination মনে থাকে।
+- [ ] Illustrator থেকে push আর AE থেকে pull আগের মতোই খোলা document বা comp-এ যায়।
+
+## ৬. Options (Layout / Hierarchy)
+
+প্যানেলের Push card বা Figma প্লাগিনে **Options** খুলে বাছুন।
+
+- [ ] **Hierarchy = Groups → AE:** প্রতিটা group-এর জন্য একটা **null**, আর layer গুলো তার child।
+- [ ] ⚠ Null-এ parent করার পরও layer গুলো **সরে যায় না** (AE-তে parent সেট করার আসল আচরণ এখানে পরীক্ষা হচ্ছে)।
+- [ ] **Hierarchy = Groups → Illustrator / Photoshop:** group বা layer group, নাম আর opacity সহ।
+- [ ] **Layout = Combine → AE:** সব shape **একটা shape layer**-এ, প্রতিটা আলাদা vector group-এ, আর ক্রম ঠিক থাকে। Text, ছবি আর gradient shape আলাদা layer-এ থাকে, আর তা নিয়ে একটা সতর্কতা আসে।
+- [ ] Combine + Groups → AE: Figma-র group গুলো shape layer-এর ভেতরে nested group হয়।
+- [ ] অ্যাপ বন্ধ করে আবার খুললে বাছাই করা অপশন মনে থাকে।
+- [ ] ডিফল্টে (Split + Flatten) ফল আগের সংস্করণের মতোই।
+
+## ৭. প্যানেল
+
+- [ ] **Auto-receive** বন্ধ রেখে অন্য অ্যাপ থেকে পাঠান: পাঠানো অ্যাপে "auto-receive is off" জাতীয় বার্তা আসে, ২০ সেকেন্ড আটকে থাকে না।
+- [ ] প্রতিটা ট্রান্সফারের পর এক লাইনের সারসংক্ষেপ আসে: কয়টা layer, কয়টা image (আসল বনাম তৈরি করা), আর কয়টা fallback।
+- [ ] যা native হয়নি তার তালিকা skipped → rasterized → approximated ক্রমে সাজানো থাকে।
+
+---
+
+## কিছু ভুল হলে যা পাঠাবেন
+
+1. উৎস অ্যাপ আর গন্তব্য অ্যাপের পাশাপাশি **স্ক্রিনশট**।
+2. প্যানেলের **log আর সতর্কতার তালিকা**: প্যানেল থেকে লেখাটা কপি করুন।
+3. **Bridge উইন্ডোর** শেষ কয়েকটা লাইন।
+4. সেই ট্রান্সফারের **IR ফাইল**: `%TEMP%\lazylord\` ফোল্ডারের সবচেয়ে নতুন সাব-ফোল্ডারের `ir.json`।
+5. `install.bat`-এর কোনো `[warn]` বা `[!]` লেখা থাকলে সেটাও।
+6. প্যানেল একেবারেই না খুললে: Chrome-এ `http://localhost:8770` (Photoshop), `8771` (Illustrator) বা `8772` (After Effects) খুলে Console-এর লাল error-গুলোর স্ক্রিনশট।
+
+## আনইনস্টল
+
+`install.bat /uninstall` চালালে Adobe প্যানেল সরে যায়। Figma-তে প্লাগিনটা Plugins → Development → Manage plugins in development থেকে সরান।

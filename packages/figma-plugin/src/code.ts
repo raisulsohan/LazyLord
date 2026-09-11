@@ -124,6 +124,8 @@ type Prefs = {
   keyframes: "auto" | "always";
   guides: boolean;
   swatches: boolean;
+  /** Updating: leave out what the destination has unchanged since the last send. */
+  onlyChanged: boolean;
   place: Place;
 };
 
@@ -144,6 +146,7 @@ function cleanPrefs(raw: any): Prefs {
     keyframes: options.keyframes,
     guides: options.guides,
     swatches: options.swatches,
+    onlyChanged: !(raw && raw.onlyChanged === false),
     place,
   };
 }

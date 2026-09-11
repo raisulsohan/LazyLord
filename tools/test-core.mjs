@@ -1695,6 +1695,7 @@ class El {
     this.text = "";
     this.hidden = "hidden" in attrs;
     this.disabled = "disabled" in attrs;
+    this.checked = "checked" in attrs;
     this.dataset = {};
     for (const k of Object.keys(attrs)) {
       if (k.startsWith("data-")) this.dataset[k.slice(5).replace(/-(\w)/g, (_, c) => c.toUpperCase())] = attrs[k];
@@ -1851,6 +1852,7 @@ async function loadUi() {
 }
 
 const optionValues = (sel) => sel.options.map((o) => o.attrs.value).join();
+const countTree = (list) => (list || []).reduce((n, l) => n + (l.type === "group" ? countTree(l.children) : 1), 0);
 const groupedDoc = () => ({
   version: "1.0",
   source: "figma",
@@ -1930,6 +1932,55 @@ await block("ui", async () => {
   ui.choose("#layout", "split");
   ui.choose("#preset", "Motion");
   ok("ui: choosing a preset brings its settings back", ui.$("#layout").value === "combine");
+});
+
+// Smart diff: while updating, only what changed since the last send goes out.
+await block("ui, smart diff", async () => {
+  const ui = await loadUi();
+  const ws = ui.connect();
+  ok("diff: the checkbox shows only while updating", ui.$("#only-changed-opt").hidden === true);
+  ui.choose("#existing", "update");
+  ok("diff: shown, and on by default", ui.$("#only-changed-opt").hidden === false && ui.$("#only-changed").checked === true);
+
+  const sendIr = (doc) => {
+    ws.sent.length = 0;
+    ui.fromPlugin({ type: "ir", document: doc, target: "illustrator" });
+    return ws.sent.find((m) => m.type === "transfer");
+  };
+  const ack = (t, okay) => ws.onmessage({ data: JSON.stringify({ type: "ack", id: t.id, from: "illustrator", ok: okay, layersCreated: 1 }) });
+
+  const t1 = sendIr(groupedDoc());
+  ok("diff: the first update sends everything", t1 && countTree(t1.document.layers) === 3);
+  ack(t1, true);
+  ok("diff: nothing changed, nothing sent", !sendIr(groupedDoc()) && ui.$("#status").textContent === "Nothing changed since the last send, so nothing was sent.");
+
+  // Every export arrives as a fresh copy (postMessage clones), so build one each time.
+  const moved = () => {
+    const d = groupedDoc();
+    d.layers[0].children[1].frame.x = 7;
+    return d;
+  };
+  const t2 = sendIr(moved());
+  ok("diff: only the changed layer is sent, inside its group", t2 && t2.document.layers.length === 1 &&
+    t2.document.layers[0].type === "group" && t2.document.layers[0].children.length === 1 && t2.document.layers[0].children[0].id === "b");
+  ok("diff: the status says what was left out", /2 unchanged layers not sent again\.$/.test(ui.$("#status").textContent));
+  ack(t2, false);
+  const t3 = sendIr(moved());
+  ok("diff: after a failed send the change goes again", t3 && countTree(t3.document.layers) === 1);
+  ack(t3, true);
+  ok("diff: once it arrived, nothing is left to send", !sendIr(moved()));
+
+  ui.$("#only-changed").checked = false;
+  ui.$("#only-changed").fire("change");
+  const saved = ui.toPlugin.filter((m) => m.type === "prefs").pop();
+  ok("diff: the choice is saved with the prefs", saved && saved.onlyChanged === false);
+  const t4 = sendIr(moved());
+  ok("diff: switched off, everything is sent", t4 && countTree(t4.document.layers) === 3);
+
+  ui.choose("#existing", "add");
+  ui.$("#only-changed").checked = true;
+  const t5 = sendIr(moved());
+  ok("diff: adding always sends everything", t5 && countTree(t5.document.layers) === 3);
 });
 
 // A choice made before the saved prefs arrive is not overridden by them.

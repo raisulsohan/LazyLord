@@ -23,6 +23,10 @@ const targetsEl = $("#targets");
 const scalesEl = $("#scales");
 const layoutSel = $<HTMLSelectElement>("#layout");
 const hierarchySel = $<HTMLSelectElement>("#hierarchy");
+const existingSel = $<HTMLSelectElement>("#existing");
+const keyframesSel = $<HTMLSelectElement>("#keyframes");
+const keyframesOpt = $("#keyframes-opt");
+const optsHint = $("#opts-hint");
 const placeSel = $<HTMLSelectElement>("#place");
 const placeNote = $("#place-note");
 const optsNote = $("#opts-note");
@@ -140,6 +144,14 @@ function onMessage(msg: Message) {
       updateSendButton();
       break;
     }
+    case "transfer": {
+      // Another app is sending us artwork: the main thread rebuilds it.
+      addDiagnostics(roleLabel((msg.document && msg.document.source) as Role), msg.document && msg.document.diagnostics);
+      const n = countLeaves(msg.document && msg.document.layers);
+      setStatus(`Receiving ${n} layer${n === 1 ? "" : "s"} from ${roleLabel((msg.document && msg.document.source) as Role)}…`, "");
+      parent.postMessage({ pluginMessage: { type: "receive", id: msg.id, document: msg.document } }, "*");
+      break;
+    }
     default:
       break;
   }
@@ -238,15 +250,20 @@ function renderDiagnostics() {
 // doc.options and the receiving app's builder obeys them. The defaults
 // (Split + Flatten) reproduce what every builder did before options existed.
 
-/** What the Layout, Hierarchy and Destination selects say, with the defaults applied. */
+/** What the option selects say, with the defaults applied. */
 function currentOptions(): Required<TransferOptions> {
+  const existing = existingSel.value as TransferOptions["existing"];
   return transferOptions({
     options: {
       layout: layoutSel.value as TransferOptions["layout"],
       hierarchy: hierarchySel.value as TransferOptions["hierarchy"],
       // Both "new document" choices ask the target for a new document; the
       // main thread has already sized the transfer for the one chosen.
-      destination: placeSel.value === "open" ? "active" : "new",
+      // There is nothing to update in a document that does not exist yet, so
+      // updating always builds into the one already open.
+      destination: existing === "update" || placeSel.value === "open" ? "active" : "new",
+      existing,
+      keyframes: keyframesSel.value as TransferOptions["keyframes"],
     },
   });
 }
@@ -267,7 +284,22 @@ function updateOptionsNote() {
   const parts: string[] = [];
   if (o.layout === "combine") parts.push("Combine");
   if (o.hierarchy === "groups") parts.push("Groups");
+  if (o.existing === "update") parts.push("Update");
+  if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
   optsNote.textContent = parts.join(", ");
+
+  // Keyframes only mean anything while updating, and only in After Effects.
+  const updating = o.existing === "update";
+  keyframesOpt.hidden = !updating;
+  if (!updating) {
+    optsHint.textContent = "Applied by the app that receives the transfer.";
+  } else if (placeSel.value !== "open") {
+    optsHint.textContent =
+      "Update edits what an earlier send built, so it goes into the open document — the Destination above is ignored.";
+  } else {
+    optsHint.textContent =
+      "Layers an earlier send built are edited where they stand. Layout and Hierarchy are ignored for those.";
+  }
 }
 
 // --- Preferences ----------------------------------------------------------
@@ -275,10 +307,11 @@ function updateOptionsNote() {
 /** Tell the main thread, which keeps them in figma.clientStorage. */
 function savePrefs() {
   const o = currentOptions();
-  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, place: placeSel.value } }, "*");
+  parent.postMessage({ pluginMessage: { type: "prefs", target, scale, layout: o.layout, hierarchy: o.hierarchy, existing: o.existing, keyframes: o.keyframes, place: placeSel.value, width: winWidth, height: winHeight } }, "*");
 }
 
-function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; place?: unknown }) {
+function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; hierarchy?: unknown; existing?: unknown; keyframes?: unknown; place?: unknown; width?: unknown; height?: unknown }) {
+  noteSize(msg.width, msg.height);
   if (typeof msg.place === "string" && PLACE_NOTES[msg.place]) placeSel.value = msg.place;
   updatePlaceNote();
   const t = typeof msg.target === "string" ? msg.target : "";
@@ -294,6 +327,8 @@ function applyPrefs(msg: { target?: unknown; scale?: unknown; layout?: unknown; 
   const o = transferOptions({ options: msg as TransferOptions });
   layoutSel.value = o.layout;
   hierarchySel.value = o.hierarchy;
+  existingSel.value = o.existing;
+  keyframesSel.value = o.keyframes;
   updateOptionsNote();
   updateSendButton();
 }
@@ -321,7 +356,7 @@ scalesEl.addEventListener("click", (e) => {
   savePrefs();
 });
 
-for (const sel of [layoutSel, hierarchySel, placeSel]) {
+for (const sel of [layoutSel, hierarchySel, existingSel, keyframesSel, placeSel]) {
   sel.addEventListener("change", () => {
     prefsApplied = true;
     updateOptionsNote();
@@ -367,6 +402,25 @@ window.onmessage = (event: MessageEvent) => {
       dispatchTransfer(doc, (msg.target as Role) || undefined, i);
     });
     if (batch) setStatus(`Sent ${docs.length} frames, one ${frameUnit()} each…`, "");
+  } else if (msg.type === "built") {
+    // The main thread finished rebuilding a transfer: tell the sender.
+    const r = msg.result || { ok: false, layersCreated: 0, message: "", diagnostics: [] };
+    addDiagnostics("Figma", r.diagnostics);
+    if (r.ok) {
+      const extra = r.message ? ` ${r.message}` : "";
+      setStatus(`Rebuilt ${r.layersCreated} layer${r.layersCreated === 1 ? "" : "s"}.${extra}`, "ok");
+    } else {
+      setStatus(r.message || "The transfer could not be rebuilt.", "err");
+    }
+    send({
+      type: "ack",
+      id: msg.id,
+      from: "figma",
+      ok: !!r.ok,
+      message: r.message || "",
+      layersCreated: r.layersCreated || 0,
+      diagnostics: r.diagnostics || [],
+    });
   } else if (msg.type === "error") {
     setStatus(msg.message, "err");
     updateSendButton();
@@ -432,6 +486,70 @@ function batchAck(id: string, ok: boolean, layers: number, message: string, from
     batch = null;
   }
   return true;
+}
+
+
+// --- Window resizing --------------------------------------------------------
+// A Figma plugin window is only ever the size the plugin asks for — there is no
+// chrome to drag — so the grip in the corner is that chrome. The grip sits at
+// the window's bottom-right, so wherever the pointer is during a drag is, plus
+// the grip's own inset, exactly the size the window should become.
+
+const grip = $("#grip");
+const MIN_W = 300;
+const MIN_H = 360;
+const GRIP_INSET = 8;
+
+/** The size last asked for, so it can be remembered with the other choices. */
+let winWidth = 0;
+let winHeight = 0;
+let resizing = false;
+
+function resizeTo(width: number, height: number) {
+  const w = Math.max(MIN_W, Math.ceil(width));
+  const h = Math.max(MIN_H, Math.ceil(height));
+  if (w === winWidth && h === winHeight) return;
+  winWidth = w;
+  winHeight = h;
+  parent.postMessage({ pluginMessage: { type: "resize", width: w, height: h } }, "*");
+}
+
+grip.addEventListener("pointerdown", (e) => {
+  const ev = e as PointerEvent;
+  resizing = true;
+  try {
+    grip.setPointerCapture(ev.pointerId);
+  } catch {
+    // Capture is a nicety; the move handler works without it.
+  }
+  ev.preventDefault();
+});
+
+grip.addEventListener("pointermove", (e) => {
+  if (!resizing) return;
+  const ev = e as PointerEvent;
+  resizeTo(ev.clientX + GRIP_INSET, ev.clientY + GRIP_INSET);
+});
+
+function endResize(e: Event) {
+  if (!resizing) return;
+  resizing = false;
+  try {
+    grip.releasePointerCapture((e as PointerEvent).pointerId);
+  } catch {
+    /* nothing held it */
+  }
+  savePrefs();
+}
+grip.addEventListener("pointerup", endResize);
+grip.addEventListener("pointercancel", endResize);
+
+/** Note the size the window actually is, so a later save does not undo it. */
+function noteSize(width: unknown, height: unknown) {
+  const w = Number(width);
+  const h = Number(height);
+  if (w >= MIN_W) winWidth = w;
+  if (h >= MIN_H) winHeight = h;
 }
 
 function uuid(): string {

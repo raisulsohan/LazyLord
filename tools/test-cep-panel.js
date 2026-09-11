@@ -94,6 +94,15 @@ function selectValues(id) {
 }
 var LAYOUT_VALUES = selectValues("push-layout");
 var HIERARCHY_VALUES = selectValues("push-hierarchy");
+var EXISTING_VALUES = selectValues("push-existing");
+var KEYFRAME_VALUES = selectValues("push-keyframes");
+var DESTINATION_VALUES = selectValues("push-destination");
+/** The image scales index.html offers, read off its chips. */
+var SCALE_VALUES = (function () {
+    var out = [], re = /data-scale="([^"]*)"/g, m;
+    while ((m = re.exec(HTML_SRC)) !== null) out.push(m[1]);
+    return out;
+})();
 
 // --- Minimal DOM ------------------------------------------------------------
 function El(tag, id) {
@@ -112,6 +121,9 @@ function El(tag, id) {
     this.listeners = {};
 }
 El.prototype.appendChild = function (c) {
+    // A text node appended to an element also becomes its text, as in the real
+    // DOM — but it stays in children, which index-based assertions rely on.
+    if (c && c.nodeType === 3) this.textContent = (this.textContent || "") + c.textContent;
     this.children.push(c);
     this.firstChild = this.children[0];
     // A <select> selects its first option, like the real thing.
@@ -130,18 +142,50 @@ El.prototype.addEventListener = function (type, fn) {
     if (!this.listeners[type]) this.listeners[type] = [];
     this.listeners[type].push(fn);
 };
-El.prototype.fire = function (type) {
+El.prototype.fire = function (type, target) {
     var hs = this.listeners[type] || [];
-    for (var i = 0; i < hs.length; i++) hs[i]({ type: type, target: this });
+    for (var i = 0; i < hs.length; i++) hs[i]({ type: type, target: target || this });
+};
+El.prototype.setAttribute = function (name, value) {
+    if (!this.attrs) this.attrs = {};
+    this.attrs[name] = String(value);
+};
+El.prototype.getAttribute = function (name) {
+    return (this.attrs && this.attrs[name] !== undefined) ? this.attrs[name] : null;
+};
+/** Click a chip the way a user does: the event bubbles to its row. */
+El.prototype.clickChip = function (value, key) {
+    var chip = null;
+    for (var i = 0; i < this.children.length; i++) {
+        if (this.children[i].getAttribute("data-" + key) === String(value)) chip = this.children[i];
+    }
+    if (!chip) throw new Error("no " + key + " chip for " + value);
+    this.fire("click", chip);
+    return chip;
 };
 function textNode(s) { return { nodeType: 3, textContent: s, nodeValue: s }; }
 
-var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card", "push-title",
-           "push-sub", "push", "push-target", "diag-card", "diag-head", "diag-title",
+var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
+           "push-sub", "push", "push-targets", "push-scales", "scale-card", "destination-card",
+           "options-card", "send-card", "diag-card", "diag-head", "diag-title",
            "diag-counts", "diag-list", "reconnect", "push-options", "push-opts-note", "push-layout",
-           "push-hierarchy"];
-var TAGS = { "auto": "input", "push-target": "select", "push": "button", "reconnect": "button",
-             "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select" };
+           "push-hierarchy", "push-existing", "push-keyframes", "push-keyframes-row", "push-opts-hint",
+           "push-destination", "push-dest-note"];
+var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
+             "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
+             "push-existing": "select", "push-keyframes": "select",
+             "push-destination": "select" };
+
+/** Fill a mock chip row the way index.html does, with one chip active. */
+function addChips(row, key, values, active) {
+    for (var i = 0; i < values.length; i++) {
+        var chip = new El("button");
+        chip.setAttribute("data-" + key, values[i]);
+        chip.className = values[i] === active ? "a-" + key + " is-active" : "a-" + key;
+        chip.appendChild(textNode(values[i]));
+        row.appendChild(chip);
+    }
+}
 
 /** Fill a mock <select> with index.html's options; the first one is selected. */
 function addOptions(sel, values) {
@@ -205,6 +249,11 @@ function boot(appName, storage) {
     els["diag-card"].hidden = true;
     addOptions(els["push-layout"], LAYOUT_VALUES);
     addOptions(els["push-hierarchy"], HIERARCHY_VALUES);
+    addOptions(els["push-existing"], EXISTING_VALUES);
+    addOptions(els["push-keyframes"], KEYFRAME_VALUES);
+    addOptions(els["push-destination"], DESTINATION_VALUES);
+    addChips(els["push-scales"], "scale", SCALE_VALUES, "2"); // index.html default
+    els["push-keyframes-row"].hidden = true;
 
     sockets = []; evalCalls = []; files = {}; timers = [];
     currentApp = appName;
@@ -300,6 +349,15 @@ function imagesIn(layers, out) {
     return out;
 }
 function noteText() { return els["push-opts-note"].textContent; }
+/** The value of the active chip in a row, or "". */
+function chipValue(row, key) {
+    for (var i = 0; i < row.children.length; i++) {
+        if (/is-active/.test(row.children[i].className || "")) return row.children[i].getAttribute("data-" + key);
+    }
+    return "";
+}
+/** Click a chip, the way a user does. */
+function pick(id, key, value) { return els[id].clickChip(value, key); }
 function optionValues() { return els["push-layout"].value + "/" + els["push-hierarchy"].value; }
 /** Pick an option the way a user does: set the value, then the change event. */
 function choose(id, value) { els[id].value = value; els[id].fire("change"); }
@@ -371,17 +429,18 @@ var declinedAck = null;
 // 1) Defaults, then the user's choices are stored under the host's own key.
 run("prefs", function () {
     var sock = boot("ILST", store);
-    var sel = els["push-target"];
+    var sel = els["push-targets"];
 
     ok("prefs: auto-receive on by default", els["auto"].checked === true);
     ok("prefs: push card shown on a host with a reader", els["push-card"].hidden === false);
     peersMsg(sock, "welcome", ["illustrator", "photoshop", "aftereffects", "figma"]);
-    ok("prefs: Illustrator defaults to After Effects", sel.value === "aftereffects", sel.value);
-    ok("prefs: Figma and self are not offered", texts(sel.children) === "Photoshop|After Effects",
-       texts(sel.children));
+    ok("prefs: Illustrator defaults to After Effects", chipValue(sel, "target") === "aftereffects", chipValue(sel, "target"));
+    // Figma receives now, so every connected app but this one is offered.
+    ok("prefs: every other app is offered, and not itself",
+       texts(sel.children) === "Photoshop|After Effects|Figma", texts(sel.children));
     ok("prefs: nothing stored before the user chooses", store.getItem("lazylord.prefs.illustrator") === null);
 
-    sel.value = "photoshop";
+    pick("push-targets", "target", "photoshop");
     sel.fire("change");
     els["auto"].checked = false;
     els["auto"].fire("change");
@@ -406,15 +465,15 @@ run("prefs", function () {
 // 2) A reopened panel restores both - the target only once that app connects.
 run("restore", function () {
     var sock = boot("ILST", store);
-    var sel = els["push-target"];
+    var sel = els["push-targets"];
 
     ok("restore: auto-receive off comes back", els["auto"].checked === false);
     ok("restore: push options come back", optionValues() === "combine/groups", optionValues());
     ok("restore: and are named while folded", noteText() === "Combine, Groups", noteText());
     peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
-    ok("restore: default stands in while the saved app is absent", sel.value === "aftereffects", sel.value);
+    ok("restore: default stands in while the saved app is absent", chipValue(sel, "target") === "aftereffects", chipValue(sel, "target"));
     peersMsg(sock, "peers", ["illustrator", "aftereffects", "photoshop"]);
-    ok("restore: saved target selected once it connects", sel.value === "photoshop", sel.value);
+    ok("restore: saved target selected once it connects", chipValue(sel, "target") === "photoshop", chipValue(sel, "target"));
     peersMsg(sock, "peers", ["illustrator", "aftereffects", "photoshop", "photoshop"]);
     ok("restore: duplicate peers listed once", sel.children.length === 2, texts(sel.children));
 
@@ -440,13 +499,13 @@ run("restore", function () {
 // 3) After Effects keeps its own preferences on the same machine.
 run("per-host", function () {
     var sock = boot("AEFT", store);
-    var sel = els["push-target"];
+    var sel = els["push-targets"];
 
     ok("per-host: AE ignores Illustrator's auto-receive", els["auto"].checked === true);
     ok("per-host: AE ignores Illustrator's push options", optionValues() === "split/flatten" && noteText() === "",
        optionValues());
     peersMsg(sock, "welcome", ["aftereffects", "illustrator", "photoshop"]);
-    ok("per-host: AE defaults to Illustrator", sel.value === "illustrator", sel.value);
+    ok("per-host: AE defaults to Illustrator", chipValue(sel, "target") === "illustrator", chipValue(sel, "target"));
     els["auto"].checked = false;
     els["auto"].fire("change");
     var ae = JSON.parse(store.getItem("lazylord.prefs.aftereffects"));
@@ -464,12 +523,13 @@ run("storage", function () {
     var broken = new BrokenStorage();
     var threw = null, autoAtBoot = null;
     try {
-        boot("ILST", broken);
+        var sock = boot("ILST", broken);
         autoAtBoot = els["auto"].checked;
         els["auto"].checked = false;
         els["auto"].fire("change");
-        els["push-target"].value = "aftereffects";
-        els["push-target"].fire("change");
+        // The target chips only exist once the bridge says who is listening.
+        peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+        pick("push-targets", "target", "aftereffects");
     } catch (e) { threw = e.message || String(e); }
     ok("storage: a throwing store is survivable", threw === null, threw);
     ok("storage: defaults used", autoAtBoot === true, String(autoAtBoot));
@@ -499,7 +559,8 @@ run("storage", function () {
 // 5) Receive: pass-through, materialisation, summary, card and ack.
 run("receive", function () {
     var sock = boot("PHXS", new MemoryStorage());
-    ok("receive: no push card without a reader", els["push-card"].hidden === true);
+    // Photoshop has a reader of its own now, so it sends as well as receives.
+    ok("receive: Photoshop offers a send card too", els["push-card"].hidden === false);
 
     var original = figmaDoc();
     var sentStr = JSON.stringify(original);
@@ -1111,6 +1172,356 @@ run("markup", function () {
        HIERARCHY_VALUES.join("|"));
     ok("markup: both selects are labelled", has(HTML_SRC, '<label for="push-layout">Layout</label>') &&
        has(HTML_SRC, '<label for="push-hierarchy">Hierarchy</label>'));
+});
+
+// 12) Phase 3: the Existing / Keyframes options on the push card.
+run("update options", function () {
+    var store = new MemoryStorage();
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    // index.html offers exactly the values the builders understand.
+    ok("markup: Existing offers add and update",
+       EXISTING_VALUES.length === 2 && EXISTING_VALUES[0] === "add" && EXISTING_VALUES[1] === "update",
+       EXISTING_VALUES.join(","));
+    ok("markup: Keyframes offers auto and always",
+       KEYFRAME_VALUES.length === 2 && KEYFRAME_VALUES[0] === "auto" && KEYFRAME_VALUES[1] === "always",
+       KEYFRAME_VALUES.join(","));
+    ok("markup: both new selects are labelled",
+       has(HTML_SRC, '<label for="push-existing">Existing</label>') &&
+       has(HTML_SRC, '<label for="push-keyframes">Keyframes</label>'));
+
+    // Keyframes only mean anything while updating, so the row follows Existing.
+    ok("keyframes row: hidden while adding", els["push-keyframes-row"].hidden === true);
+    ok("note: nothing while everything is default", noteText() === "", noteText());
+    ok("hint: empty while adding", els["push-opts-hint"].textContent === "",
+       els["push-opts-hint"].textContent);
+
+    choose("push-existing", "update");
+    ok("keyframes row: shown once updating", els["push-keyframes-row"].hidden === false);
+    ok("note: Update alone", noteText() === "Update", noteText());
+    ok("hint: says Layout and Hierarchy are ignored",
+       has(els["push-opts-hint"].textContent, "Layout and Hierarchy are ignored"),
+       els["push-opts-hint"].textContent);
+
+    choose("push-keyframes", "always");
+    ok("note: Update and Always key", noteText() === "Update, Always key", noteText());
+
+    var saved = JSON.parse(store.getItem("lazylord.prefs.illustrator"));
+    ok("prefs: Existing stored with the host's other prefs", saved && saved.existing === "update",
+       store.getItem("lazylord.prefs.illustrator"));
+    ok("prefs: Keyframes stored", saved && saved.keyframes === "always",
+       store.getItem("lazylord.prefs.illustrator"));
+
+    choose("push-existing", "add");
+    ok("keyframes row: hidden again", els["push-keyframes-row"].hidden === true);
+    ok("note: Always key is not named while adding", noteText() === "", noteText());
+});
+
+// 13) The choices are restored per host, and travel on doc.options.
+run("update options travel", function () {
+    var store = new MemoryStorage();
+    store.setItem("lazylord.prefs.illustrator",
+        JSON.stringify({ existing: "update", keyframes: "always", target: "aftereffects" }));
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    ok("prefs: Existing restored", els["push-existing"].value === "update", els["push-existing"].value);
+    ok("prefs: Keyframes restored", els["push-keyframes"].value === "always", els["push-keyframes"].value);
+    ok("prefs: the keyframes row is shown again", els["push-keyframes-row"].hidden === false);
+    ok("prefs: the folded label is restored too", noteText() === "Update, Always key", noteText());
+
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()],
+                   fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    files["C:/tmp/upd/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/upd/ir.json", message: "", diagnostics: [] }));
+
+    var sent = lastSent(sock);
+    ok("sent: Update reaches the builder", sent.document.options.existing === "update",
+       JSON.stringify(sent.document.options));
+    ok("sent: so does Always", sent.document.options.keyframes === "always",
+       JSON.stringify(sent.document.options));
+});
+
+// 14) A build that updated layers reports both halves in its one line.
+run("update summary", function () {
+    var sock = boot("AEFT", new MemoryStorage());
+    peersMsg(sock, "welcome", ["aftereffects", "illustrator"]);
+
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()],
+                   fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    deliver(sock, { type: "transfer", id: "t-upd", document: ir });
+    lastEval().cb(JSON.stringify({ ok: true, layersCreated: 1, layersUpdated: 3, message: "", diagnostics: [] }));
+
+    var line = lastLog();
+    ok("summary: updated layers are counted first", has(line.text, "3 layers updated"), line.text);
+    ok("summary: created layers still counted", has(line.text, "1 layer created"), line.text);
+
+    var ack = null;
+    for (var i = sock.sent.length - 1; i >= 0; i--) {
+        if (sock.sent[i].type === "ack") { ack = sock.sent[i]; break; }
+    }
+    ok("ack: carries the updated count back to the sender", ack && ack.layersUpdated === 3,
+       ack ? JSON.stringify(ack) : "no ack");
+});
+
+// 15) The button names where the transfer is going, rather than Push / Pull.
+run("send button names its destination", function () {
+    var sock = boot("AEFT", new MemoryStorage());
+    ok("button: disabled with nobody to send to", els["push"].disabled === true);
+
+    peersMsg(sock, "welcome", ["aftereffects", "illustrator"]);
+    ok("button: names the only peer", els["push"].textContent === "Send to Illustrator",
+       els["push"].textContent);
+
+    peersMsg(sock, "peers", ["aftereffects", "illustrator", "photoshop"]);
+    pick("push-targets", "target", "photoshop");
+    ok("button: follows the target", els["push"].textContent === "Send to Photoshop",
+       els["push"].textContent);
+    ok("card: the send section is labelled by what it does, not by a direction",
+       has(HTML_SRC, ">Send to<"), "send-to label");
+    ok("markup: no Push or Pull left in the panel",
+       HTML_SRC.indexOf(">Push<") < 0 && HTML_SRC.indexOf(">Pull<") < 0);
+});
+
+// 16) Destination: the panel can ask for a new document, like the Figma plugin.
+run("send destination", function () {
+    var store = new MemoryStorage();
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    ok("markup: three destinations", DESTINATION_VALUES.length === 3 &&
+       DESTINATION_VALUES[0] === "active" && DESTINATION_VALUES[1] === "page" &&
+       DESTINATION_VALUES[2] === "selection", DESTINATION_VALUES.join(","));
+    ok("destination: Open document by default", els["push-destination"].value === "active");
+    ok("destination: the note explains it", has(els["push-dest-note"].textContent, "already open"),
+       els["push-dest-note"].textContent);
+
+    // A reader always writes the artwork against its source page.
+    var pageDoc = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 40, y: 30, width: 50, height: 50 },
+        canvas: { width: 800, height: 600, name: "Artboard 1" },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()],
+                   fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    files["C:/tmp/dest/ir.json"] = { data: JSON.stringify(pageDoc), enc: "" };
+
+    function send() {
+        els["push"].fire("click");
+        lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/dest/ir.json",
+                                       message: "", diagnostics: [] }));
+        return lastSent(sock);
+    }
+
+    var t1 = send();
+    ok("active: builds into the open document", t1.document.options.destination === "active",
+       JSON.stringify(t1.document.options));
+    ok("active: the page is left on the document", !!t1.document.canvas &&
+       t1.document.originSpace === "document");
+
+    choose("push-destination", "page");
+    ok("destination: the note follows the choice", has(els["push-dest-note"].textContent, "size of the source page"),
+       els["push-dest-note"].textContent);
+    var t2 = send();
+    ok("page: asks for a new document", t2.document.options.destination === "new");
+    ok("page: sized to the artboard, artwork where it sat",
+       t2.document.canvas.width === 800 && t2.document.originSpace === "document",
+       JSON.stringify(t2.document.canvas));
+
+    choose("push-destination", "selection");
+    var t3 = send();
+    ok("selection: asks for a new document", t3.document.options.destination === "new");
+    ok("selection: the source page is dropped, so the target sizes to the selection",
+       t3.document.canvas === undefined, JSON.stringify(t3.document.canvas));
+    ok("selection: and builds at its own origin", t3.document.originSpace === "canvas",
+       t3.document.originSpace);
+
+    var saved = JSON.parse(store.getItem("lazylord.prefs.illustrator"));
+    ok("destination: remembered per host", saved && saved.destination === "selection",
+       store.getItem("lazylord.prefs.illustrator"));
+});
+
+// 17) Updating has nothing to update in a document that does not exist yet.
+run("update overrides destination", function () {
+    var sock = boot("ILST", new MemoryStorage());
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+    choose("push-destination", "page");
+    choose("push-existing", "update");
+
+    ok("hint: says the destination is ignored",
+       has(els["push-opts-hint"].textContent, "Destination above is ignored"),
+       els["push-opts-hint"].textContent);
+
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        canvas: { width: 800, height: 600 },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()],
+                   fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    files["C:/tmp/ud/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/ud/ir.json",
+                                   message: "", diagnostics: [] }));
+
+    var t = lastSent(sock);
+    ok("update: forced into the open document", t.document.options.destination === "active",
+       JSON.stringify(t.document.options));
+    ok("update: still an update", t.document.options.existing === "update");
+});
+
+// 18) Image scale is a read-time choice, so it goes to the reader, not the builder.
+run("send image scale", function () {
+    var store = new MemoryStorage();
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    ok("markup: the same scales the Figma plugin offers",
+       SCALE_VALUES.join(",") === "1,2,3,4", SCALE_VALUES.join(","));
+    ok("scale: 2x by default", chipValue(els["push-scales"], "scale") === "2", chipValue(els["push-scales"], "scale"));
+    ok("note: the default scale is not named", noteText() === "", noteText());
+
+    pick("push-scales", "scale", "4");
+    ok("note: a non-default scale is named", noteText() === "4x", noteText());
+
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "v", name: "Box", type: "vector", frame: frame(0, 0), subpaths: [square()],
+                   fills: [], strokes: [] }],
+        diagnostics: []
+    };
+    files["C:/tmp/sc/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+    els["push"].fire("click");
+
+    var call = lastEval();
+    ok("scale: reaches runRead, not doc.options", has(call.script, '"scale":4'), call.script);
+    call.cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/sc/ir.json", message: "", diagnostics: [] }));
+    var t = lastSent(sock);
+    ok("scale: not smuggled into the builder's options", t.document.options.scale === undefined,
+       JSON.stringify(t.document.options));
+
+    var saved = JSON.parse(store.getItem("lazylord.prefs.illustrator"));
+    ok("scale: remembered per host", saved && saved.scale === 4, store.getItem("lazylord.prefs.illustrator"));
+});
+/** Key names of an object, for a failure message. */
+function dumpKeys(o) { var k = []; for (var n in o) k.push(n); return k.join(","); }
+
+// 19) Figma is a destination like any other — but it cannot open a file, so
+//     anything sent there travels as bytes.
+run("sending to Figma", function () {
+    var sock = boot("ILST", new MemoryStorage());
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects", "figma"]);
+
+    var sel = els["push-targets"];
+    ok("figma: offered as a target", has(texts(sel.children), "Figma"), texts(sel.children));
+    pick("push-targets", "target", "figma");
+    ok("figma: the button names it", els["push"].textContent === "Send to Figma", els["push"].textContent);
+
+    // The reader wrote one image it owns and one the user owns.
+    files["C:\\art\\logo.png"] = { data: "T1JJRw==", enc: "Base64" };
+    files["C:\\tmp\\gen\\raster.png"] = { data: "R0VO", enc: "Base64" };
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 110, height: 50 },
+        layers: [
+            { id: "a", name: "Linked", type: "image", frame: frame(0, 0), filePath: "C:\\art\\logo.png",
+              isOriginalFile: true, pixelWidth: 50, pixelHeight: 50 },
+            { id: "g", name: "Set", type: "group", frame: frame(60, 0), children: [
+                { id: "b", name: "Raster", type: "image", frame: frame(60, 0),
+                  filePath: "C:\\tmp\\gen\\raster.png", isOriginalFile: false,
+                  pixelWidth: 50, pixelHeight: 50 }
+            ]}
+        ],
+        diagnostics: []
+    };
+    files["C:/tmp/fig/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 2, irPath: "C:/tmp/fig/ir.json",
+                                   message: "", diagnostics: [] }));
+
+    var t = lastSent(sock);
+    ok("figma: targeted, not broadcast", t.target === "figma", String(t.target));
+    ok("figma: a top-level image carries its bytes", !!t.document.layers[0].pngBase64,
+       dumpKeys(t.document.layers[0]));
+    ok("figma: so does one inside a group",
+       !!t.document.layers[1].children[0].pngBase64, dumpKeys(t.document.layers[1].children[0]));
+    ok("figma: the path is kept alongside, so the origin is still known",
+       t.document.layers[0].filePath === "C:\\art\\logo.png" &&
+       t.document.layers[0].isOriginalFile === true);
+});
+
+// 20) Every other destination is on this machine and reads the file itself.
+run("sending to Adobe keeps paths", function () {
+    var sock = boot("ILST", new MemoryStorage());
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    files["C:\\art\\logo.png"] = { data: "T1JJRw==", enc: "Base64" };
+    var ir = {
+        version: "1.0", source: "illustrator", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "a", name: "Linked", type: "image", frame: frame(0, 0),
+                   filePath: "C:\\art\\logo.png", isOriginalFile: true,
+                   pixelWidth: 50, pixelHeight: 50 }],
+        diagnostics: []
+    };
+    files["C:/tmp/ae/ir.json"] = { data: JSON.stringify(ir), enc: "" };
+
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/ae/ir.json",
+                                   message: "", diagnostics: [] }));
+
+    var t = lastSent(sock);
+    ok("adobe: no bytes are carried", t.document.layers[0].pngBase64 === undefined,
+       dumpKeys(t.document.layers[0]));
+    ok("adobe: the path goes as it was", t.document.layers[0].filePath === "C:\\art\\logo.png");
+});
+
+// 21) The panel must be free to grow. A CEP panel with no MaxSize is clamped
+//     to its Size by several hosts, which is what once pinned this one at
+//     300x360 however hard its edge was dragged.
+run("panel geometry", function () {
+    var xml = read(CEP + "CSXS\\manifest.xml");
+
+    function box(tag) {
+        var m = new RegExp("<" + tag + "><Height>([0-9]+)</Height><Width>([0-9]+)</Width></" + tag + ">").exec(xml);
+        return m ? { h: Number(m[1]), w: Number(m[2]) } : null;
+    }
+    var size = box("Size"), min = box("MinSize"), max = box("MaxSize");
+
+    ok("geometry: a starting size is declared", !!size, String(size && size.w));
+    ok("geometry: a minimum is declared", !!min, String(min && min.w));
+    ok("geometry: a MAXIMUM is declared, so the panel can be resized",
+       !!max, max ? "yes" : "missing — the panel will be stuck at its Size");
+    ok("geometry: the maximum leaves room for any display",
+       !!max && max.w >= 2000 && max.h >= 2000, max ? max.w + "x" + max.h : "none");
+    ok("geometry: the minimum is not above the starting size",
+       !!min && !!size && min.w <= size.w && min.h <= size.h,
+       min && size ? min.w + "x" + min.h + " vs " + size.w + "x" + size.h : "");
+    ok("geometry: it opens tall enough to show the send controls",
+       !!size && size.h >= 560, String(size && size.h));
+
+    // The stylesheet the panel links has to be the synced copy, not a path
+    // reaching outside the folder Adobe symlinks into its extensions directory.
+    ok("markup: the stylesheet is linked from inside the panel folder",
+       has(HTML_SRC, 'href="./css/lazylord.css"'), "css link");
+    ok("markup: and nothing reaches outside it", !has(HTML_SRC, 'href="../'), "relative escape");
 });
 
 WScript.Echo("");

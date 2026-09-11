@@ -12,11 +12,26 @@
   var PROTOCOL_VERSION = 1;
 
   /** Hosts that ship a reader module and can therefore originate a transfer. */
-  var READ_MODULE = { illustrator: "ai-read", aftereffects: "ae-read" };
-  /** Where a transfer goes by default when several apps are listening. */
-  var PREFERRED_TARGET = { illustrator: "aftereffects", aftereffects: "illustrator" };
-  /** Overlord's vocabulary: you push artwork forward, and pull it back. */
-  var SEND_VERB = { illustrator: "Push", aftereffects: "Pull" };
+  var READ_MODULE = { illustrator: "ai-read", aftereffects: "ae-read", photoshop: "ps-read" };
+  /**
+   * Where a transfer goes by default when several apps are listening. Only a
+   * starting point: the select lists every connected app, and the choice is
+   * remembered per host.
+   */
+  var PREFERRED_TARGET = { illustrator: "aftereffects", aftereffects: "illustrator", photoshop: "aftereffects" };
+  /**
+   * Where the receiving app builds, and how the transfer is sized for it:
+   *   active    — into the document or comp already open
+   *   page      — a new one the size of the source page (artboard / composition)
+   *   selection — a new one the size of the selection, artwork at its origin
+   */
+  var DESTINATIONS = ["active", "page", "selection"];
+  var DEST_NOTES = {
+    active: "Into the document or composition already open, where it sits on the page.",
+    page: "A new document or composition the size of the source page, with everything where it sits on it.",
+    selection: "A new document or composition the size of the selection, with the artwork at its origin."
+  };
+  var SCALES = ["1", "2", "3", "4"];
   /**
    * Fallback ladder rungs, worst first. The diagnostics card lists them in this
    * order so the things that did not arrive at all are read before the rest.
@@ -44,9 +59,16 @@
   var pushCard = document.getElementById("push-card");
   var pushSub = document.getElementById("push-sub");
   var pushBtn = document.getElementById("push");
-  var targetSel = document.getElementById("push-target");
+  var targetsEl = document.getElementById("push-targets");
   var layoutSel = document.getElementById("push-layout");
   var hierarchySel = document.getElementById("push-hierarchy");
+  var existingSel = document.getElementById("push-existing");
+  var keyframesSel = document.getElementById("push-keyframes");
+  var keyframesRow = document.getElementById("push-keyframes-row");
+  var optsHint = document.getElementById("push-opts-hint");
+  var destinationSel = document.getElementById("push-destination");
+  var destNote = document.getElementById("push-dest-note");
+  var scalesEl = document.getElementById("push-scales");
   var optsNote = document.getElementById("push-opts-note");
   var diagCard = document.getElementById("diag-card");
   var diagHead = document.getElementById("diag-head");
@@ -94,7 +116,6 @@
   }
   var role = roleForApp(appName);
   var canPush = !!READ_MODULE[role];
-  var verb = SEND_VERB[role] || "Send";
 
   hostEl.firstChild.nodeValue = roleLabel(role);
   hostSub.textContent = appName + " " + (env.appVersion || "");
@@ -202,6 +223,11 @@
     if (typeof prefs.autoReceive === "boolean") autoEl.checked = prefs.autoReceive;
     if (layoutSel && contains(LAYOUTS, prefs.layout)) layoutSel.value = prefs.layout;
     if (hierarchySel && contains(HIERARCHIES, prefs.hierarchy)) hierarchySel.value = prefs.hierarchy;
+    if (existingSel && contains(EXISTING, prefs.existing)) existingSel.value = prefs.existing;
+    if (keyframesSel && contains(KEYFRAMES, prefs.keyframes)) keyframesSel.value = prefs.keyframes;
+    if (destinationSel && contains(DESTINATIONS, prefs.destination)) destinationSel.value = prefs.destination;
+    if (scalesEl && contains(SCALES, String(prefs.scale))) selectChip(scalesEl, "scale", prefs.scale);
+    updateDestNote();
     updateOptionsNote();
   }
 
@@ -213,13 +239,17 @@
 
   var LAYOUTS = ["split", "combine"];
   var HIERARCHIES = ["flatten", "groups"];
+  var EXISTING = ["add", "update"];
+  var KEYFRAMES = ["auto", "always"];
 
   /** Options with the defaults applied (mirrors core's transferOptions). */
   function normaliseOptions(o) {
     o = o || {};
     return {
       layout: o.layout === "combine" ? "combine" : "split",
-      hierarchy: o.hierarchy === "groups" ? "groups" : "flatten"
+      hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
+      existing: o.existing === "update" ? "update" : "add",
+      keyframes: o.keyframes === "always" ? "always" : "auto"
     };
   }
 
@@ -228,6 +258,10 @@
     var parts = [];
     if (o.layout === "combine") parts.push("Combine");
     if (o.hierarchy === "groups") parts.push("Groups");
+    if (o.existing === "update") parts.push("Update");
+    if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
+    var sc = activeChip(scalesEl, "scale");
+    if (sc && sc !== "2") parts.push(sc + "x");
     return parts.join(", ");
   }
 
@@ -235,13 +269,71 @@
   function pushOptions() {
     return normaliseOptions({
       layout: layoutSel ? layoutSel.value : "",
-      hierarchy: hierarchySel ? hierarchySel.value : ""
+      hierarchy: hierarchySel ? hierarchySel.value : "",
+      existing: existingSel ? existingSel.value : "",
+      keyframes: keyframesSel ? keyframesSel.value : ""
     });
+  }
+
+  /**
+   * Shape the document for where it is going. The readers always write the
+   * artwork against its source page, which is what "active" and "page" want;
+   * "selection" drops that page so the target sizes itself to the selection
+   * and builds it at its own origin (LazyLord.canvasSize falls back to bounds,
+   * and applyOrigin leaves canvas-space artwork alone).
+   */
+  function applyDestination(doc, place) {
+    // There is nothing to update in a document that does not exist yet.
+    if (place === "active" || doc.options.existing === "update") {
+      doc.options.destination = "active";
+      return;
+    }
+    doc.options.destination = "new";
+    if (place === "selection") {
+      doc.originSpace = "canvas";
+      delete doc.canvas;
+    }
+  }
+
+  /**
+   * A Figma plugin runs in a browser sandbox and cannot open a file on disk, so
+   * anything going there travels as bytes rather than as a path. Every other
+   * host is on this machine and reads the file itself.
+   */
+  function embedImagesForFigma(doc) {
+    eachLayer(doc.layers, function (layer) {
+      if (layer.type !== "image" || layer.pngBase64 || !layer.filePath) return;
+      try {
+        layer.pngBase64 = readBase64(layer.filePath);
+      } catch (e) {
+        log("Could not read " + layer.filePath + " to send to Figma: " + e.message, "warn");
+      }
+    });
+  }
+
+  function updateDestNote() {
+    if (!destNote || !destinationSel) return;
+    destNote.textContent = DEST_NOTES[destinationSel.value] || "";
   }
 
   /** The Options disclosure stays closed, so its label shows what differs from the defaults. */
   function updateOptionsNote() {
-    if (optsNote) optsNote.textContent = optionsNote(pushOptions());
+    var o = pushOptions();
+    if (optsNote) optsNote.textContent = optionsNote(o);
+
+    // Keyframes only mean anything while updating, and only in After Effects.
+    var updating = (o.existing === "update");
+    if (keyframesRow) keyframesRow.hidden = !updating;
+    if (optsHint) {
+      if (!updating) optsHint.textContent = "";
+      else if (destinationSel && destinationSel.value !== "active") {
+        optsHint.textContent = "Update edits what an earlier send built, so it goes into the open document — " +
+          "the Destination above is ignored.";
+      } else {
+        optsHint.textContent = "Layers an earlier send built are edited where they stand. " +
+          "Layout and Hierarchy are ignored for those.";
+      }
+    }
   }
 
   // --- Load ExtendScript modules -----------------------------------------
@@ -297,11 +389,16 @@
         jsxError = "";
         log("Host modules loaded (" + host + (canPush ? " + reader" : "") + ").");
         if (canPush) {
-          pushCard.hidden = false;
-          document.getElementById("push-title").textContent = verb + " selection";
-          pushSub.textContent = role === "aftereffects"
-            ? "Send the selected layers back to Illustrator as editable artwork."
-            : "Send the selected artwork to another app.";
+          // Everything about sending appears at once, so a host that cannot send
+          // shows a receive-only panel rather than dead controls.
+          var cards = ["push-card", "scale-card", "destination-card", "options-card", "send-card"];
+          for (var c = 0; c < cards.length; c++) {
+            var el = document.getElementById(cards[c]);
+            if (el) el.hidden = false;
+          }
+          pushSub.textContent = "Send the selected " +
+            (role === "aftereffects" ? "layers" : "artwork") + " to another app.";
+          updateDestNote();
         }
         updatePushButton();
         flushJsxWaiters(true);
@@ -388,46 +485,106 @@
 
   // --- Push targets -------------------------------------------------------
 
+  /* --- Chip rows -----------------------------------------------------------
+   * The target and the image scale are chips rather than dropdowns, the way
+   * the Figma plugin shows them: both are short lists worth seeing at a glance,
+   * and the row reflows to whatever width the panel is dragged to.
+   */
+
+  /** The chip in `container` whose data-<key> is `value`, or null. */
+  function chipFor(container, key, value) {
+    var kids = container ? container.children : null;
+    for (var i = 0; kids && i < kids.length; i++) {
+      if (String(kids[i].getAttribute("data-" + key)) === String(value)) return kids[i];
+    }
+    return null;
+  }
+
+  /** Mark exactly one chip active; returns the value that ended up active. */
+  function selectChip(container, key, value) {
+    var kids = container ? container.children : null;
+    var chosen = "";
+    for (var i = 0; kids && i < kids.length; i++) {
+      var on = String(kids[i].getAttribute("data-" + key)) === String(value);
+      kids[i].className = on ? "a-" + key + " is-active" : "a-" + key;
+      if (on) chosen = String(value);
+    }
+    return chosen;
+  }
+
+  /** The active chip's value, or "" when none is. */
+  function activeChip(container, key) {
+    var kids = container ? container.children : null;
+    for (var i = 0; kids && i < kids.length; i++) {
+      if (/is-active/.test(kids[i].className || "")) return String(kids[i].getAttribute("data-" + key));
+    }
+    return "";
+  }
+
   function renderTargets() {
     if (!canPush) return;
-    var previous = targetSel.value;
+    var previous = activeChip(targetsEl, "target");
     var available = [];
     for (var i = 0; i < peers.length; i++) {
       var p = peers[i];
-      if (p === role || p === "unknown" || p === "figma") continue; // Figma cannot receive yet
+      if (p === role || p === "unknown") continue;
       if (!contains(available, p)) available.push(p);
     }
 
-    clearChildren(targetSel);
+    clearChildren(targetsEl);
     if (available.length === 0) {
-      var none = document.createElement("option");
-      none.value = "";
-      none.textContent = "No app connected";
-      targetSel.appendChild(none);
+      var none = document.createElement("button");
+      none.className = "a-target";
+      none.setAttribute("data-target", "");
+      none.disabled = true;
+      none.appendChild(document.createTextNode("No app connected"));
+      targetsEl.appendChild(none);
     } else {
       for (var j = 0; j < available.length; j++) {
-        var opt = document.createElement("option");
-        opt.value = available[j];
-        opt.textContent = roleLabel(available[j]);
-        targetSel.appendChild(opt);
+        var chip = document.createElement("button");
+        chip.className = "a-target";
+        chip.setAttribute("data-target", available[j]);
+        chip.appendChild(document.createTextNode(roleLabel(available[j])));
+        targetsEl.appendChild(chip);
       }
       // The user's remembered choice wins whenever that app is connected; the
-      // current selection only stands in for it while it is not.
+      // one showing only stands in for it while it is not.
       var saved = prefs.target;
       var preferred = PREFERRED_TARGET[role];
-      if (saved && contains(available, saved)) targetSel.value = saved;
-      else if (previous && contains(available, previous)) targetSel.value = previous;
-      else if (preferred && contains(available, preferred)) targetSel.value = preferred;
+      var pick = "";
+      if (saved && contains(available, saved)) pick = saved;
+      else if (previous && contains(available, previous)) pick = previous;
+      else if (preferred && contains(available, preferred)) pick = preferred;
+      else pick = available[0];
+      selectChip(targetsEl, "target", pick);
     }
 
     targetsAvailable = available.length > 0;
     updatePushButton();
   }
 
+  /** The target the next transfer goes to. */
+  function currentTarget() {
+    return activeChip(targetsEl, "target");
+  }
+
+  /** The image scale the next transfer is read at. */
+  function currentScale() {
+    var v = Number(activeChip(scalesEl, "scale"));
+    return contains(SCALES, String(v)) ? v : 2;
+  }
+
+  /**
+   * The button says where the transfer is going. "Push" and "Pull" describe a
+   * direction through someone's workflow, not what the button does, and stop
+   * meaning anything once every app can send to every other one.
+   */
   function updatePushButton() {
     if (!canPush) return;
     pushBtn.disabled = pushBusy || !targetsAvailable || !jsxReady;
-    pushBtn.textContent = pushBusy ? verb + "ing…" : verb;
+    var where = currentTarget() ? roleLabel(currentTarget()) : "";
+    if (pushBusy) pushBtn.textContent = "Sending…";
+    else pushBtn.textContent = where ? "Send to " + where : "Send";
   }
 
   function setPushBusy(b) {
@@ -471,6 +628,15 @@
     throw new Error("No filesystem API available.");
   }
 
+  function readBase64(path) {
+    if (fs) return fs.readFileSync(path).toString("base64");
+    if (window.cep && window.cep.fs && window.cep.encoding) {
+      var r = window.cep.fs.readFile(path, window.cep.encoding.Base64);
+      if (r && r.err === 0) return r.data;
+    }
+    throw new Error("no filesystem API available");
+  }
+
   function writePngFromBase64(path, b64) {
     if (fs) { fs.writeFileSync(path, Buffer.from(b64, "base64")); return; }
     if (window.cep && window.cep.fs && window.cep.encoding) {
@@ -502,7 +668,7 @@
   // --- Push ---------------------------------------------------------------
 
   function doPush() {
-    var target = targetSel.value;
+    var target = currentTarget();
     if (!target) { log("No destination app is connected.", "err"); return; }
     if (!jsxReady) {
       loadJsx(function (ok) {
@@ -515,6 +681,8 @@
     // Taken now: the options showing when the button was pressed are the ones
     // sent, even if a select is changed while the host is still reading.
     var options = pushOptions();
+    var place = destinationSel ? destinationSel.value : "active";
+    var reading = { scale: currentScale() };
     var id = newId();
     var dir;
     try {
@@ -528,7 +696,7 @@
     setDiagnostics([], id);
     log("Reading the " + roleLabel(role) + " selection…");
 
-    cs.evalScript("LazyLord.runRead(" + jsonStr(dir) + ")", function (res) {
+    cs.evalScript("LazyLord.runRead(" + jsonStr(dir) + ", " + JSON.stringify(reading) + ")", function (res) {
       var r;
       try { r = JSON.parse(res); } catch (e) { r = { ok: false, message: "Host error: " + res }; }
 
@@ -552,8 +720,10 @@
 
       // The document goes out as the reader wrote it — canvas, clip, primitive
       // and groups included — plus the options chosen in this panel, which the
-      // target's builder obeys. Nothing else is rewritten.
+      // target's builder obeys.
       doc.options = options;
+      applyDestination(doc, place);
+      if (target === "figma") embedImagesForFigma(doc);
 
       pendingPush = id;
       pendingPushInfo = {
@@ -608,7 +778,7 @@
       // rebuild (from the ack) — so the line agrees with the card.
       var all = info.diagnostics.concat(hostDiags);
       log("Rebuilt in " + roleLabel(msg.from) + (late ? " (late reply)" : "") + ": " +
-        transferSummary(msg.layersCreated, info.images, all), all.length ? "warn" : "ok");
+        transferSummary(msg.layersCreated, info.images, all, msg.layersUpdated), all.length ? "warn" : "ok");
     } else {
       log((late ? "Late reply from " + roleLabel(msg.from) + ": " : "") +
         (msg.message || "The transfer failed."), "err");
@@ -712,15 +882,15 @@
           // Source-side, receive and rebuild fallbacks together, matching the card.
           var all = shownDiags.concat(buildDiags);
           log("Received from " + roleLabel(doc.source) + ": " +
-            transferSummary(result.layersCreated, images, all), all.length ? "warn" : "ok");
+            transferSummary(result.layersCreated, images, all, result.layersUpdated), all.length ? "warn" : "ok");
         } else {
           log("Build failed: " + (result.message || "unknown error"), "err");
         }
-        ack(msg.id, !!result.ok, result.message, result.layersCreated, recvDiags.concat(buildDiags));
+        ack(msg.id, !!result.ok, result.message, result.layersCreated, recvDiags.concat(buildDiags), result.layersUpdated);
       });
     } catch (e) {
       log("Transfer error: " + e.message, "err");
-      ack(msg.id, false, e.message, 0, recvDiags);
+      ack(msg.id, false, e.message, 0, recvDiags, 0);
     }
   }
 
@@ -781,7 +951,7 @@
     return typeof x === "object" ? "an object" : "a " + typeof x;
   }
 
-  function ack(id, ok, message, layersCreated, diagnostics) {
+  function ack(id, ok, message, layersCreated, diagnostics, layersUpdated) {
     send({
       type: "ack",
       id: id,
@@ -789,6 +959,7 @@
       ok: ok,
       message: message,
       layersCreated: layersCreated || 0,
+      layersUpdated: layersUpdated || 0,
       diagnostics: diagnostics || []
     });
   }
@@ -878,7 +1049,7 @@
    * "12 layers created · 3 images (1 original, 2 generated) ·
    *  fallbacks: 2 approximated / 0 rasterized / 1 skipped".
    */
-  function transferSummary(layersCreated, images, diagnostics) {
+  function transferSummary(layersCreated, images, diagnostics, layersUpdated) {
     var imgs = images.total === 0
       ? "no images"
       : plural(images.total, "image") + " (" + images.original + " original, " + images.generated + " generated)";
@@ -888,7 +1059,10 @@
       falls = "fallbacks: " + c.approximated + " approximated / " + c.rasterized + " rasterized / " +
         c.skipped + " skipped" + (c.other ? " / " + c.other + " other" : "");
     }
-    return plural(layersCreated || 0, "layer") + " created · " + imgs + " · " + falls;
+    // Updating reports both halves: what it edited and what it had to add.
+    var built = plural(layersCreated || 0, "layer") + " created";
+    if (layersUpdated) built = plural(layersUpdated, "layer") + " updated · " + built;
+    return built + " · " + imgs + " · " + falls;
   }
 
   // --- Diagnostics --------------------------------------------------------
@@ -986,8 +1160,17 @@
   autoEl.addEventListener("change", function () { savePref("autoReceive", !!autoEl.checked); });
   if (canPush) {
     pushBtn.addEventListener("click", doPush);
-    targetSel.addEventListener("change", function () {
-      if (targetSel.value) savePref("target", targetSel.value);
+    // One listener per row rather than per chip: the target chips are rebuilt
+    // whenever the connected apps change.
+    targetsEl.addEventListener("click", function (e) {
+      var chip = e.target;
+      while (chip && chip !== targetsEl && !chip.getAttribute) chip = chip.parentNode;
+      if (!chip || chip === targetsEl || chip.disabled) return;
+      var value = chip.getAttribute("data-target");
+      if (!value) return;
+      selectChip(targetsEl, "target", value);
+      savePref("target", value);
+      updatePushButton(); // the button names where it is going
     });
     if (layoutSel) layoutSel.addEventListener("change", function () {
       savePref("layout", pushOptions().layout);
@@ -995,6 +1178,29 @@
     });
     if (hierarchySel) hierarchySel.addEventListener("change", function () {
       savePref("hierarchy", pushOptions().hierarchy);
+      updateOptionsNote();
+    });
+    if (existingSel) existingSel.addEventListener("change", function () {
+      savePref("existing", pushOptions().existing);
+      updateOptionsNote();
+    });
+    if (keyframesSel) keyframesSel.addEventListener("change", function () {
+      savePref("keyframes", pushOptions().keyframes);
+      updateOptionsNote();
+    });
+    if (destinationSel) destinationSel.addEventListener("change", function () {
+      savePref("destination", destinationSel.value);
+      updateDestNote();
+      updateOptionsNote(); // the Update hint depends on the destination
+    });
+    if (scalesEl) scalesEl.addEventListener("click", function (e) {
+      var chip = e.target;
+      while (chip && chip !== scalesEl && !chip.getAttribute) chip = chip.parentNode;
+      if (!chip || chip === scalesEl) return;
+      var value = chip.getAttribute("data-scale");
+      if (!value) return;
+      selectChip(scalesEl, "scale", value);
+      savePref("scale", Number(value));
       updateOptionsNote();
     });
   }

@@ -4,137 +4,152 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>LazyLord</title>
+
+  <!--
+    The one stylesheet, shared with the Figma plugin. `npm run build` syncs it
+    from packages/ui-kit/lazylord.css — edit it there, not here.
+  -->
+  <link rel="stylesheet" href="./css/lazylord.css" />
+
   <style>
-    :root {
-      --bg: #262626; --panel: #2f2f2f; --fg: #e8e8e8; --muted: #9a9a9a;
-      --border: #1c1c1c; --accent: #6c4cff; --ok: #45c26a; --err: #e5484d; --warn: #e0a23c;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; }
-    body {
-      background: var(--bg); color: var(--fg); font: 12px/1.45 "Segoe UI", -apple-system, sans-serif;
-      display: flex; flex-direction: column;
-    }
-    header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-    .logo { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-    .mark { color: var(--accent); font-size: 15px; }
-    .conn { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-    .conn .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); }
-    .conn.on .dot { background: var(--ok); }
-    main { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow: auto; }
-    .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
-    .host { font-size: 13px; font-weight: 600; }
-    .host small { display: block; color: var(--muted); font-weight: 400; margin-top: 2px; }
-    .log { font-family: Consolas, monospace; font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; }
-    .log .ok { color: var(--ok); }
-    .log .err { color: var(--err); }
-    .row { display: flex; gap: 8px; align-items: center; }
-    button { background: var(--accent); color: #fff; border: none; border-radius: 6px; padding: 8px 12px; cursor: pointer; font-size: 12px; }
-    button.secondary { background: #3a3a3a; }
-    footer { padding: 8px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 10px; }
-    label.opt { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
-    button:disabled { background: #3a3a3a; color: var(--muted); cursor: not-allowed; }
-    select {
-      background: #1f1f1f; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 7px 8px; font-size: 12px; flex: 1;
-    }
-    .push-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
-    .push-sub { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
-    .log .warn { color: var(--warn); }
-    .diag-head {
-      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px;
-      font-size: 12px; font-weight: 600; color: var(--warn); margin-bottom: 8px;
-    }
-    .diag-counts { display: flex; gap: 4px; }
-    ul.diag { list-style: none; margin: 0; padding: 0; max-height: 132px; overflow: auto; }
-    ul.diag li { font-size: 11px; color: var(--muted); padding: 5px 0; border-top: 1px solid var(--border); }
-    ul.diag li:first-child { border-top: none; }
-    ul.diag b { color: var(--fg); font-weight: 500; }
-    ul.diag .res, .diag-counts .cnt {
-      display: inline-block; font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: .06em;
-      padding: 1px 5px; border-radius: 3px;
-      background: #3a3a3a; color: var(--muted);
-    }
-    ul.diag .res { margin-left: 6px; }
-    /* One colour per rung of the fallback ladder, worst first. */
-    ul.diag .res.res-skipped, .diag-counts .cnt.res-skipped { background: #3d1c1e; color: var(--err); }
-    ul.diag .res.res-rasterized, .diag-counts .cnt.res-rasterized { background: #3a3113; color: var(--warn); }
-    ul.diag .res.res-approximated, .diag-counts .cnt.res-approximated { background: #2b2f3a; color: #a9b8d6; }
     /*
-     * Push options are advanced settings, so they stay folded away; the label
-     * names any choice that differs from the defaults (filled in by main.js).
-     * Both marker rules: older Chromium draws a -webkit marker, newer a list one.
-     */
-    details.opts { margin-top: 10px; }
-    details.opts summary { cursor: pointer; list-style: none; color: var(--muted); font-size: 11px; user-select: none; }
-    details.opts summary::-webkit-details-marker { display: none; }
-    details.opts summary::before { content: "\25B8"; display: inline-block; width: 12px; font-size: 9px; }
-    details.opts[open] summary::before { content: "\25BE"; }
-    .opts-note { margin-left: 6px; color: var(--fg); }
-    .opts-note:empty { display: none; }
-    .opt-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-    .opt-row label { width: 64px; color: var(--muted); font-size: 11px; }
-    .opt-row select { padding: 5px 6px; font-size: 11px; }
+      Adobe panels are dark, and a CEP panel has no theme of its own to read,
+      so the shared stylesheet's tokens are re-declared with Adobe's palette.
+      Nothing below styles a component — only the colours they are drawn in.
+    */
+    :root {
+      color-scheme: dark;
+      --bg: #262626;
+      --fg: #e8e8e8;
+      --muted: #9a9a9a;
+      --border: #1c1c1c;
+      --accent: #6c4cff;
+      --accent-fg: #fff;
+      --ok: #45c26a;
+      --err: #e5484d;
+      --warn: #e0a23c;
+      --chip: #2f2f2f;
+      /* A docked panel is narrower than a plugin window, so chips wrap sooner,
+         and the four scales still fit one row at the 240px minimum width. */
+      --chip-min: 104px;
+      --scale-min: 44px;
+    }
+    /* The chips sit on the panel's own surface rather than the window ground. */
+    .a-target, .a-scale, .a-place, .a-opt select, .a-ghost { background: #1f1f1f; }
   </style>
 </head>
 <body>
-  <header>
-    <div class="logo"><span class="mark">◆</span><span>LazyLord</span></div>
-    <div id="conn" class="conn"><span class="dot"></span><span id="conn-text">Offline</span></div>
-  </header>
-
-  <main>
-    <div class="card">
-      <div id="host" class="host">Detecting host…<small id="host-sub"></small></div>
-    </div>
-
-    <div class="card" id="push-card" hidden>
-      <div class="push-title" id="push-title">Push selection</div>
-      <div class="push-sub" id="push-sub">Send the selected artwork to another app.</div>
-      <div class="row">
-        <select id="push-target"></select>
-        <button id="push" disabled>Push</button>
+  <div id="app">
+    <header class="a-head">
+      <div class="a-logo">
+        <span class="a-mark">◆</span>
+        <span class="a-title">LazyLord</span>
       </div>
-      <details class="opts" id="push-options">
-        <summary>Options<span class="opts-note" id="push-opts-note"></span></summary>
-        <div class="opt-row" title="Split: one layer per shape. Combine: shapes merged into as few layers as the destination allows. Text and images always stay separate.">
-          <label for="push-layout">Layout</label>
-          <select id="push-layout">
-            <option value="split">Split</option>
-            <option value="combine">Combine</option>
-          </select>
+      <div id="conn" class="a-conn a-conn--off"><span class="dot"></span><span id="conn-text">Offline</span></div>
+    </header>
+
+    <main class="a-body">
+      <section class="a-block">
+        <div class="a-host">
+          <span class="a-host-name" id="host">Detecting host…</span>
+          <span class="a-host-sub" id="host-sub"></span>
         </div>
-        <div class="opt-row" title="Flatten: groups dissolve into their layers. Groups: groups are rebuilt in the destination (Illustrator groups, Photoshop layer groups, After Effects parent nulls).">
-          <label for="push-hierarchy">Hierarchy</label>
-          <select id="push-hierarchy">
-            <option value="flatten">Flatten</option>
-            <option value="groups">Groups</option>
-          </select>
+      </section>
+
+      <section class="a-block" id="push-card" hidden>
+        <label class="a-label">Send to</label>
+        <div id="push-targets" class="a-targets"></div>
+        <p id="push-sub" class="a-peers">Send the selected artwork to another app.</p>
+      </section>
+
+      <section class="a-block" id="scale-card" hidden>
+        <label class="a-label">Image scale</label>
+        <div id="push-scales" class="a-scales" role="group" aria-label="Image export scale">
+          <button class="a-scale" data-scale="1">1x</button>
+          <button class="a-scale is-active" data-scale="2">2x</button>
+          <button class="a-scale" data-scale="3">3x</button>
+          <button class="a-scale" data-scale="4">4x</button>
         </div>
-      </details>
-    </div>
+        <p class="a-peers">Used for anything sent as an image.</p>
+      </section>
 
-    <div class="card">
-      <div class="row" style="justify-content: space-between;">
-        <label class="opt" title="When off, transfers sent to this app are declined and the sender is told why."><input type="checkbox" id="auto" checked /> Auto-receive</label>
-        <button id="reconnect" class="secondary">Reconnect</button>
-      </div>
-    </div>
+      <section class="a-block" id="destination-card" hidden>
+        <label class="a-label" for="push-destination">Destination</label>
+        <select id="push-destination" class="a-place" title="Where the receiving app builds the transfer.">
+          <option value="active">Open document</option>
+          <option value="page">New — source page size</option>
+          <option value="selection">New — selection size</option>
+        </select>
+        <p id="push-dest-note" class="a-peers"></p>
+      </section>
 
-    <div class="card" id="diag-card" hidden>
-      <div class="diag-head" id="diag-head">
-        <span id="diag-title">Fallbacks</span>
-        <span class="diag-counts" id="diag-counts"></span>
-      </div>
-      <ul class="diag" id="diag-list"></ul>
-    </div>
+      <section class="a-block" id="options-card" hidden>
+        <details class="a-opts" id="push-options">
+          <summary class="a-label">Options <span class="a-count a-opts-note" id="push-opts-note"></span></summary>
+          <div class="a-opt" title="Split: one layer per shape. Combine: shapes merged into as few layers as the destination allows. Text and images always stay separate.">
+            <label for="push-layout">Layout</label>
+            <select id="push-layout">
+              <option value="split">Split</option>
+              <option value="combine">Combine</option>
+            </select>
+          </div>
+          <div class="a-opt" title="Flatten: groups dissolve into their layers. Groups: groups are rebuilt in the destination (Illustrator groups, Photoshop layer groups, After Effects parent nulls).">
+            <label for="push-hierarchy">Hierarchy</label>
+            <select id="push-hierarchy">
+              <option value="flatten">Flatten</option>
+              <option value="groups">Groups</option>
+            </select>
+          </div>
+          <div class="a-opt" title="Add: every send creates new layers. Update: layers an earlier send already built are edited where they stand, keeping their place in the stack. Layout and Hierarchy are ignored for those.">
+            <label for="push-existing">Existing</label>
+            <select id="push-existing">
+              <option value="add">Add</option>
+              <option value="update">Update</option>
+            </select>
+          </div>
+          <div class="a-opt" id="push-keyframes-row" title="While updating in After Effects. Auto: a property that is already animated takes a new key at the playhead; a still one is just set. Always: every property is keyed, which is how you animate a shape by re-sending it." hidden>
+            <label for="push-keyframes">Keyframes</label>
+            <select id="push-keyframes">
+              <option value="auto">Auto</option>
+              <option value="always">Always</option>
+            </select>
+          </div>
+          <p class="a-peers" id="push-opts-hint"></p>
+        </details>
+      </section>
 
-    <div class="card">
-      <div id="log" class="log">Waiting for the LazyLord bridge…</div>
-    </div>
-  </main>
+      <section class="a-block" id="send-card" hidden>
+        <button id="push" class="a-send" disabled>Send</button>
+      </section>
 
-  <footer>Bridge <code>ws://127.0.0.1:7878</code> · data stays on this machine</footer>
+      <section class="a-block">
+        <div class="a-row">
+          <label class="a-check" title="When off, transfers sent to this app are declined and the sender is told why.">
+            <input type="checkbox" id="auto" checked /> Auto-receive
+          </label>
+          <button id="reconnect" class="a-ghost">Reconnect</button>
+        </div>
+      </section>
+
+      <section class="a-block" id="diag-card" hidden>
+        <label class="a-label" id="diag-head">
+          <span id="diag-title">Fallbacks</span>
+          <span class="a-count" id="diag-counts"></span>
+        </label>
+        <ul class="a-diags" id="diag-list"></ul>
+      </section>
+
+      <section class="a-block">
+        <label class="a-label">Log</label>
+        <div id="log" class="a-log">Waiting for the LazyLord bridge…</div>
+      </section>
+    </main>
+
+    <footer class="a-foot">
+      <span>Bridge: <code>ws://127.0.0.1:7878</code></span>
+      <span>data stays on this machine</span>
+    </footer>
+  </div>
 
   <script src="./js/csinterface.js"></script>
   <script src="./js/main.js"></script>

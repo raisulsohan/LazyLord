@@ -23,6 +23,8 @@
 
 import type {
   Affine,
+  BlendMode,
+  Effect,
   Box,
   ClipPath,
   Diagnostic,
@@ -41,6 +43,7 @@ import type {
 } from "@lazylord/core";
 import {
   applyAffine,
+  blendModeFrom,
   bakeSubPaths,
   cloneSubPaths,
   curveBounds,
@@ -65,8 +68,13 @@ import {
   transformSubPaths,
   unionBoxes,
 } from "@lazylord/core";
+import { buildDocument as buildFromIr } from "./build";
 
-figma.showUI(__html__, { width: 320, height: 540, themeColors: true });
+/** The window opens at this, and never goes under MIN_SIZE however it is dragged. */
+const DEFAULT_SIZE = { width: 320, height: 540 };
+const MIN_SIZE = { width: 300, height: 360 };
+
+figma.showUI(__html__, { width: DEFAULT_SIZE.width, height: DEFAULT_SIZE.height, themeColors: true });
 
 // ---------------------------------------------------------------------------
 // Selection tracking
@@ -102,15 +110,42 @@ type Place = "auto" | "frame" | "open";
 const PLACES: Place[] = ["auto", "frame", "open"];
 const DEFAULT_PLACE: Place = "auto";
 
-type Prefs = { target: string; scale: number; layout: "split" | "combine"; hierarchy: "flatten" | "groups"; place: Place };
+type Prefs = {
+  target: string;
+  scale: number;
+  /** The size the user last dragged the window to. */
+  width: number;
+  height: number;
+  layout: "split" | "combine";
+  hierarchy: "flatten" | "groups";
+  existing: "add" | "update";
+  keyframes: "auto" | "always";
+  place: Place;
+};
 
 function cleanPrefs(raw: any): Prefs {
   const target = raw && typeof raw.target === "string" ? raw.target : "";
   const scale = raw ? Number(raw.scale) : NaN;
-  // Unknown or missing choices fall back to the defaults (split, flatten, auto).
+  // Unknown or missing choices fall back to the defaults (split, flatten, add, auto).
   const options = transferOptions({ options: raw || undefined });
   const place: Place = raw && PLACES.indexOf(raw.place) >= 0 ? raw.place : DEFAULT_PLACE;
-  return { target, scale: SCALES.indexOf(scale) >= 0 ? scale : DEFAULT_SCALE, layout: options.layout, hierarchy: options.hierarchy, place };
+  return {
+    target,
+    scale: SCALES.indexOf(scale) >= 0 ? scale : DEFAULT_SCALE,
+    width: size(raw && raw.width, DEFAULT_SIZE.width, MIN_SIZE.width),
+    height: size(raw && raw.height, DEFAULT_SIZE.height, MIN_SIZE.height),
+    layout: options.layout,
+    hierarchy: options.hierarchy,
+    existing: options.existing,
+    keyframes: options.keyframes,
+    place,
+  };
+}
+
+/** A stored window dimension, or the default when it is missing or silly. */
+function size(raw: unknown, fallback: number, min: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= min ? Math.round(n) : fallback;
 }
 
 async function postPrefs(): Promise<void> {
@@ -120,7 +155,14 @@ async function postPrefs(): Promise<void> {
   } catch {
     /* storage unavailable: the defaults stand */
   }
-  figma.ui.postMessage({ type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy, place: prefs.place });
+  // The window opens at its default and is put back to the size the user left
+  // it at, because prefs only arrive after showUI has already run.
+  try {
+    figma.ui.resize(prefs.width, prefs.height);
+  } catch {
+    /* an unusable stored size is not worth failing the plugin over */
+  }
+  figma.ui.postMessage({ type: "prefs", target: prefs.target, scale: prefs.scale, layout: prefs.layout, hierarchy: prefs.hierarchy, place: prefs.place, width: prefs.width, height: prefs.height });
 }
 
 async function savePrefs(raw: any): Promise<void> {
@@ -159,6 +201,18 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
     } catch (e) {
       figma.ui.postMessage({ type: "error", message: (e as Error).message || String(e) });
     }
+  } else if (msg.type === "receive") {
+    // A transfer from another app: rebuild it on the current page.
+    try {
+      const result = await buildFromIr(msg.document as Document);
+      figma.ui.postMessage({ type: "built", id: msg.id, result });
+    } catch (e) {
+      figma.ui.postMessage({
+        type: "built",
+        id: msg.id,
+        result: { ok: false, layersCreated: 0, message: (e as Error).message || String(e), diagnostics: [] }
+      });
+    }
   } else if (msg.type === "prefs") {
     await savePrefs(msg);
   } else if (msg.type === "ready") {
@@ -168,7 +222,9 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
   } else if (msg.type === "notify") {
     figma.notify(msg.message, { error: !!msg.error });
   } else if (msg.type === "resize") {
-    figma.ui.resize(Math.max(300, msg.width | 0), Math.max(360, msg.height | 0));
+    // No upper bound of our own: Figma already caps a plugin window to its
+    // own window, and the point of the grip is that the user decides.
+    figma.ui.resize(Math.max(MIN_SIZE.width, msg.width | 0), Math.max(MIN_SIZE.height, msg.height | 0));
   } else if (msg.type === "close") {
     figma.closePlugin();
   }
@@ -275,6 +331,9 @@ async function buildDocument(
     // own origin; placeOnArtboard switches to the top-level frame's space.
     originSpace: "canvas",
     layers,
+    // Node ids repeat across files, so a target that remembers what it built
+    // needs to know which file they came from.
+    sourceKey: sourceKey(),
     // Auto and frame-size both ask for a new document; the transfer options
     // the UI adds keep this field (see ui.ts).
     options: { destination: place === "open" ? "active" : "new" },
@@ -287,6 +346,26 @@ async function buildDocument(
   if (single && (place === "auto" || doc.originSpace !== "document")) placeOnOwnFrame(doc, single, ctx);
   if (ctx.diag.list.length) doc.diagnostics = ctx.diag.list;
   return doc;
+}
+
+/**
+ * What tells this Figma file apart from every other one, so a target can match
+ * a node id back to the thing it came from. `fileKey` is the file's own
+ * identifier but is only readable with the right permission, so the document
+ * root's id stands in for it; either is stable for the life of the file.
+ */
+function sourceKey(): string {
+  try {
+    const key = (figma as unknown as { fileKey?: string }).fileKey;
+    if (key) return key;
+  } catch {
+    // Reading fileKey without permission throws; the root id works just as well.
+  }
+  try {
+    return figma.root.id || "";
+  } catch {
+    return "";
+  }
 }
 
 // --- Traversal ------------------------------------------------------------
@@ -366,7 +445,6 @@ async function collectNode(node: SceneNode, ctx: Ctx, out: Layer[]): Promise<voi
   if (node.type === "SLICE") return; // an export region, not artwork
   if (ctx.clip && ctx.clip.empty) return; // clipped away entirely
 
-  noteBlend(node, ctx);
 
   if (CONTAINER_TYPES.has(node.type)) {
     await collectContainer(node, ctx, out);
@@ -388,7 +466,6 @@ async function collectNode(node: SceneNode, ctx: Ctx, out: Layer[]): Promise<voi
   if (GEOMETRY_TYPES.has(node.type)) {
     const layer = vectorLayer(node, ctx);
     if (layer) {
-      noteEffects(node, ctx);
       out.push(layer);
       return;
     }
@@ -422,7 +499,6 @@ async function collectNode(node: SceneNode, ctx: Ctx, out: Layer[]): Promise<voi
  */
 async function collectContainer(node: SceneNode, ctx: Ctx, out: Layer[]): Promise<void> {
   const any = node as any;
-  noteEffects(node, ctx);
 
   const children = (any.children || []) as readonly SceneNode[];
   const content: Layer[] = [];
@@ -440,7 +516,7 @@ async function collectContainer(node: SceneNode, ctx: Ctx, out: Layer[]): Promis
   if (own.below) members.push(own.below);
   for (const layer of content) members.push(layer);
   if (own.above) members.push(own.above);
-  if (members.length) out.push(groupLayer(node, members));
+  if (members.length) out.push(groupLayer(node, members, ctx));
 }
 
 /**
@@ -450,7 +526,7 @@ async function collectContainer(node: SceneNode, ctx: Ctx, out: Layer[]): Promis
  * a rotated frame's contents are already baked or carry their own rotation.
  * The clip lives on the leaves, which each carry their own copy.
  */
-function groupLayer(node: SceneNode, children: Layer[]): GroupLayer {
+function groupLayer(node: SceneNode, children: Layer[], ctx: Ctx): GroupLayer {
   const any = node as any;
   const b = groupBox(children);
   return {
@@ -459,7 +535,8 @@ function groupLayer(node: SceneNode, children: Layer[]): GroupLayer {
     type: "group",
     frame: { x: b.x, y: b.y, width: b.width, height: b.height, rotation: 0, opacity: num(any.opacity, 1) },
     visible: true,
-    blendMode: typeof any.blendMode === "string" ? any.blendMode : undefined,
+    blendMode: readBlend(node, ctx),
+    effects: readEffects(node, ctx),
     children,
   };
 }
@@ -572,7 +649,8 @@ function vectorLayer(node: SceneNode, ctx: Ctx, opts: VectorOptions = {}): Vecto
       opacity: opts.opacity !== undefined ? opts.opacity : num(any.opacity, 1),
     },
     visible: true,
-    blendMode: typeof any.blendMode === "string" ? any.blendMode : undefined,
+    blendMode: readBlend(node, ctx),
+    effects: readEffects(node, ctx),
     subpaths: baked.subpaths,
     fills,
     strokes,
@@ -826,7 +904,6 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
     if (vec) {
       warn(ctx, node.name, `Text mixes ${listing(mixed)}, so it was converted to outlines to keep its look`, "approximated");
       if (mixedFills) warn(ctx, node.name, "Outlined text is filled with the colour of its first character", "approximated");
-      noteEffects(node, ctx);
       return vec;
     }
     const img = await nodeToImage(node, ctx);
@@ -856,7 +933,6 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
 
   const color = textColour(node, ctx);
   if (visiblePaints(any.strokes).length) warn(ctx, node.name, "Text stroke is not transferred", "skipped");
-  noteEffects(node, ctx);
 
   const letterSpacing = spacingToPx(node.letterSpacing as LetterSpacing, fontSize);
   const lineHeight = lineHeightToPx(node.lineHeight as LineHeight, fontSize);
@@ -883,7 +959,8 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
     type: "text",
     frame,
     visible: true,
-    blendMode: node.blendMode,
+    blendMode: readBlend(node, ctx),
+    effects: readEffects(node, ctx),
     characters: node.characters,
     fontFamily: fn.family,
     fontStyle: fn.style,
@@ -982,7 +1059,10 @@ async function nodeToImage(node: SceneNode, ctx: Ctx): Promise<ImageLayer | null
     type: "image",
     frame,
     visible: true,
-    blendMode: typeof any.blendMode === "string" ? any.blendMode : undefined,
+    // Blend mode still travels: an export renders the node, not how it
+    // composites with what is under it. Effects do not — they are already in
+    // these pixels, and sending them too would draw every shadow twice.
+    blendMode: readBlend(node, ctx),
     pngBase64: figma.base64Encode(bytes),
     pixelWidth: size ? size.width : Math.max(1, Math.round(frame.width * ctx.scale)),
     pixelHeight: size ? size.height : Math.max(1, Math.round(frame.height * ctx.scale)),
@@ -1273,22 +1353,61 @@ function visibleEffects(node: SceneNode): any[] {
   return Array.isArray(effects) ? effects.filter((e: any) => e && e.visible !== false) : [];
 }
 
-/** Effects are only kept by rasterising; vectors, text and containers lose them. */
-function noteEffects(node: SceneNode, ctx: Ctx) {
-  const names: string[] = [];
+/**
+ * Figma effects as IR effects. Drop shadows, inner shadows and layer blurs
+ * have a shared vocabulary; a background blur has no equivalent outside Figma,
+ * and anything else Figma grows later is reported rather than guessed at.
+ */
+function readEffects(node: SceneNode, ctx: Ctx): Effect[] | undefined {
+  const out: Effect[] = [];
+  const unsupported: string[] = [];
+
   for (const e of visibleEffects(node)) {
-    const label = EFFECT_LABELS[e.type] || typeLabel(String(e.type));
-    if (names.indexOf(label) < 0) names.push(label);
+    const radius = Number(e.radius) || 0;
+    if (e.type === "DROP_SHADOW" || e.type === "INNER_SHADOW") {
+      out.push({
+        kind: e.type === "DROP_SHADOW" ? "drop-shadow" : "inner-shadow",
+        color: rgbaOf(e.color),
+        offset: { x: Number(e.offset && e.offset.x) || 0, y: Number(e.offset && e.offset.y) || 0 },
+        radius,
+        spread: Number(e.spread) || 0,
+      });
+    } else if (e.type === "LAYER_BLUR") {
+      out.push({ kind: "layer-blur", radius });
+    } else if (e.type === "BACKGROUND_BLUR") {
+      out.push({ kind: "background-blur", radius });
+    } else {
+      const label = EFFECT_LABELS[e.type] || typeLabel(String(e.type));
+      if (unsupported.indexOf(label) < 0) unsupported.push(label);
+    }
   }
-  if (names.length) warn(ctx, node.name, `Effects are not transferred: ${names.join(", ")}`, "skipped");
+
+  if (unsupported.length) {
+    warn(ctx, node.name, `Effects with no equivalent elsewhere are not transferred: ${unsupported.join(", ")}`, "skipped");
+  }
+  return out.length ? out : undefined;
 }
 
-function noteBlend(node: SceneNode, ctx: Ctx) {
-  const mode = (node as any).blendMode;
-  if (typeof mode === "string" && mode !== "NORMAL" && mode !== "PASS_THROUGH") {
-    const label = typeLabel(mode);
-    warn(ctx, node.name, `Blend mode "${label.charAt(0).toUpperCase() + label.slice(1)}" is sent but may be drawn as Normal`, "approximated");
+/** A Figma RGBA (0..1, alpha optional) as the IR's. */
+function rgbaOf(c: any): RGBA {
+  return {
+    r: Number(c && c.r) || 0,
+    g: Number(c && c.g) || 0,
+    b: Number(c && c.b) || 0,
+    a: c && typeof c.a === "number" ? c.a : 1,
+  };
+}
+
+/** The node's blend mode in the IR's vocabulary, or undefined for Normal. */
+function readBlend(node: SceneNode, ctx: Ctx): BlendMode | undefined {
+  const raw = (node as any).blendMode;
+  if (typeof raw !== "string") return undefined;
+  const mode = blendModeFrom(raw);
+  if (mode === null) {
+    warn(ctx, node.name, `Blend mode "${typeLabel(raw)}" has no equivalent elsewhere, so the layer is drawn as Normal`, "approximated");
+    return undefined;
   }
+  return mode === "normal" ? undefined : mode;
 }
 
 // --- Small helpers ----------------------------------------------------------

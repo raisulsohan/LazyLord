@@ -9,3 +9,5 @@ packages/figma-plugin/build/
 packages/**/dist/
 .lazylord-tmp/
 .claude/
+# Synced from packages/ui-kit/lazylord.css by tools/sync-ui-css.mjs
+packages/adobe-cep/css/

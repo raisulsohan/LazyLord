@@ -35,9 +35,15 @@ writeFileSync(
   ["ir", "protocol", "geometry", "svg-path"].map((m) => `export * from "../core-esm/${m}.ts";\n`).join("")
 );
 const pluginSrc = join(root, "packages", "figma-plugin", "src");
-for (const f of ["code.ts", "ui.ts"]) {
+for (const f of ["code.ts", "ui.ts", "build.ts"]) {
   const src = readFileSync(join(pluginSrc, f), "utf8");
-  writeFileSync(join(figmaEsm, f), src.replace(/from\s+"@lazylord\/core"/g, 'from "./core.ts"'));
+  writeFileSync(
+    join(figmaEsm, f),
+    src
+      .replace(/from\s+"@lazylord\/core"/g, 'from "./core.ts"')
+      // Node needs the file extension the bundler adds for us.
+      .replace(/from\s+"\.\/build"/g, 'from "./build.ts"')
+  );
 }
 
 const G = await import(pathToFileURL(join(coreEsm, "geometry.ts")).href);
@@ -376,6 +382,57 @@ const SAMPLES = [[0, 0], [1, 0], [1, 1], [0, 1], [0.5, 0.5], [0.2, 0.9], [0.7, 0
   ok("options: unknown values -> the defaults", junk.layout === "split" && junk.hierarchy === "flatten");
   const jsx = LL.options({ options: { layout: "combine" } });
   ok("options: LazyLord.options (ExtendScript) agrees", jsx.layout === "combine" && jsx.hierarchy === "flatten");
+
+  // Phase 3: updating what an earlier transfer built.
+  ok("options: none -> Add + Auto keys", none.existing === "add" && none.keyframes === "auto");
+  const upd = IR.transferOptions({ options: { existing: "update", keyframes: "always" } });
+  ok("options: Update + Always kept", upd.existing === "update" && upd.keyframes === "always");
+  const bad = IR.transferOptions({ options: { existing: "replace", keyframes: "sometimes" } });
+  ok("options: unknown update values -> the defaults", bad.existing === "add" && bad.keyframes === "auto");
+  const jsxUpd = LL.options({ options: { existing: "update", keyframes: "always" } });
+  ok("options: LazyLord.options agrees on updating",
+     jsxUpd.existing === "update" && jsxUpd.keyframes === "always");
+
+  // There is nothing to update in a document that does not exist yet.
+  ok("options: Update into a new document is not an update",
+     LL.wantsUpdate({ options: { existing: "update", destination: "new" } }) === false);
+  ok("options: Update into the open document is",
+     LL.wantsUpdate({ options: { existing: "update" } }) === true);
+  ok("options: Add is never an update", LL.wantsUpdate({ options: {} }) === false);
+}
+
+// Layer tags: the mapping between a source object and what was built from it.
+{
+  const doc = { source: "figma", sourceKey: "file-A" };
+  const key = LL.tagKey(doc, { id: "1:42" });
+  ok("tag: key is app|document|id", key === "figma|file-A|1:42", key);
+  ok("tag: a role separates several layers built from one object",
+     LL.tagKey(doc, { id: "1:42" }, "stroke") === "figma|file-A|1:42#stroke");
+  ok("tag: the token wraps the key", LL.makeTag(doc, { id: "1:42" }) === "[[LazyLord figma|file-A|1:42]]");
+
+  const parsed = LL.readTag("notes\n[[LazyLord figma|file-A|1:42]]");
+  ok("tag: parsed out of surrounding text",
+     !!parsed && parsed.app === "figma" && parsed.key === "file-A" && parsed.id === "1:42");
+  ok("tag: readTagKey round-trips", LL.readTagKey(LL.makeTag(doc, { id: "1:42" })) === key);
+  ok("tag: no tag reads as null", LL.readTag("just a note") === null);
+  ok("tag: an empty field reads as null", LL.readTag("") === null && LL.readTag(undefined) === null);
+
+  // Ids that carry the separators would end the token early, so they are stripped.
+  ok("tag: separators in an id cannot break the token",
+     LL.tagKey(doc, { id: "a|b]c[d" }) === "figma|file-A|abcd");
+  ok("tag: a source with no key of its own leaves the field empty",
+     LL.tagKey({ source: "figma" }, { id: "x" }) === "figma||x");
+
+  // The field belongs to the user; the tag only rents a line of it.
+  const mine = "my own note";
+  const tagged = LL.withTag(mine, "[[LazyLord figma|f|1]]");
+  ok("tag: withTag keeps the user's text", tagged.indexOf(mine) === 0);
+  const again = LL.withTag(tagged, "[[LazyLord figma|f|2]]");
+  ok("tag: re-tagging replaces rather than stacking",
+     again.indexOf("figma|f|1") < 0 && again.indexOf("figma|f|2") > 0);
+  ok("tag: stripTag gives the field back", LL.stripTag(again) === mine, LL.stripTag(again));
+  ok("tag: withTag on an empty field is just the tag",
+     LL.withTag("", "[[LazyLord figma|f|1]]") === "[[LazyLord figma|f|1]]");
 }
 
 // Layer trees: what a layer shows, group frames, moving a tree, counting leaves.
@@ -448,6 +505,178 @@ globalThis.figma = {
   base64Encode: (bytes) => Buffer.from(bytes).toString("base64"),
 };
 
+
+// ---------------------------------------------------------------------------
+// The creating half of the Figma API, for build.ts
+//
+// The reader half above only ever looks at a scene graph; the builder makes
+// one. These are the node types it creates, with just enough behaviour to be
+// worth asserting against: children that know their parent, a box that
+// vectorPaths sizes, and fonts that have to be loaded before text will take
+// them — which is the rule the builder is written around.
+// ---------------------------------------------------------------------------
+
+/** Fonts this mock pretends are installed. */
+const INSTALLED_FONTS = new Set(["Inter|Regular", "Inter|Bold", "Futura|Bold"]);
+const loadedFonts = new Set();
+const createdImages = [];
+
+let nextNodeId = 1000;
+
+function detach(n) {
+  if (n.parent && n.parent.children) {
+    const i = n.parent.children.indexOf(n);
+    if (i >= 0) n.parent.children.splice(i, 1);
+  }
+  n.parent = null;
+}
+
+function makeNode(type, extra = {}) {
+  const n = {
+    type,
+    id: `${nextNodeId++}:1`,
+    name: "",
+    parent: null,
+    visible: true,
+    opacity: 1,
+    rotation: 0,
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+    fills: [],
+    strokes: [],
+    strokeWeight: 1,
+    removed: false,
+    resize(w, h) {
+      this.width = w;
+      this.height = h;
+    },
+    remove() {
+      detach(this);
+      this.removed = true;
+    },
+  };
+  // Descriptors, not a spread: a spread would copy an accessor's current
+  // VALUE and quietly drop the getter and setter with it.
+  Object.defineProperties(n, Object.getOwnPropertyDescriptors(extra));
+  return n;
+}
+
+function withChildren(n) {
+  n.children = [];
+  n.appendChild = function (child) {
+    detach(child);
+    child.parent = this;
+    this.children.push(child);
+  };
+  return n;
+}
+
+/** The box an SVG path string covers, so a vector has a size like the real one. */
+function pathBox(data) {
+  const nums = String(data).match(/-?\d+(?:\.\d+)?/g) || [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (let i = 0; i + 1 < nums.length; i += 2) {
+    const x = Number(nums[i]);
+    const y = Number(nums[i + 1]);
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  if (!Number.isFinite(minX)) return { width: 0, height: 0 };
+  return { width: maxX - minX, height: maxY - minY };
+}
+
+page.appendChild = function (child) {
+  detach(child);
+  child.parent = page;
+  page.children.push(child);
+};
+
+Object.assign(globalThis.figma, {
+  base64Decode: (s) => new Uint8Array(Buffer.from(s, "base64")),
+
+  async loadFontAsync(font) {
+    const key = `${font.family}|${font.style}`;
+    if (!INSTALLED_FONTS.has(key)) throw new Error(`font ${font.family} ${font.style} is not available`);
+    loadedFonts.add(key);
+  },
+
+  createImage(bytes) {
+    if (!bytes || !bytes.length) throw new Error("empty image");
+    const image = { hash: `img-${createdImages.length}`, bytes };
+    createdImages.push(image);
+    return image;
+  },
+
+  createVector() {
+    const n = makeNode("VECTOR", {
+      _vectorPaths: [],
+      get vectorPaths() {
+        return this._vectorPaths;
+      },
+      set vectorPaths(v) {
+        this._vectorPaths = v;
+        const box = pathBox(v && v[0] ? v[0].data : "");
+        this.width = box.width;
+        this.height = box.height;
+      },
+      isMask: false,
+      strokeCap: "NONE",
+      strokeJoin: "MITER",
+      strokeAlign: "CENTER",
+      dashPattern: [],
+    });
+    return n;
+  },
+
+  createRectangle() {
+    return makeNode("RECTANGLE");
+  },
+
+  createText() {
+    return makeNode("TEXT", {
+      _fontName: { family: "Inter", style: "Regular" },
+      characters: "",
+      fontSize: 12,
+      letterSpacing: { unit: "PIXELS", value: 0 },
+      lineHeight: { unit: "AUTO" },
+      textAlignHorizontal: "LEFT",
+      get fontName() {
+        return this._fontName;
+      },
+      set fontName(f) {
+        // Figma refuses a font that has not been loaded.
+        const key = `${f.family}|${f.style}`;
+        if (!loadedFonts.has(key)) throw new Error(`font ${f.family} ${f.style} is not loaded`);
+        this._fontName = f;
+        this.height = this.fontSize;
+      },
+    });
+  },
+
+  createFrame() {
+    return withChildren(makeNode("FRAME", { clipsContent: false }));
+  },
+
+  group(nodes, parent) {
+    if (!nodes || nodes.length === 0) throw new Error("cannot group nothing");
+    const g = withChildren(makeNode("GROUP"));
+    for (const n of nodes) g.appendChild(n);
+    parent.appendChild(g);
+    return g;
+  },
+
+  viewport: { scrollAndZoomIntoView() {} },
+});
+
+/** Reset the page between builder cases. */
+function resetPage() {
+  page.children.length = 0;
+  page.selection = [];
+  loadedFonts.clear();
+  createdImages.length = 0;
+}
 /** An 8-byte PNG signature plus an IHDR chunk, enough for pngSize(). */
 function fakePng(w, h) {
   const b = new Uint8Array(33);
@@ -1083,15 +1312,31 @@ const frameNode = (name, w, h, t, props = {}) =>
 
 // Diagnostics.
 {
-  const shadow = rectNode(10, 10, T(0), { name: "Shadowed", effects: [{ type: "DROP_SHADOW", visible: true }, { type: "LAYER_BLUR", visible: false }] });
+  const shadow = rectNode(10, 10, T(0), { name: "Shadowed", effects: [
+    { type: "DROP_SHADOW", visible: true, color: { r: 0, g: 0, b: 0, a: 0.5 }, offset: { x: 2, y: 4 }, radius: 6, spread: 1 },
+    { type: "LAYER_BLUR", visible: false, radius: 9 },
+    { type: "NOISE", visible: true },
+  ] });
   const multiply = rectNode(10, 10, T(0), { name: "Multiply", blendMode: "MULTIPLY" });
   const inside = rectNode(10, 10, T(0), { name: "Inside", strokes: [solid(0, 0, 0)], strokeAlign: "INSIDE" });
   const twoFills = rectNode(10, 10, T(0), { name: "Two", fills: [solid(1, 0, 0), solid(0, 1, 0)] });
   const mixedText = textNode(100, 20, T(0), { name: "Mixed", fontSize: figma.mixed });
   const imageFrame = mk("FRAME", { name: "Hero", fillGeometry: rectPath(100, 100), cornerRadius: 0, fills: [{ type: "IMAGE", visible: true }], children: [] });
   const doc = await docFor([shadow, multiply, inside, twoFills, mixedText, imageFrame]);
-  ok("diag: effects skipped, hidden ones ignored", diag(doc, "Shadowed", "skipped", "drop shadow") && !diag(doc, "Shadowed", "skipped", "blur"));
-  ok("diag: blend mode approximated", diag(doc, "Multiply", "approximated", "Multiply"));
+  // Effects and blend modes travel now; only what has no equivalent is reported.
+  const shadowed = doc.layers.find((l) => l.name === "Shadowed");
+  ok("effects: a visible drop shadow travels",
+     shadowed && shadowed.effects && shadowed.effects.length === 1 &&
+     shadowed.effects[0].kind === "drop-shadow", JSON.stringify(shadowed && shadowed.effects));
+  ok("effects: with its colour, offset, radius and spread",
+     shadowed && near(shadowed.effects[0].color.a, 0.5) && near(shadowed.effects[0].offset.y, 4) &&
+     near(shadowed.effects[0].radius, 6) && near(shadowed.effects[0].spread, 1),
+     JSON.stringify(shadowed && shadowed.effects[0]));
+  ok("effects: a hidden one is left out", !diag(doc, "Shadowed", "skipped", "blur"));
+  ok("effects: one with no equivalent is reported", diag(doc, "Shadowed", "skipped", "no equivalent"));
+  ok("blend: the mode travels rather than being reported",
+     doc.layers.find((l) => l.name === "Multiply").blendMode === "multiply" &&
+     !diag(doc, "Multiply", "approximated", "Multiply"));
   ok("diag: inside stroke approximated", diag(doc, "Inside", "approximated", "Inside stroke"));
   ok("diag: extra fills approximated", diag(doc, "Two", "approximated", "2 visible fills"));
   ok("diag: mixed text outlined", diag(doc, "Mixed", "approximated", "outlines") && doc.layers.some((l) => l.name === "Mixed (outlined)" && l.type === "vector"));
@@ -1647,6 +1892,276 @@ await block("ui, late prefs", async () => {
   ok("ui: late prefs never override the user's choice", ui.$("#hierarchy").value === "groups" && ui.$("#layout").value === "split");
 });
 
+
+// ---------------------------------------------------------------------------
+// The Figma builder: IR back into Figma nodes
+//
+// This is the direction that did not exist until the ecosystem was squared up.
+// It shares the IR's y-down space, so there is no flip to check; what there is
+// instead is geometry going in as SVG path data rather than vertices, and a
+// font rule that makes the whole build async.
+// ---------------------------------------------------------------------------
+{
+  const B = await import(pathToFileURL(join(figmaEsm, "build.ts")).href);
+
+  const irVec = (id, x, y, w, h, extra = {}) => ({
+    id,
+    name: id,
+    type: "vector",
+    frame: { x, y, width: w, height: h, rotation: 0, opacity: 1 },
+    subpaths: G.rectToSubPaths({ x: 0, y: 0, width: w, height: h }),
+    fills: [{ type: "solid", color: { r: 1, g: 0, b: 0, a: 1 } }],
+    strokes: [],
+    windingRule: "nonzero",
+    ...extra,
+  });
+
+  const irDoc = (layers, extra = {}) => ({
+    version: "1.0",
+    source: "illustrator",
+    name: "Art",
+    bounds: { x: 0, y: 0, width: 200, height: 100 },
+    originSpace: "canvas",
+    layers,
+    ...extra,
+  });
+
+  const byType = (t) => page.children.filter((n) => n.type === t);
+
+  // A vector arrives as a real VECTOR node, drawn from path data.
+  {
+    resetPage();
+    const r = await B.buildDocument(irDoc([irVec("Box", 10, 20, 100, 50)]));
+    const v = page.children[0];
+
+    ok("figma build: one node on the page", page.children.length === 1 && v.type === "VECTOR", v && v.type);
+    ok("figma build: reported as created", r.ok && r.layersCreated === 1, JSON.stringify(r));
+    ok("figma build: named after the source", v.name === "Box", v.name);
+    ok("figma build: geometry went in as path data",
+       v.vectorPaths.length === 1 && /^M /.test(v.vectorPaths[0].data), JSON.stringify(v.vectorPaths));
+    ok("figma build: the path covers the frame", near(v.width, 100) && near(v.height, 50),
+       `${v.width}x${v.height}`);
+    ok("figma build: placed at the frame", near(v.x, 10) && near(v.y, 20), `${v.x},${v.y}`);
+    ok("figma build: solid fill", v.fills.length === 1 && v.fills[0].type === "SOLID" &&
+       near(v.fills[0].color.r, 1), JSON.stringify(v.fills));
+    ok("figma build: what arrived is selected", page.selection.length === 1 && page.selection[0] === v);
+  }
+
+  // Contours survive the trip out and back: SVG is only a carrier.
+  {
+    const round = G.rectToSubPaths({ x: 0, y: 0, width: 40, height: 20 });
+    const there = G.subPathsToSvg(round);
+    const back = P.parseSvgPath(there);
+    ok("figma build: subpaths -> SVG -> subpaths keeps the vertices",
+       back.length === 1 && back[0].vertices.length === round[0].vertices.length &&
+       near(back[0].vertices[2][0], round[0].vertices[2][0]) &&
+       near(back[0].vertices[2][1], round[0].vertices[2][1]),
+       there);
+    ok("figma build: and keeps it closed", back[0].closed === round[0].closed);
+
+    // A curve's handles have to survive too, not just its anchors.
+    const curved = [{
+      closed: false,
+      vertices: [[0, 0], [50, 0]],
+      inTangents: [[0, 0], [-10, 5]],
+      outTangents: [[10, -5], [0, 0]],
+    }];
+    const rt = P.parseSvgPath(G.subPathsToSvg(curved));
+    ok("figma build: bezier handles survive the round trip",
+       near(rt[0].outTangents[0][0], 10) && near(rt[0].outTangents[0][1], -5) &&
+       near(rt[0].inTangents[1][0], -10) && near(rt[0].inTangents[1][1], 5),
+       G.subPathsToSvg(curved));
+  }
+
+  // Text needs its font loaded first; one Figma does not have falls back.
+  {
+    resetPage();
+    const text = (family, style) => ({
+      id: "T", name: "Title", type: "text",
+      frame: { x: 5, y: 5, width: 80, height: 20, rotation: 0, opacity: 1 },
+      characters: "Hello", fontFamily: family, fontStyle: style, fontSize: 20,
+      color: { r: 0, g: 0, b: 1, a: 1 },
+    });
+
+    const r = await B.buildDocument(irDoc([text("Futura", "Bold")]));
+    const t = page.children[0];
+    ok("figma text: a TEXT node", t.type === "TEXT", t.type);
+    ok("figma text: the font it asked for", t.fontName.family === "Futura" && t.fontName.style === "Bold",
+       JSON.stringify(t.fontName));
+    ok("figma text: contents and size", t.characters === "Hello" && near(t.fontSize, 20));
+    ok("figma text: colour", t.fills[0].type === "SOLID" && near(t.fills[0].color.b, 1));
+    ok("figma text: no fallback needed", r.diagnostics.length === 0, JSON.stringify(r.diagnostics));
+
+    resetPage();
+    const r2 = await B.buildDocument(irDoc([text("Comic Sans MS", "Regular")]));
+    const t2 = page.children[0];
+    ok("figma text: a missing font falls back to Inter",
+       t2.fontName.family === "Inter", JSON.stringify(t2.fontName));
+    ok("figma text: and says so once", r2.diagnostics.length === 1 &&
+       /not available here/.test(r2.diagnostics[0].reason), JSON.stringify(r2.diagnostics));
+    ok("figma text: the text still arrived", t2.characters === "Hello");
+  }
+
+  // A baseline places the box above it; without one the frame is used as sent.
+  {
+    resetPage();
+    const withBase = {
+      id: "T", name: "T", type: "text",
+      frame: { x: 0, y: 0, width: 50, height: 20, rotation: 0, opacity: 1 },
+      characters: "Hi", fontFamily: "Inter", fontStyle: "Regular", fontSize: 20,
+      color: { r: 0, g: 0, b: 0, a: 1 }, baseline: 40, anchorX: 0,
+    };
+    await B.buildDocument(irDoc([withBase]));
+    const t = page.children[0];
+    ok("figma text: a known baseline puts the box above it", near(t.y, 40 - t.height * 0.8),
+       `${t.y} (h ${t.height})`);
+  }
+
+  // Images come as bytes, because a plugin cannot open a file.
+  {
+    resetPage();
+    const img = (extra) => ({
+      id: "I", name: "Shot", type: "image",
+      frame: { x: 0, y: 0, width: 60, height: 40, rotation: 0, opacity: 1 },
+      pixelWidth: 60, pixelHeight: 40, ...extra,
+    });
+
+    const r = await B.buildDocument(irDoc([img({ pngBase64: Buffer.from("png").toString("base64") })]));
+    const n = page.children[0];
+    ok("figma image: a rectangle with an image fill",
+       n.type === "RECTANGLE" && n.fills[0].type === "IMAGE", n.type + " " + JSON.stringify(n.fills));
+    ok("figma image: sized to the frame", near(n.width, 60) && near(n.height, 40));
+    ok("figma image: created once", r.layersCreated === 1);
+
+    resetPage();
+    const r2 = await B.buildDocument(irDoc([img({ filePath: "C:/x/y.png" })]));
+    ok("figma image: a bare file path cannot be read, and says so",
+       page.children.length === 0 && r2.diagnostics.length === 1 &&
+       /cannot read/.test(r2.diagnostics[0].reason), JSON.stringify(r2.diagnostics));
+  }
+
+  // Groups become real groups; a clip becomes the mask Figma expects.
+  {
+    resetPage();
+    const group = {
+      id: "G", name: "Card", type: "group",
+      frame: { x: 0, y: 0, width: 100, height: 100, rotation: 0, opacity: 0.5 },
+      children: [irVec("A", 0, 0, 40, 40), irVec("B", 50, 0, 40, 40)],
+    };
+    await B.buildDocument(irDoc([group]));
+    const g = page.children[0];
+    ok("figma group: a GROUP node", g.type === "GROUP", g.type);
+    ok("figma group: holds both layers", g.children.length === 2, String(g.children.length));
+    ok("figma group: keeps its opacity", near(g.opacity, 0.5), String(g.opacity));
+
+    resetPage();
+    const clipped = {
+      ...group,
+      clip: { id: "c", subpaths: G.rectToSubPaths({ x: 0, y: 0, width: 60, height: 60 }) },
+    };
+    await B.buildDocument(irDoc([clipped]));
+    const g2 = page.children[0];
+    ok("figma clip: a mask leads the group",
+       g2.children.length === 3 && g2.children[0].isMask === true, String(g2.children.length));
+    ok("figma clip: the mask is a vector at the origin",
+       g2.children[0].type === "VECTOR" && near(g2.children[0].x, 0) && near(g2.children[0].y, 0));
+  }
+
+  // A "new document" transfer lands in a frame of its own, sized to the page.
+  {
+    resetPage();
+    const r = await B.buildDocument(irDoc([irVec("Box", 0, 0, 50, 50)], {
+      originSpace: "document",
+      canvas: { width: 800, height: 600, name: "Artboard 1" },
+      options: { destination: "new" },
+    }));
+    const f = page.children[0];
+    ok("figma frame: one frame on the page", page.children.length === 1 && f.type === "FRAME", f && f.type);
+    ok("figma frame: sized to the source page", near(f.width, 800) && near(f.height, 600),
+       `${f.width}x${f.height}`);
+    ok("figma frame: named after it", f.name === "Artboard 1", f.name);
+    ok("figma frame: the artwork went inside", f.children.length === 1 && f.children[0].name === "Box");
+    ok("figma frame: it clips, and brings no background of its own",
+       f.clipsContent === true && f.fills.length === 0);
+    ok("figma frame: reported", /new frame/.test(r.message), r.message);
+
+    // A second one is put beside the first, never on top of it.
+    const r2 = await B.buildDocument(irDoc([irVec("Box", 0, 0, 50, 50)], {
+      originSpace: "document",
+      canvas: { width: 400, height: 300, name: "Artboard 2" },
+      options: { destination: "new" },
+    }));
+    const f2 = page.children[1];
+    ok("figma frame: the next one lands clear of it", f2.x >= f.x + f.width, `${f2.x} vs ${f.x + f.width}`);
+    ok("figma frame: and is its own size", near(f2.width, 400), String(f2.width));
+    void r2;
+  }
+
+  // Gradients: the handles the IR carries put Figma's transform back.
+  {
+    resetPage();
+    const grad = {
+      type: "linear-gradient",
+      stops: [{ position: 0, color: { r: 1, g: 0, b: 0, a: 1 } },
+              { position: 1, color: { r: 0, g: 0, b: 1, a: 1 } }],
+      from: { x: 0, y: 0.5 },
+      to: { x: 1, y: 0.5 },
+    };
+    await B.buildDocument(irDoc([irVec("Bar", 0, 0, 100, 50, { fills: [grad] })]));
+    const paint = page.children[0].fills[0];
+    ok("figma gradient: a linear paint", paint.type === "GRADIENT_LINEAR", paint.type);
+    ok("figma gradient: both stops, in order",
+       paint.gradientStops.length === 2 && near(paint.gradientStops[0].color.r, 1) &&
+       near(paint.gradientStops[1].color.b, 1), JSON.stringify(paint.gradientStops));
+
+    // The transform has to read back as the handles that produced it.
+    const back = G.gradientHandlesFromTransform(paint.gradientTransform, "linear");
+    ok("figma gradient: the handles round-trip",
+       near(back.from.x, 0, 1e-6) && near(back.from.y, 0.5, 1e-6) &&
+       near(back.to.x, 1, 1e-6) && near(back.to.y, 0.5, 1e-6),
+       JSON.stringify(back));
+  }
+
+  // Every gradient the readers produce must survive that round trip, not just
+  // the axis-aligned one.
+  {
+    const cases = [
+      ["horizontal", { x: 0, y: 0.5 }, { x: 1, y: 0.5 }, "linear"],
+      ["vertical", { x: 0.5, y: 0 }, { x: 0.5, y: 1 }, "linear"],
+      ["diagonal", { x: 0.1, y: 0.2 }, { x: 0.9, y: 0.7 }, "linear"],
+      ["radial", { x: 0.5, y: 0.5 }, { x: 1, y: 0.5 }, "radial"],
+      ["off-centre radial", { x: 0.3, y: 0.4 }, { x: 0.8, y: 0.4 }, "radial"],
+    ];
+    for (const [label, from, to, kind] of cases) {
+      const t = G.gradientTransformFromHandles(from, to, kind);
+      const back = G.gradientHandlesFromTransform(t, kind);
+      ok(`figma gradient: ${label} handles round-trip`,
+         near(back.from.x, from.x, 1e-6) && near(back.from.y, from.y, 1e-6) &&
+         near(back.to.x, to.x, 1e-6) && near(back.to.y, to.y, 1e-6),
+         JSON.stringify(back));
+    }
+
+    // A zero-length gradient has no transform; the identity is safer than NaN.
+    const degenerate = G.gradientTransformFromHandles({ x: 0.5, y: 0.5 }, { x: 0.5, y: 0.5 }, "linear");
+    ok("figma gradient: a zero-length one falls back to the identity",
+       degenerate.every((row) => row.every((v) => Number.isFinite(v))), JSON.stringify(degenerate));
+  }
+
+  // A layer the builder cannot make is reported, and the rest still arrives.
+  {
+    resetPage();
+    const r = await B.buildDocument(irDoc([
+      { id: "E", name: "Empty", type: "vector", frame: { x: 0, y: 0, width: 0, height: 0 },
+        subpaths: [], fills: [], strokes: [] },
+      irVec("Good", 0, 0, 10, 10),
+    ]));
+    ok("figma build: the good layer still arrived", page.children.length === 1 &&
+       page.children[0].name === "Good", String(page.children.length));
+    ok("figma build: the empty one is reported", r.diagnostics.length === 1 &&
+       /no contours/.test(r.diagnostics[0].reason), JSON.stringify(r.diagnostics));
+    ok("figma build: counted only what was made", r.layersCreated === 1, String(r.layersCreated));
+  }
+}
 if (knownIssues.length) {
   console.log(`\nKnown issues outside this suite's files (not counted as failures):`);
   for (const k of knownIssues) console.log("  - " + k);

@@ -605,3 +605,102 @@ export function sharedArtboard<N extends ScenePathNode>(
   }
   return node ? { node, inside } : null;
 }
+
+/**
+ * The gradientTransform a Figma paint needs so that its handles land where
+ * `from`, `to` and `edge` say — the inverse of gradientHandlesFromTransform.
+ *
+ * Those three handles are the images of the gradient-space anchors under the
+ * inverse transform, so the matrix that takes the anchors to the handles is
+ * the inverse, and the transform itself is that inverted back. A degenerate
+ * set of handles (a zero-length gradient) has no inverse; the identity is
+ * returned, which paints Figma's own default gradient rather than nothing.
+ */
+export function gradientTransformFromHandles(
+  from: Vec2,
+  to: Vec2,
+  kind: "linear" | "radial",
+  edge?: Vec2
+): Affine {
+  // Anchors in gradient space, matching gradientHandlesFromTransform.
+  const a0 = kind === "radial" ? { x: 0.5, y: 0.5 } : { x: 0, y: 0.5 };
+  const a1 = kind === "radial" ? { x: 1, y: 0.5 } : { x: 1, y: 0.5 };
+  const a2 = kind === "radial" ? { x: 0.5, y: 1 } : { x: 0, y: 1 };
+
+  // Without a third handle, assume the gradient is not skewed: take the
+  // perpendicular of from->to, which is what an unrotated square box gives.
+  const third: Vec2 = edge || {
+    x: from.x - (to.y - from.y),
+    y: from.y + (to.x - from.x),
+  };
+
+  // Solve for the affine taking (a0, a1, a2) to (from, to, third). The anchor
+  // triangle is fixed and non-degenerate, so this is a plain 2x2 solve.
+  const u1 = { x: a1.x - a0.x, y: a1.y - a0.y };
+  const u2 = { x: a2.x - a0.x, y: a2.y - a0.y };
+  const v1 = { x: to.x - from.x, y: to.y - from.y };
+  const v2 = { x: third.x - from.x, y: third.y - from.y };
+
+  const det = u1.x * u2.y - u1.y * u2.x;
+  if (Math.abs(det) < EPS) return identityAffine();
+
+  const a = (v1.x * u2.y - v2.x * u1.y) / det;
+  const c = (v2.x * u1.x - v1.x * u2.x) / det;
+  const b = (v1.y * u2.y - v2.y * u1.y) / det;
+  const d = (v2.y * u1.x - v1.y * u2.x) / det;
+
+  const inverse: Affine = [
+    [a, c, from.x - (a * a0.x + c * a0.y)],
+    [b, d, from.y - (b * a0.x + d * a0.y)],
+  ];
+
+  return invertAffine(inverse) || identityAffine();
+}
+
+// ---------------------------------------------------------------------------
+// Contours out: the IR's bezier form as an SVG path
+// ---------------------------------------------------------------------------
+
+/** Trim a number for a path string: no exponent, no trailing zeros. */
+function coord(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  const r = Math.round(n * 1000) / 1000;
+  return Object.is(r, -0) ? "0" : String(r);
+}
+
+/**
+ * IR subpaths as an SVG path `d` string — the inverse of parseSvgPath, for
+ * hosts that take path data rather than vertices (Figma's `vectorPaths`).
+ *
+ * Every segment is written as a cubic, because that is what the IR stores:
+ * a straight edge is simply a cubic whose handles are both zero, and writing
+ * it as one keeps the output a faithful record of the contour rather than a
+ * re-interpretation of it.
+ */
+export function subPathsToSvg(subpaths: ReadonlyArray<SubPath>): string {
+  const out: string[] = [];
+
+  for (const sp of subpaths) {
+    const verts = sp.vertices;
+    if (!verts || verts.length === 0) continue;
+
+    out.push(`M ${coord(verts[0][0])} ${coord(verts[0][1])}`);
+
+    const last = sp.closed ? verts.length : verts.length - 1;
+    for (let i = 0; i < last; i++) {
+      const j = (i + 1) % verts.length;
+      const a = verts[i];
+      const b = verts[j];
+      const ot = sp.outTangents[i] || [0, 0];
+      const it = sp.inTangents[j] || [0, 0];
+      out.push(
+        `C ${coord(a[0] + ot[0])} ${coord(a[1] + ot[1])} ` +
+          `${coord(b[0] + it[0])} ${coord(b[1] + it[1])} ` +
+          `${coord(b[0])} ${coord(b[1])}`
+      );
+    }
+    if (sp.closed) out.push("Z");
+  }
+
+  return out.join(" ");
+}

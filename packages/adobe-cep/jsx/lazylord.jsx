@@ -77,17 +77,22 @@ LazyLord.run = function (irPath) {
 };
 
 /**
- * Push entry point: LazyLord.runRead("/tmp/dir") serialises the host's current
- * selection to <dir>/ir.json and returns a summary for the panel.
+ * Send entry point: LazyLord.runRead("/tmp/dir", opts) serialises the host's
+ * current selection to <dir>/ir.json and returns a summary for the panel.
+ *
+ * `opts` carries the choices that only matter while reading — the ones the
+ * builder never sees because they change what is written, not how it is built:
+ *   { scale }  image export scale, 1 / 2 / 3 / 4 (default 2)
  */
-LazyLord.runRead = function (outDir) {
+LazyLord.runRead = function (outDir, opts) {
   var result = { ok: false, layerCount: 0, irPath: "", message: "", diagnostics: [] };
   LazyLord.resetDiagnostics();
+  LazyLord.readOptions = LazyLord.normaliseReadOptions(opts);
   try {
     if (typeof LazyLord.readSelection !== "function") {
-      throw new Error("This application cannot push yet.");
+      throw new Error("This application cannot send yet.");
     }
-    var doc = LazyLord.readSelection(outDir);
+    var doc = LazyLord.readSelection(outDir, LazyLord.readOptions);
     if (!doc || !doc.layers || doc.layers.length === 0) {
       throw new Error("Nothing to send — select at least one object.");
     }
@@ -335,19 +340,120 @@ LazyLord.countLeaves = function (layers) {
   return n;
 };
 
+/** Image export scales a reader offers, matching the Figma plugin's. */
+LazyLord.SCALES = [1, 2, 3, 4];
+LazyLord.DEFAULT_SCALE = 2;
+
+/** Read-time options with defaults applied. Set by runRead, read by the readers. */
+LazyLord.normaliseReadOptions = function (opts) {
+  var scale = opts ? Number(opts.scale) : NaN;
+  var ok = false;
+  for (var i = 0; i < LazyLord.SCALES.length; i++) if (LazyLord.SCALES[i] === scale) ok = true;
+  return { scale: ok ? scale : LazyLord.DEFAULT_SCALE };
+};
+
+/** What runRead was last asked for; readers use it when rasterising. */
+LazyLord.readOptions = { scale: 2 };
+
 /** The document's transfer options with defaults applied (mirrors core's transferOptions). */
 LazyLord.options = function (doc) {
   var o = (doc && doc.options) || {};
   return {
     layout: o.layout === "combine" ? "combine" : "split",
     hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
-    destination: o.destination === "new" ? "new" : "active"
+    destination: o.destination === "new" ? "new" : "active",
+    existing: o.existing === "update" ? "update" : "add",
+    keyframes: o.keyframes === "always" ? "always" : "auto"
   };
 };
 
 /** True when the builder must make a new document / comp even if one is open. */
 LazyLord.wantsNewDocument = function (doc) {
   return LazyLord.options(doc).destination === "new";
+};
+
+/**
+ * True when the sender asked to update what a previous transfer built. A new
+ * document has nothing to update, so the two options cannot combine.
+ */
+LazyLord.wantsUpdate = function (doc) {
+  var o = LazyLord.options(doc);
+  return o.existing === "update" && o.destination !== "new";
+};
+
+/* -------------------------------------------------------------------------
+ * Layer tags — the mapping between a source object and what was built from it
+ *
+ * A target layer records where it came from in the one writable string its
+ * host gives every layer (an After Effects comment, an Illustrator note). The
+ * tag is a single bracketed token, so whatever else the user keeps in that
+ * field survives a re-tag untouched:
+ *
+ *   [[LazyLord figma|abc123|1:42]]
+ *            source app  |  source document  |  source layer
+ *
+ * The document key is what stops a layer id from one file matching the same id
+ * in another; when the source could not offer one it is empty, and a tag with
+ * an empty key only ever matches another empty one.
+ * ---------------------------------------------------------------------- */
+
+LazyLord.TAG_RE = /\[\[LazyLord ([a-zA-Z]+)\|([^|\]]*)\|([^\]]*)\]\]/;
+
+/** Strip the characters that would end the tag early. */
+LazyLord._tagSafe = function (s) {
+  return String(s === undefined || s === null ? "" : s).replace(/[\[\]|]/g, "");
+};
+
+/**
+ * The identity of an IR layer as an opaque string: source app, document, id.
+ * `role` separates several host layers built from one source object — After
+ * Effects splits a gradient-filled shape's stroke onto a layer of its own — so
+ * each gets its own tag and each can be updated.
+ */
+LazyLord.tagKey = function (doc, layer, role) {
+  return LazyLord._tagSafe((doc && doc.source) || "unknown") + "|" +
+         LazyLord._tagSafe(doc && doc.sourceKey) + "|" +
+         LazyLord._tagSafe(layer && layer.id) +
+         (role ? "#" + LazyLord._tagSafe(role) : "");
+};
+
+/** The token to store on a built layer. */
+LazyLord.makeTag = function (doc, layer, role) {
+  return "[[LazyLord " + LazyLord.tagKey(doc, layer, role) + "]]";
+};
+
+/** Parse a tag out of a host's comment/note field, or null when there is none. */
+LazyLord.readTag = function (text) {
+  if (!text) return null;
+  var m = LazyLord.TAG_RE.exec(String(text));
+  if (!m) return null;
+  return { app: m[1], key: m[2], id: m[3], token: m[0] };
+};
+
+/** The lookup key of whatever tag a comment/note holds, or null. */
+LazyLord.readTagKey = function (text) {
+  var t = LazyLord.readTag(text);
+  return t ? (t.app + "|" + t.key + "|" + t.id) : null;
+};
+
+/**
+ * The user's text with our tag set to `tag` — replacing an existing tag in
+ * place, or appended on its own line. Anything else in the field is kept.
+ */
+LazyLord.withTag = function (text, tag) {
+  var s = (text === undefined || text === null) ? "" : String(text);
+  var existing = LazyLord.readTag(s);
+  if (existing) return s.replace(existing.token, tag);
+  if (!s) return tag;
+  return s + "\n" + tag;
+};
+
+/** The user's text with our tag removed, trimmed of the gap it leaves. */
+LazyLord.stripTag = function (text) {
+  var s = (text === undefined || text === null) ? "" : String(text);
+  var existing = LazyLord.readTag(s);
+  if (!existing) return s;
+  return s.replace(existing.token, "").replace(/[ \t]+\n/g, "\n").replace(/^\s+|\s+$/g, "");
 };
 
 /**
@@ -384,4 +490,61 @@ LazyLord.controlPoints = function (sp, i) {
 LazyLord.pct = function (o) {
   if (o === undefined || o === null) return 100;
   return Math.max(0, Math.min(100, Math.round(o * 100)));
+};
+
+/** A blend mode's name as a label for a diagnostic ("color-dodge" -> "Color Dodge"). */
+LazyLord.blendLabel = function (mode) {
+  var parts = String(mode || "").split("-");
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i]) parts[i] = parts[i].charAt(0).toUpperCase() + parts[i].substring(1);
+  }
+  return parts.join(" ");
+};
+
+/**
+ * Apply a layer's blend mode through a host's own enum.
+ *
+ * `enumObj` is the host's blend-mode enum (Illustrator's BlendModes,
+ * Photoshop's BlendMode) and `map` turns the IR's names into its keys. A mode
+ * the host does not have, or will not take, is reported rather than guessed.
+ * Returns true when something was set.
+ */
+LazyLord.applyBlend = function (setter, layer, enumObj, map) {
+  var mode = layer.blendMode;
+  if (!mode || mode === "normal") return false;
+
+  var key = map[mode];
+  var value = (key && enumObj) ? enumObj[key] : undefined;
+  if (value === undefined) {
+    LazyLord.warn(layer.name || "Layer", "This app has no '" + LazyLord.blendLabel(mode) +
+      "' blend mode, so the layer is drawn as Normal", "approximated");
+    return false;
+  }
+  try {
+    setter(value);
+    return true;
+  } catch (e) {
+    LazyLord.warn(layer.name || "Layer", "The '" + LazyLord.blendLabel(mode) +
+      "' blend mode could not be set, so the layer is drawn as Normal", "approximated");
+    return false;
+  }
+};
+
+/**
+ * Report the effects a host cannot rebuild. Only After Effects has stock
+ * effects that match the IR's, so the others say what was lost rather than
+ * dropping it in silence.
+ */
+LazyLord.noteEffects = function (layer, why) {
+  var list = layer.effects;
+  if (!list || !list.length) return;
+
+  var names = [];
+  for (var i = 0; i < list.length; i++) {
+    var label = String(list[i] && list[i].kind ? list[i].kind : "effect").replace(/-/g, " ");
+    var seen = false;
+    for (var j = 0; j < names.length; j++) if (names[j] === label) seen = true;
+    if (!seen) names.push(label);
+  }
+  LazyLord.warn(layer.name || "Layer", (why || "Effects are not rebuilt here") + ": " + names.join(", "), "skipped");
 };

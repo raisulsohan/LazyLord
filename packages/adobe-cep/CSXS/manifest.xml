@@ -41,9 +41,16 @@
         <UI>
           <Type>Panel</Type>
           <Menu>LazyLord</Menu>
+          <!--
+            MaxSize is not optional in practice: several hosts refuse to grow a
+            panel past its Size when no maximum is declared, which is what kept
+            this one stuck at 300x360. The value is deliberately larger than any
+            display so the user, not the manifest, decides how big the panel is.
+          -->
           <Geometry>
-            <Size><Height>360</Height><Width>300</Width></Size>
+            <Size><Height>620</Height><Width>340</Width></Size>
             <MinSize><Height>240</Height><Width>240</Width></MinSize>
+            <MaxSize><Height>4000</Height><Width>4000</Width></MaxSize>
           </Geometry>
         </UI>
       </DispatchInfo>

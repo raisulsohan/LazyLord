@@ -81,6 +81,14 @@ function Shape() {}
 function ImportOptions(file) { this.file = file; }
 
 var MaskMode = { NONE: "NONE", ADD: "ADD", SUBTRACT: "SUBTRACT", INTERSECT: "INTERSECT", DIFFERENCE: "DIFFERENCE" };
+/** After Effects' blend modes, by the names the scripting guide gives them. */
+var BlendingMode = {
+    NORMAL: "NORMAL", MULTIPLY: "MULTIPLY", SCREEN: "SCREEN", OVERLAY: "OVERLAY",
+    DARKEN: "DARKEN", LIGHTEN: "LIGHTEN", CLASSIC_COLOR_DODGE: "CLASSIC_COLOR_DODGE",
+    CLASSIC_COLOR_BURN: "CLASSIC_COLOR_BURN", HARD_LIGHT: "HARD_LIGHT", SOFT_LIGHT: "SOFT_LIGHT",
+    DIFFERENCE: "DIFFERENCE", EXCLUSION: "EXCLUSION", HUE: "HUE", SATURATION: "SATURATION",
+    COLOR: "COLOR", LUMINOSITY: "LUMINOSITY"
+};
 var ParagraphJustification = {
     LEFT_JUSTIFY: "l",
     CENTER_JUSTIFY: "c",
@@ -123,6 +131,9 @@ var SCHEMA = {
         "ADBE Vector Stroke Line Cap", "ADBE Vector Stroke Line Join"],
     "ADBE Ramp": ["ADBE Ramp-0001", "ADBE Ramp-0002", "ADBE Ramp-0003", "ADBE Ramp-0004",
         "ADBE Ramp-0005", "ADBE Ramp-0006", "ADBE Ramp-0007"],
+    "ADBE Drop Shadow": ["ADBE Drop Shadow-0001", "ADBE Drop Shadow-0002", "ADBE Drop Shadow-0003",
+        "ADBE Drop Shadow-0004", "ADBE Drop Shadow-0005", "ADBE Drop Shadow-0006"],
+    "ADBE Gaussian Blur 2": ["ADBE Gaussian Blur 2-0001", "ADBE Gaussian Blur 2-0002", "ADBE Gaussian Blur 2-0003"],
     "ADBE Mask Atom": ["ADBE Mask Shape", "ADBE Mask Feather", "ADBE Mask Opacity", "ADBE Mask Offset"],
     "ADBE Transform Group": ["ADBE Anchor Point", "ADBE Position", "ADBE Scale", "ADBE Rotate Z", "ADBE Opacity"],
     "ADBE Text Properties": ["ADBE Text Document"]
@@ -146,6 +157,9 @@ function PNode(matchName, parent) {
     this.invalid = false;
     this.propertyIndex = 0;
     this.numProperties = 0;
+    // Keyframes: a property with any is animated, and only takes timed values.
+    this.keys = [];
+    this.numKeys = 0;
 }
 function stale(n) { if (n.invalid) throw new Error("Object is invalid"); }
 function renumber(n) {
@@ -173,11 +187,21 @@ PNode.prototype.addProperty = function (mn) {
 };
 PNode.prototype.setValue = function (v) {
     stale(this);
+    // After Effects refuses a plain value on an animated property.
+    if (this.numKeys > 0) throw new Error("Cannot set value of a property with keyframes");
     var count = mock.setCounts[this.matchName] = (mock.setCounts[this.matchName] || 0) + 1;
     if (mock.failSet[this.matchName] === count) throw new Error("After Effects could not set " + this.matchName);
     if (this.matchName === "ADBE Text Document") resolveFont(this, v);
     this.value = v;
     this.wasSet = true;
+};
+PNode.prototype.setValueAtTime = function (t, v) {
+    stale(this);
+    if (this.matchName === "ADBE Text Document") resolveFont(this, v);
+    this.value = v;
+    this.wasSet = true;
+    this.keys.push({ time: t, value: v });
+    this.numKeys = this.keys.length;
 };
 PNode.prototype.remove = function () {
     stale(this);
@@ -291,12 +315,15 @@ function makeLayer(Ctor, comp, groups) {
     };
     for (var k in groups) l.groups[k] = groups[k];
     for (var g in l.groups) setLayer(l.groups[g], l);
+    l.comment = ""; // where a layer records the source object it was built from
     l.property = function (key) { return this.groups[key] || null; };
     l.remove = function () {
         for (var i = 0; i < comp.list.length; i++) if (comp.list[i] === this) { comp.list.splice(i, 1); break; }
         this.removed = true;
+        comp.syncCount();
     };
     comp.list.unshift(l); // new layers go on top, as in AE
+    comp.syncCount();
     return l;
 }
 
@@ -306,6 +333,10 @@ function makeComp(name, w, h) {
     c.duration = 10;
     c.list = [];
     c.nullDurations = [];
+    c.time = 0;              // the playhead, where update keys are written
+    c.numLayers = 0;
+    c.syncCount = function () { c.numLayers = c.list.length; };
+    c.layer = function (i) { return c.list[i - 1] || null; };
     c.layers = {
         addNull: function (duration) {
             if (mock.rejectNull) throw new Error("After Effects could not add a null object");
@@ -384,7 +415,9 @@ function vector(name, frame, opts) {
         strokes: opts.strokes || [],
         windingRule: opts.windingRule,
         primitive: opts.primitive,
-        clip: opts.clip
+        clip: opts.clip,
+        blendMode: opts.blendMode,
+        effects: opts.effects
     };
 }
 
@@ -436,7 +469,9 @@ function build(doc, opts) {
     mock.rejectNull = !!opts.rejectNull;
     mock.setCounts = {};
     app.fonts = opts.fonts || undefined;
-    var comp = opts.newComp ? null : makeComp("Active", 1920, 1080);
+    // opts.comp reuses a comp from an earlier build, so a second transfer can
+    // find what the first one left behind.
+    var comp = opts.comp || (opts.newComp ? null : makeComp("Active", 1920, 1080));
     app.project.activeItem = comp;
     var res = LazyLord.build(doc);
     return { res: res, comp: comp, diags: LazyLord.diagnostics };
@@ -1577,6 +1612,324 @@ WScript.Echo("");
        findIn(contents(G[1]), "ADBE Vector Fill Opacity").value === 60, names(G) + " " + dump(rg.diags));
 })();
 
+
+/* -------------------------------------------------------------------------
+ * Phase 3: layer tags, updating in place, and keyframes at the playhead
+ * ---------------------------------------------------------------------- */
+
+/** An IR document that identifies its source file, so tags can be matched. */
+function taggedDoc(layers, key, options) {
+    return irDoc(layers, { sourceKey: key === undefined ? "file-A" : key, options: options });
+}
+function updateOpts(extra) {
+    var o = { existing: "update" };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return o;
+}
+function shapeOf(l) { return findIn(contents(l), "ADBE Vector Shape"); }
+function fillColorOf(l) { return findIn(contents(l), "ADBE Vector Fill Color"); }
+
+// T1) A first transfer tags every layer it builds with where it came from.
+(function () {
+    var r = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })]));
+    var l = r.comp.list[0];
+    ok("tag: the built layer carries a tag", /\[\[LazyLord /.test(l.comment), l.comment);
+    ok("tag: it names the source app, file and layer id",
+       l.comment.indexOf("figma|file-A|Box") >= 0, l.comment);
+    ok("tag: the key round-trips through readTagKey",
+       LazyLord.readTagKey(l.comment) === LazyLord.tagKey(taggedDoc([]), { id: "Box" }),
+       LazyLord.readTagKey(l.comment));
+})();
+
+// T2) Sending the same thing again with Update edits that layer where it is.
+(function () {
+    var doc1 = taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })]);
+    var first = build(doc1);
+    var was = first.comp.list[0];
+
+    var doc2 = taggedDoc(
+        [vector("Box", { x: 80, y: 90, width: 100, height: 50 }, { fills: [solid(0, 0, 1)] })],
+        "file-A", updateOpts());
+    var second = build(doc2, { comp: first.comp });
+
+    ok("update: no second layer was added", second.comp.list.length === 1, String(second.comp.list.length));
+    ok("update: the same layer object was edited", second.comp.list[0] === was);
+    ok("update: the transform moved", nearPt(tval(was, "ADBE Position"), [80, 90]), xy(tval(was, "ADBE Position")));
+    ok("update: the fill changed", nearArr(fillColorOf(was).value, [0, 0, 1, 1]), xy(fillColorOf(was).value));
+    ok("update: nothing was created", second.res.layersCreated === 0, String(second.res.layersCreated));
+    ok("update: one layer counted as updated", second.res.layersUpdated === 1, String(second.res.layersUpdated));
+    ok("update: the summary says so", /Updated 1 layer/.test(second.res.message), second.res.message);
+})();
+
+// T3) The document key is what stops a layer id matching the same id in
+//     another file. A different file adds instead.
+(function () {
+    var first = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })], "file-A"));
+    var second = build(
+        taggedDoc([vector("Box", { x: 80, y: 90, width: 100, height: 50 })], "file-B", updateOpts()),
+        { comp: first.comp });
+
+    ok("key: a different file does not match", second.comp.list.length === 2, String(second.comp.list.length));
+    ok("key: it was added, not updated", second.res.layersUpdated === 0 && second.res.layersCreated === 1);
+    ok("key: the miss is reported", /Nothing matched/.test(second.res.message), second.res.message);
+})();
+
+// T4) An animated property cannot take a plain value, so it gets a key at the
+//     playhead — and a still one is left un-animated.
+(function () {
+    var first = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })]));
+    var was = first.comp.list[0];
+    var position = was.property("ADBE Transform Group").property("ADBE Position");
+    // Animate Position, as a user would have.
+    position.setValueAtTime(0, [10, 20]);
+    first.comp.time = 3;
+
+    var second = build(
+        taggedDoc([vector("Box", { x: 80, y: 90, width: 100, height: 50 })], "file-A", updateOpts()),
+        { comp: first.comp });
+
+    ok("keys: the animated property gained a key", position.numKeys === 2, String(position.numKeys));
+    ok("keys: it was written at the playhead", near(position.keys[1].time, 3), String(position.keys[1].time));
+    ok("keys: with the new value", nearPt(position.keys[1].value, [80, 90]), xy(position.keys[1].value));
+    var rotation = was.property("ADBE Transform Group").property("ADBE Rotate Z");
+    ok("keys: a still property stays still", rotation.numKeys === 0, String(rotation.numKeys));
+    ok("keys: the summary mentions keying the animated ones",
+       /keying the ones already animated/.test(second.res.message), second.res.message);
+})();
+
+// T5) keyframes "always" keys every property it writes — how you animate a
+//     shape by re-sending it.
+(function () {
+    var first = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })]));
+    var was = first.comp.list[0];
+    first.comp.time = 2;
+
+    var second = build(
+        taggedDoc([vector("Box", { x: 80, y: 90, width: 100, height: 50 })], "file-A",
+                  updateOpts({ keyframes: "always" })),
+        { comp: first.comp });
+
+    var position = was.property("ADBE Transform Group").property("ADBE Position");
+    ok("always: a still property was keyed", position.numKeys === 1, String(position.numKeys));
+    ok("always: at the playhead", near(position.keys[0].time, 2), String(position.keys[0].time));
+    ok("always: the path was keyed too", shapeOf(was).numKeys === 1, String(shapeOf(was).numKeys));
+    ok("always: the summary says every property was keyed",
+       /key at the playhead on every property/.test(second.res.message), second.res.message);
+})();
+
+// T6) Updating edits layers where they stand, so it cannot also restructure
+//     them: the layout choices are reported and ignored.
+(function () {
+    var first = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })]));
+    var second = build(
+        taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })], "file-A",
+                  updateOpts({ hierarchy: "groups", layout: "combine" })),
+        { comp: first.comp });
+
+    ok("layout: Groups was reported as ignored",
+       diagsMatching(second.diags, /Groups was ignored|Combine was ignored/).length === 1, dump(second.diags));
+    ok("layout: no null object was made", nullsIn(second.comp) === 0, String(nullsIn(second.comp)));
+    ok("layout: still just the one layer", second.comp.list.length === 1, String(second.comp.list.length));
+})();
+
+// T7) A shape the user has since reworked is not clobbered: the contours that
+//     pair up are updated and the mismatch is reported.
+(function () {
+    var twoContours = [rectSub(0, 0, 40, 40), rectSub(50, 0, 40, 40)];
+    var first = build(taggedDoc([vector("Box", { x: 0, y: 0, width: 90, height: 40 },
+                                        { subpaths: twoContours })]));
+    var was = first.comp.list[0];
+
+    var second = build(
+        taggedDoc([vector("Box", { x: 0, y: 0, width: 40, height: 40 },
+                          { subpaths: [rectSub(0, 0, 40, 40)] })], "file-A", updateOpts()),
+        { comp: first.comp });
+
+    ok("mismatch: reported", diagsMatching(second.diags, /only the ones that pair up/).length === 1, dump(second.diags));
+    ok("mismatch: the layer is still there", second.comp.list.length === 1 && second.comp.list[0] === was);
+    ok("mismatch: nothing was deleted", countIn(contents(was), "ADBE Vector Shape") === 2,
+       String(countIn(contents(was), "ADBE Vector Shape")));
+})();
+
+// T8) Text updates its document but keeps styling LazyLord never sets.
+(function () {
+    var first = build(taggedDoc([textLayer("Title", { x: 0, y: 0, width: 100, height: 30 })]));
+    var was = first.comp.list[0];
+    var prop = was.property("ADBE Text Properties").property("ADBE Text Document");
+    prop.value.tsume = 0.5; // something only the user would have set
+
+    var next = textLayer("Title", { x: 0, y: 0, width: 100, height: 30 });
+    next.characters = "Goodbye";
+    var second = build(taggedDoc([next], "file-A", updateOpts()), { comp: first.comp });
+
+    ok("text: the same layer was edited", second.comp.list.length === 1 && second.comp.list[0] === was);
+    ok("text: the words changed", prop.value.text === "Goodbye", String(prop.value.text));
+    ok("text: untouched styling survives", prop.value.tsume === 0.5, String(prop.value.tsume));
+})();
+
+// T9) Update with nothing to match behaves exactly like Add.
+(function () {
+    var r = build(taggedDoc([vector("Box", { x: 10, y: 20, width: 100, height: 50 })], "file-A", updateOpts()));
+    ok("empty: the layer was added", r.comp.list.length === 1, String(r.comp.list.length));
+    ok("empty: counted as created", r.res.layersCreated === 1 && r.res.layersUpdated === 0);
+    ok("empty: and the new layer is tagged for next time", /\[\[LazyLord /.test(r.comp.list[0].comment));
+})();
+
+// T10) The tag lives alongside whatever the user keeps in the comment.
+(function () {
+    var mine = "my own note";
+    var tagged = LazyLord.withTag(mine, "[[LazyLord figma|f|1]]");
+    ok("comment: the user's text is kept", tagged.indexOf(mine) === 0, tagged);
+    ok("comment: the tag is appended", /\[\[LazyLord figma\|f\|1\]\]$/.test(tagged), tagged);
+
+    var retagged = LazyLord.withTag(tagged, "[[LazyLord figma|f|2]]");
+    ok("comment: re-tagging replaces, never stacks",
+       retagged.indexOf("figma|f|1") < 0 && retagged.indexOf("figma|f|2") > 0 &&
+       retagged.indexOf(mine) === 0, retagged);
+    ok("comment: stripping leaves the user's text", LazyLord.stripTag(retagged) === mine,
+       "[" + LazyLord.stripTag(retagged) + "]");
+    ok("comment: an untagged comment reads as no tag", LazyLord.readTag(mine) === null);
+    ok("comment: a Figma id with a colon survives",
+       LazyLord.readTag("[[LazyLord figma|f|I1:23;4:56]]").id === "I1:23;4:56",
+       LazyLord.readTag("[[LazyLord figma|f|I1:23;4:56]]").id);
+})();
+
+// T11) A source with no document key of its own still round-trips, and only
+//      ever matches another keyless source.
+(function () {
+    var first = build(taggedDoc([vector("Box", { x: 0, y: 0, width: 10, height: 10 })], ""));
+    var l = first.comp.list[0];
+    ok("nokey: the tag has an empty middle field", /figma\|\|Box/.test(l.comment), l.comment);
+
+    var second = build(taggedDoc([vector("Box", { x: 5, y: 5, width: 10, height: 10 })], "", updateOpts()),
+                       { comp: first.comp });
+    ok("nokey: it still matches itself", second.res.layersUpdated === 1, String(second.res.layersUpdated));
+
+    var third = build(taggedDoc([vector("Box", { x: 9, y: 9, width: 10, height: 10 })], "file-A", updateOpts()),
+                      { comp: first.comp });
+    ok("nokey: a keyed source does not match a keyless layer", third.res.layersUpdated === 0,
+       String(third.res.layersUpdated));
+})();
+
+/* -------------------------------------------------------------------------
+ * Blend modes and effects
+ * ---------------------------------------------------------------------- */
+
+function fxOf(l) {
+    var out = [];
+    var list = effects(l);
+    for (var i = 0; i < list.length; i++) out.push(list[i].matchName);
+    return out.join(",");
+}
+function fxNamed(l, mn) {
+    var list = effects(l);
+    for (var i = 0; i < list.length; i++) if (list[i].matchName === mn) return list[i];
+    return null;
+}
+function fxVal(fx, mn) {
+    var p = fx ? fx.property(mn) : null;
+    return p ? p.value : null;
+}
+
+// E1) A blend mode becomes the AE mode of the same name.
+(function () {
+    var r = build(irDoc([vector("Tint", { x: 0, y: 0, width: 10, height: 10 }, { blendMode: "multiply" })]));
+    ok("blend: applied to the layer", r.comp.list[0].blendingMode === BlendingMode.MULTIPLY,
+       String(r.comp.list[0].blendingMode));
+    ok("blend: nothing reported for a mode AE has", r.diags.length === 0, dump(r.diags));
+
+    var dodge = build(irDoc([vector("D", { x: 0, y: 0, width: 10, height: 10 }, { blendMode: "color-dodge" })]));
+    ok("blend: color-dodge maps to AE's classic dodge",
+       dodge.comp.list[0].blendingMode === BlendingMode.CLASSIC_COLOR_DODGE,
+       String(dodge.comp.list[0].blendingMode));
+
+    var normal = build(irDoc([vector("N", { x: 0, y: 0, width: 10, height: 10 })]));
+    ok("blend: a layer without one is left alone", normal.comp.list[0].blendingMode === undefined ||
+       normal.comp.list[0].blendingMode === BlendingMode.NORMAL, String(normal.comp.list[0].blendingMode));
+})();
+
+// E2) A drop shadow becomes AE's own, with the offset turned into the
+//     direction-and-distance dial AE uses.
+(function () {
+    var shadow = {
+        kind: "drop-shadow",
+        color: { r: 0, g: 0, b: 0, a: 0.5 },
+        offset: { x: 0, y: 10 },   // straight down
+        radius: 4
+    };
+    var r = build(irDoc([vector("Card", { x: 0, y: 0, width: 20, height: 20 }, { effects: [shadow] })]));
+    var l = r.comp.list[0];
+    var fx = fxNamed(l, "ADBE Drop Shadow");
+
+    ok("shadow: the stock Drop Shadow effect", !!fx, fxOf(l));
+    ok("shadow: distance is the offset's length", near(fxVal(fx, "ADBE Drop Shadow-0004"), 10),
+       String(fxVal(fx, "ADBE Drop Shadow-0004")));
+    // AE's dial is 0 straight up, growing clockwise; straight down is 180.
+    ok("shadow: direction is AE's clockwise-from-up dial",
+       near(fxVal(fx, "ADBE Drop Shadow-0003"), 180), String(fxVal(fx, "ADBE Drop Shadow-0003")));
+    ok("shadow: softness from the radius", near(fxVal(fx, "ADBE Drop Shadow-0005"), 4),
+       String(fxVal(fx, "ADBE Drop Shadow-0005")));
+    ok("shadow: opacity from the colour's alpha, in AE's 0..255",
+       near(fxVal(fx, "ADBE Drop Shadow-0002"), 127.5), String(fxVal(fx, "ADBE Drop Shadow-0002")));
+
+    // A shadow to the right is 90 degrees on the same dial.
+    var right = build(irDoc([vector("R", { x: 0, y: 0, width: 20, height: 20 }, {
+        effects: [{ kind: "drop-shadow", color: { r: 0, g: 0, b: 0, a: 1 }, offset: { x: 8, y: 0 }, radius: 0 }]
+    })]));
+    ok("shadow: a rightward offset reads as 90 degrees",
+       near(fxVal(fxNamed(right.comp.list[0], "ADBE Drop Shadow"), "ADBE Drop Shadow-0003"), 90),
+       String(fxVal(fxNamed(right.comp.list[0], "ADBE Drop Shadow"), "ADBE Drop Shadow-0003")));
+})();
+
+// E3) Spread has no AE equivalent, and says so rather than shifting the shadow.
+(function () {
+    var r = build(irDoc([vector("Card", { x: 0, y: 0, width: 20, height: 20 }, {
+        effects: [{ kind: "drop-shadow", color: { r: 0, g: 0, b: 0, a: 1 }, offset: { x: 0, y: 2 }, radius: 1, spread: 5 }]
+    })]));
+    ok("shadow: the effect is still built", !!fxNamed(r.comp.list[0], "ADBE Drop Shadow"));
+    ok("shadow: its spread is reported", diagsMatching(r.diags, /spread/).length === 1, dump(r.diags));
+})();
+
+// E4) A layer blur becomes Gaussian Blur.
+(function () {
+    var r = build(irDoc([vector("Soft", { x: 0, y: 0, width: 20, height: 20 }, {
+        effects: [{ kind: "layer-blur", radius: 5 }]
+    })]));
+    var fx = fxNamed(r.comp.list[0], "ADBE Gaussian Blur 2");
+    ok("blur: the stock Gaussian Blur", !!fx, fxOf(r.comp.list[0]));
+    ok("blur: AE's blurriness is about twice the radius",
+       near(fxVal(fx, "ADBE Gaussian Blur 2-0001"), 10), String(fxVal(fx, "ADBE Gaussian Blur 2-0001")));
+})();
+
+// E5) The two with no After Effects equivalent are reported, not guessed at.
+(function () {
+    var r = build(irDoc([vector("Inner", { x: 0, y: 0, width: 20, height: 20 }, {
+        effects: [{ kind: "inner-shadow", color: { r: 0, g: 0, b: 0, a: 1 }, offset: { x: 0, y: 2 }, radius: 2 },
+                  { kind: "background-blur", radius: 6 }]
+    })]));
+    ok("effects: no effect was invented", effects(r.comp.list[0]).length === 0, fxOf(r.comp.list[0]));
+    ok("effects: the inner shadow is reported", diagsMatching(r.diags, /inner-shadow effect/).length === 1, dump(r.diags));
+    ok("effects: so is the background blur", diagsMatching(r.diags, /behind the layer/).length === 1, dump(r.diags));
+})();
+
+// E6) Text and images wear them too, and several effects stack in order.
+(function () {
+    var fx = [{ kind: "drop-shadow", color: { r: 0, g: 0, b: 0, a: 1 }, offset: { x: 1, y: 1 }, radius: 1 },
+              { kind: "layer-blur", radius: 2 }];
+    var t = textLayer("Title", { x: 0, y: 0, width: 40, height: 20 });
+    t.effects = fx;
+    t.blendMode = "screen";
+    var r = build(irDoc([t]));
+    ok("text: both effects, in the order they were sent",
+       fxOf(r.comp.list[0]) === "ADBE Drop Shadow,ADBE Gaussian Blur 2", fxOf(r.comp.list[0]));
+    ok("text: and its blend mode", r.comp.list[0].blendingMode === BlendingMode.SCREEN);
+
+    var img = imageLayer("Shot", { x: 0, y: 0, width: 40, height: 20 }, "C:/a.png", true);
+    img.effects = [fx[0]];
+    var r2 = build(irDoc([img]));
+    ok("image: effects apply to footage too", !!fxNamed(r2.comp.list[0], "ADBE Drop Shadow"),
+       fxOf(r2.comp.list[0]));
+})();
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

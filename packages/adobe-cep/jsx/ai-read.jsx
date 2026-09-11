@@ -129,8 +129,20 @@ LazyLord.readSelection = function (outDir) {
     // drop the artwork exactly where it sat.
     originSpace: "document",
     canvas: canvas,
+    sourceKey: LazyLord._air_sourceKey(doc),
     layers: layers
   };
+};
+
+/**
+ * What tells this document apart from every other one, so a target can match a
+ * layer id back to the thing it came from. A saved document is identified by
+ * its path; an unsaved one has nothing stable to offer, and matching then falls
+ * back to the layer id alone.
+ */
+LazyLord._air_sourceKey = function (doc) {
+  try { if (doc.fullName) return doc.fullName.fsName; } catch (e) {}
+  return "";
 };
 
 /* -------------------------------------------------------------------------
@@ -1692,8 +1704,9 @@ LazyLord._air_raster = function (ctx, item, reason) {
   var name = item.name || item.typename;
   var outPath = LazyLord.join(ctx.outDir, LazyLord._air_safe(name) + "-" + (ctx.imageIndex++) + ".png");
 
+  var scale = LazyLord.readOptions.scale;
   try {
-    LazyLord._air_export(item, outPath, 200); // 2x scale
+    LazyLord._air_export(item, outPath, scale * 100);
   } catch (e) {
     LazyLord.warn(name, "Could not rasterize — " + e.message, "skipped");
     return null;
@@ -1702,7 +1715,7 @@ LazyLord._air_raster = function (ctx, item, reason) {
   LazyLord.warn(name, reason, "rasterized");
   // The export is of the item as it looks on the page, already turned, so the
   // PNG fills the outer box upright.
-  return LazyLord._air_imageLayer(ctx, item, LazyLord._air_frame(ctx, item, gb), outPath, false, 2);
+  return LazyLord._air_imageLayer(ctx, item, LazyLord._air_frame(ctx, item, gb), outPath, false, scale);
 };
 
 /**

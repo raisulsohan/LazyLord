@@ -1171,7 +1171,7 @@ run("markup", function () {
     ok("markup: the folded label carries the note", /<summary[^>]*>[^<]*Options[\s\S]*?id="push-opts-note"[\s\S]*?<\/summary>/
        .test(HTML_SRC));
     ok("markup: Layout offers Split then Combine", LAYOUT_VALUES.join("|") === "split|combine", LAYOUT_VALUES.join("|"));
-    ok("markup: Hierarchy offers Flatten then Groups", HIERARCHY_VALUES.join("|") === "flatten|groups",
+    ok("markup: Hierarchy offers Flatten, Groups, then Precomps", HIERARCHY_VALUES.join("|") === "flatten|groups|precomps",
        HIERARCHY_VALUES.join("|"));
     ok("markup: both selects are labelled", has(HTML_SRC, '<label for="push-layout">Layout</label>') &&
        has(HTML_SRC, '<label for="push-hierarchy">Hierarchy</label>'));

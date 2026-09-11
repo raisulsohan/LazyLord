@@ -255,6 +255,14 @@ export type ImageLayer = BaseLayer & {
 export type GroupLayer = BaseLayer & {
   type: "group";
   children: Layer[];
+  /**
+   * The box of the page-like container the group came from (a Figma frame,
+   * section, component or instance), in frame space, when it is upright. A
+   * target that rebuilds groups as pages of their own (After Effects
+   * precomps) sizes the page to this and measures the children from its
+   * top-left, whatever they happen to cover.
+   */
+  page?: { x: number; y: number; width: number; height: number };
 };
 
 export type Layer = VectorLayer | TextLayer | ImageLayer | GroupLayer;
@@ -330,8 +338,11 @@ export type TransferOptions = {
    * "flatten" (default): groups dissolve into their leaves.
    * "groups": rebuild them — Illustrator groups, Photoshop layer sets, After
    * Effects null parents (or nested shape groups when combining).
+   * "precomps": After Effects makes every group with a `page` (a Figma frame)
+   * a precomp of that size, nested frames nesting; other groups dissolve into
+   * it. Every other target treats it as "groups".
    */
-  hierarchy?: "flatten" | "groups";
+  hierarchy?: "flatten" | "groups" | "precomps";
   /**
    * "active" (default): build into the open document / composition, creating
    * one only when none is open.
@@ -363,7 +374,7 @@ export function transferOptions(doc: Pick<Document, "options">): Required<Transf
   const o = doc.options || {};
   return {
     layout: o.layout === "combine" ? "combine" : "split",
-    hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
+    hierarchy: o.hierarchy === "groups" || o.hierarchy === "precomps" ? o.hierarchy : "flatten",
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto",

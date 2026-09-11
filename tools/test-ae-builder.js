@@ -374,6 +374,8 @@ var app = {
             addComp: function (name, w, h, pa, dur, fps) {
                 var c = makeComp(name, w, h);
                 app.compsAdded.push({ name: name, width: w, height: h });
+                // Kept apart: the comps link back to themselves, and compsAdded is dumped as JSON.
+                (app.compObjects = app.compObjects || []).push(c);
                 return c;
             }
         },
@@ -1094,6 +1096,41 @@ WScript.Echo("");
     var api = build(irDoc([textLayer("D", box, { fontFamily: "Brand Sans", fontStyle: "Bold" })]), { fonts: mockFontsApi });
     ok("font: the After Effects 24+ font lookup finds a non-standard PostScript name",
        tdoc(api.comp.list[0]).font === "BrandSansWeb-Bd" && api.diags.length === 0, dump(api.diags));
+})();
+
+// 20a) Precomps: Figma frames become comps of their own size, nested frames nest.
+(function () {
+    var inner = group("Card", { x: 250, y: 150, width: 20, height: 20, opacity: 1 },
+                      [vector("Dot", { x: 250, y: 150, width: 20, height: 20 })]);
+    inner.page = { x: 240, y: 140, width: 100, height: 50 };
+    var screen = group("Screen", { x: 250, y: 150, width: 20, height: 20, opacity: 0.5 },
+                       [vector("Bg", { x: 210, y: 110, width: 10, height: 10 }), inner]);
+    screen.page = { x: 200, y: 100, width: 400, height: 300 };
+    var loose = group("Loose", { x: 0, y: 0, width: 10, height: 10 }, [vector("Free", { x: 0, y: 0, width: 10, height: 10 })]);
+    app.compObjects = [];
+    var r = build(irDoc([screen, loose], { options: { hierarchy: "precomps" } }));
+
+    function named(list, n) {
+        for (var k = 0; list && k < list.length; k++) if (list[k].name === n) return list[k];
+        return null;
+    }
+    var comps = [];
+    for (var i = 0; i < app.compsAdded.length; i++) comps.push(app.compsAdded[i].name + " " + app.compsAdded[i].width + "x" + app.compsAdded[i].height);
+    ok("precomps: one comp per frame, at the frame's size", comps.join(", ") === "Screen 400x300, Card 100x50", comps.join(", "));
+    var screenComp = app.compObjects[0], cardComp = app.compObjects[1];
+    ok("precomps: the frame's contents go into its precomp, the frame inside it nests",
+       !!named(screenComp.list, "Bg") && !!named(screenComp.list, "Card") && !!named(cardComp.list, "Dot"),
+       names(screenComp.list) + " / " + names(cardComp.list));
+    var bg = named(screenComp.list, "Bg"), dot = named(cardComp.list, "Dot");
+    ok("precomps: contents are measured from the frame's corner",
+       bg && dot && nearArr(tval(bg, "ADBE Position"), [10, 10]) && nearArr(tval(dot, "ADBE Position"), [10, 10]),
+       (bg ? dump(tval(bg, "ADBE Position")) : "no Bg") + " / " + (dot ? dump(tval(dot, "ADBE Position")) : "no Dot"));
+    var pl = named(r.comp.list, "Screen");
+    ok("precomps: the precomp layer sits where the frame did, with the frame's opacity",
+       pl && nearArr(tval(pl, "ADBE Position"), [400, 250]) && tval(pl, "ADBE Opacity") === 50,
+       pl ? dump(tval(pl, "ADBE Position")) + " " + tval(pl, "ADBE Opacity") : "missing");
+    ok("precomps: a plain group dissolves into the comp it is in",
+       !!named(r.comp.list, "Free") && !named(r.comp.list, "Loose"), names(r.comp.list));
 })();
 
 // 20b) Mixed character styles: characterRange on After Effects 24.3+, one style before.

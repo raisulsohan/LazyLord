@@ -31,7 +31,8 @@ LazyLord.build = function (doc) {
     LazyLord.applyOrigin(doc);
     st.psDoc = LazyLord._ps_doc(doc);
 
-    if (LazyLord.options(doc).hierarchy === "groups") {
+    // Precomps are an After Effects idea: here they are plain layer groups.
+    if (LazyLord.options(doc).hierarchy !== "flatten") {
       LazyLord._ps_buildTree(st, doc.layers || [], { set: null, name: "" });
     } else {
       LazyLord._ps_buildFlat(st, doc.layers || []);

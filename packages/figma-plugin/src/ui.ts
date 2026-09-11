@@ -331,6 +331,7 @@ function updateOptionsNote() {
   const parts: string[] = [];
   if (o.layout === "combine") parts.push("Combine");
   if (o.hierarchy === "groups") parts.push("Groups");
+  if (o.hierarchy === "precomps") parts.push("Precomps");
   if (o.existing === "update") parts.push("Update");
   if (o.existing === "update" && o.keyframes === "always") parts.push("Always key");
   optsNote.textContent = parts.join(", ");

@@ -117,7 +117,7 @@ type Prefs = {
   width: number;
   height: number;
   layout: "split" | "combine";
-  hierarchy: "flatten" | "groups";
+  hierarchy: "flatten" | "groups" | "precomps";
   existing: "add" | "update";
   keyframes: "auto" | "always";
   place: Place;
@@ -552,7 +552,7 @@ async function collectContainer(node: SceneNode, ctx: Ctx, out: Layer[]): Promis
 function groupLayer(node: SceneNode, children: Layer[], ctx: Ctx): GroupLayer {
   const any = node as any;
   const b = groupBox(children);
-  return {
+  const group: GroupLayer = {
     id: node.id,
     name: node.name,
     type: "group",
@@ -562,6 +562,16 @@ function groupLayer(node: SceneNode, children: Layer[], ctx: Ctx): GroupLayer {
     effects: readEffects(node, ctx),
     children,
   };
+  // A frame is a page of its own size, whatever its contents cover (precomps).
+  if (FRAME_TYPES.has(node.type) || node.type === "SECTION") {
+    const t = absoluteTransform(node);
+    const w = num(any.width, 0);
+    const h = num(any.height, 0);
+    if (w > 0 && h > 0 && isAxisAligned(t)) {
+      group.page = { x: t[0][2] - ctx.origin.x, y: t[1][2] - ctx.origin.y, width: w, height: h };
+    }
+  }
+  return group;
 }
 
 /**

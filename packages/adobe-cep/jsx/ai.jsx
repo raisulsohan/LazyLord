@@ -24,7 +24,7 @@ LazyLord.build = function (doc) {
 
   // Updating drops artwork back where the old artwork stood, so it cannot also
   // restructure the document: a replaced item keeps the group it was in.
-  if (update && opts.hierarchy === "groups") {
+  if (update && opts.hierarchy !== "flatten") {
     LazyLord.warn("Transfer", "Update puts artwork back where the old artwork stood, so Groups was ignored; " +
       "send with Add to rebuild the group structure", "approximated");
     opts.hierarchy = "flatten";
@@ -43,7 +43,8 @@ LazyLord.build = function (doc) {
   };
 
   var root = LazyLord._ai_scope(aiDoc);
-  var layers = (opts.hierarchy === "groups") ? doc.layers : LazyLord._ai_flatten(doc);
+  // Precomps are an After Effects idea: here they are plain groups.
+  var layers = (opts.hierarchy !== "flatten") ? doc.layers : LazyLord._ai_flatten(doc);
   LazyLord._ai_buildList(ctx, root, layers);
   ctx.container = aiDoc;
   LazyLord._ai_closeClips(ctx, root);

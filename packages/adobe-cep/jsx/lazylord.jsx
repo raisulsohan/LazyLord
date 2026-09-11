@@ -325,20 +325,31 @@ LazyLord.imagePath = function (layer) {
  */
 LazyLord.applyOrigin = function (doc) {
   if (!doc || doc.originSpace !== "document" || !doc.bounds) return;
-  var ox = doc.bounds.x || 0;
-  var oy = doc.bounds.y || 0;
-  if (!ox && !oy) return;
-  LazyLord.eachLayer(doc.layers, function (layer) {
+  LazyLord.shiftLayers(doc.layers, doc.bounds.x || 0, doc.bounds.y || 0);
+};
+
+/**
+ * Move a layer tree by (dx, dy) in frame space, in place: frames, group
+ * pages, text anchors and clip outlines. Local geometry is relative to its
+ * frame and does not move.
+ */
+LazyLord.shiftLayers = function (layers, dx, dy) {
+  if (!dx && !dy) return;
+  LazyLord.eachLayer(layers, function (layer) {
     if (layer.frame) {
-      layer.frame.x += ox;
-      layer.frame.y += oy;
+      layer.frame.x += dx;
+      layer.frame.y += dy;
     }
-    if (typeof layer.baseline === "number") layer.baseline += oy;
-    if (typeof layer.anchorX === "number") layer.anchorX += ox;
+    if (layer.page) {
+      layer.page.x += dx;
+      layer.page.y += dy;
+    }
+    if (typeof layer.baseline === "number") layer.baseline += dy;
+    if (typeof layer.anchorX === "number") layer.anchorX += dx;
     if (layer.clip && layer.clip.subpaths) {
       for (var s = 0; s < layer.clip.subpaths.length; s++) {
         var vs = layer.clip.subpaths[s].vertices;
-        for (var v = 0; v < vs.length; v++) vs[v] = [vs[v][0] + ox, vs[v][1] + oy];
+        for (var v = 0; v < vs.length; v++) vs[v] = [vs[v][0] + dx, vs[v][1] + dy];
       }
     }
   });
@@ -426,7 +437,7 @@ LazyLord.options = function (doc) {
   var o = (doc && doc.options) || {};
   return {
     layout: o.layout === "combine" ? "combine" : "split",
-    hierarchy: o.hierarchy === "groups" ? "groups" : "flatten",
+    hierarchy: (o.hierarchy === "groups" || o.hierarchy === "precomps") ? o.hierarchy : "flatten",
     destination: o.destination === "new" ? "new" : "active",
     existing: o.existing === "update" ? "update" : "add",
     keyframes: o.keyframes === "always" ? "always" : "auto"

@@ -37,12 +37,17 @@ LazyLord.build = function (doc) {
     // Updating edits layers where they already stand, so it cannot also
     // restructure them: a matched layer keeps whatever parent and shape layer
     // it is in. Both layout choices are therefore ignored while updating.
-    if (update && (opts.layout === "combine" || opts.hierarchy === "groups")) {
+    if (update && (opts.layout === "combine" || opts.hierarchy !== "flatten")) {
       LazyLord.warn("Transfer", "Update edits layers where they stand, so " +
-        (opts.layout === "combine" ? "Combine" : "Groups") +
+        (opts.layout === "combine" ? "Combine" : (opts.hierarchy === "precomps" ? "Precomps" : "Groups")) +
         " was ignored; send with Add to change how the layers are laid out", "approximated");
       opts.layout = "split";
       opts.hierarchy = "flatten";
+    }
+    // One shape layer cannot span several comps.
+    if (opts.hierarchy === "precomps" && opts.layout === "combine") {
+      LazyLord.warn("Transfer", "Combine does not reach into precomps, so every shape keeps a layer of its own", "approximated");
+      opts.layout = "split";
     }
 
     ctx = {
@@ -50,6 +55,8 @@ LazyLord.build = function (doc) {
       comp: LazyLord._ae_comp(doc),
       assets: LazyLord._ae_assetContext(),
       groups: opts.hierarchy === "groups",
+      precomps: opts.hierarchy === "precomps",
+      precompCount: 0,
       combo: null,
       created: 0, // AE layers actually made: nulls and split stroke layers included
       nulls: 0,
@@ -68,7 +75,7 @@ LazyLord.build = function (doc) {
     LazyLord._ae_noteEmptyGroups(doc.layers);
 
     var layers = doc.layers;
-    if (!ctx.groups) {
+    if (!ctx.groups && !ctx.precomps) {
       layers = LazyLord.flattenLayers(doc.layers);
       LazyLord._ae_noteFlatOpacity(doc);
     }
@@ -80,6 +87,9 @@ LazyLord.build = function (doc) {
   // layersCreated counts AE layers: nulls, split stroke layers and the one
   // combined shape layer included, so it can differ from the IR's leaf count.
   var notes = [];
+  if (ctx.precompCount) {
+    notes.push("Includes " + LazyLord._ae_plural(ctx.precompCount, "precomp") + " made from the source frames.");
+  }
   if (ctx.nulls) {
     notes.push("Includes " + LazyLord._ae_plural(ctx.nulls, "null layer") + " standing in for the source groups.");
   }
@@ -172,7 +182,8 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
     if (!layer) continue;
 
     if (layer.type === "group") {
-      var up = LazyLord._ae_group(ctx, layer, fade, tally);
+      var up = !ctx.precomps ? LazyLord._ae_group(ctx, layer, fade, tally)
+        : (layer.page ? LazyLord._ae_precomp(ctx, layer, fade, tally) : LazyLord._ae_dissolve(ctx, layer, fade, tally));
       for (var u = 0; u < up.length; u++) out.push(up[u]);
       continue;
     }
@@ -204,6 +215,61 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
     }
   }
   return out;
+};
+
+/**
+ * hierarchy "precomps": a group from a page-like frame becomes a comp of the
+ * frame's size, holding its contents measured from the frame's top-left, and
+ * is placed as a precomp layer where the frame sat. Nested frames nest. The
+ * frame's opacity goes on the precomp layer, which is exact.
+ */
+LazyLord._ae_precomp = function (ctx, group, fade, outer) {
+  var name = group.name || "Frame";
+  var p = group.page;
+  var parent = ctx.comp;
+  var w = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.width)));
+  var h = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.height)));
+  var sub;
+  try {
+    sub = app.project.items.addComp(name, w, h, parent.pixelAspect || 1, parent.duration || 10, parent.frameRate || 30);
+  } catch (e) {
+    LazyLord.warn(name, "The frame could not become a precomp (" + ((e && e.message) || String(e)) +
+      "), so its layers are placed in the comp directly", "approximated");
+    return LazyLord._ae_dissolve(ctx, group, fade, outer);
+  }
+
+  // The contents, in the precomp's own space: a copy, moved to the frame's corner.
+  var kids = JSON.parse(JSON.stringify(group.children || []));
+  LazyLord.shiftLayers(kids, -p.x, -p.y);
+  var tally = { separate: 0, combined: false };
+  ctx.comp = sub;
+  try {
+    LazyLord._ae_tree(ctx, kids, 1, tally);
+  } finally {
+    ctx.comp = parent;
+  }
+
+  var pl = parent.layers.add(sub);
+  pl.name = name;
+  LazyLord._ae_setTransform(pl, { anchor: [w / 2, h / 2], position: [p.x + w / 2, p.y + h / 2], scale: [100, 100], rotation: 0 },
+    LazyLord._ae_opacityOf(group) * fade);
+  ctx.created++;
+  ctx.precompCount++;
+  outer.separate++;
+  return [pl];
+};
+
+/** A plain group inside precomps mode: its layers go straight into the current comp. */
+LazyLord._ae_dissolve = function (ctx, group, fade, outer) {
+  var go = LazyLord._ae_opacityOf(group);
+  var tally = { separate: 0, combined: false };
+  var kids = LazyLord._ae_tree(ctx, group.children || [], fade * go, tally);
+  outer.separate += tally.separate;
+  if (LazyLord.pct(go) < 100 && tally.separate > 1) {
+    LazyLord.warn(group.name || "Group", "The group's " + LazyLord.pct(go) + "% opacity is applied to each layer inside it; " +
+      "where they overlap they show through each other slightly", "approximated");
+  }
+  return kids;
 };
 
 /** One IR leaf as AE layers; returns every layer made (a split stroke adds one). */

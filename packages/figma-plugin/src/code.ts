@@ -175,6 +175,21 @@ async function savePrefs(raw: any): Promise<void> {
 
 postPrefs();
 
+// Presets and transfer history, kept beside the preferences.
+type ListKind = "presets" | "history";
+const LIST_KEYS: Record<ListKind, string> = { presets: "lazylord.presets", history: "lazylord.history" };
+
+async function postList(kind: ListKind): Promise<void> {
+  let list: unknown[] = [];
+  try {
+    const stored = await figma.clientStorage.getAsync(LIST_KEYS[kind]);
+    if (Array.isArray(stored)) list = stored;
+  } catch {
+    /* storage unavailable: an empty list stands */
+  }
+  figma.ui.postMessage({ type: kind, list });
+}
+
 // ---------------------------------------------------------------------------
 // UI messages
 // ---------------------------------------------------------------------------
@@ -215,10 +230,18 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
     }
   } else if (msg.type === "prefs") {
     await savePrefs(msg);
+  } else if (msg.type === "save-list" && (msg.kind === "presets" || msg.kind === "history")) {
+    try {
+      await figma.clientStorage.setAsync(LIST_KEYS[msg.kind as ListKind], Array.isArray(msg.list) ? msg.list.slice(0, 50) : []);
+    } catch {
+      /* not fatal: the list simply is not remembered next time */
+    }
   } else if (msg.type === "ready") {
     // The UI finished loading: send it anything it may have missed.
     postSelection();
     await postPrefs();
+    await postList("presets");
+    await postList("history");
   } else if (msg.type === "notify") {
     figma.notify(msg.message, { error: !!msg.error });
   } else if (msg.type === "resize") {

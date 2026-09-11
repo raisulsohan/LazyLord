@@ -115,6 +115,15 @@
             </select>
           </div>
           <p class="a-peers" id="push-opts-hint"></p>
+          <div class="a-opt" title="Destination, Image scale and the options above, saved under a name and brought back in one step.">
+            <label for="push-preset">Preset</label>
+            <select id="push-preset"><option value="">—</option></select>
+          </div>
+          <div class="a-row">
+            <input type="text" id="push-preset-name" class="a-input" placeholder="Name these settings" maxlength="40" />
+            <button id="push-preset-save" class="a-ghost">Save</button>
+            <button id="push-preset-delete" class="a-ghost" disabled>Delete</button>
+          </div>
         </details>
       </section>
 
@@ -137,6 +146,14 @@
           <span class="a-count" id="diag-counts"></span>
         </label>
         <ul class="a-diags" id="diag-list"></ul>
+      </section>
+
+      <section class="a-block">
+        <details class="a-opts" id="history">
+          <summary class="a-label">History <span class="a-count" id="history-count"></span></summary>
+          <ul class="a-diags" id="history-list"></ul>
+          <div class="a-row"><span></span><button id="history-clear" class="a-ghost">Clear history</button></div>
+        </details>
       </section>
 
       <section class="a-block">

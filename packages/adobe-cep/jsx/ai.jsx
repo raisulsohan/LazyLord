@@ -119,6 +119,50 @@ LazyLord._ai_layer = function (ctx, layer) {
   return false;
 };
 
+/*
+ * Transactions (see LazyLord.run): the documents open and the uuid of every
+ * item in the active one, before a build. A failed build closes a document it
+ * opened, unsaved, and removes the items whose uuids are new. Without uuids
+ * (older Illustrator) nothing in an existing document is touched.
+ */
+LazyLord.snapshot = function () {
+  var s = { docs: app.documents.length, doc: null, items: null };
+  if (!app.documents.length) return s;
+  s.doc = app.activeDocument;
+  s.items = {};
+  var all = s.doc.pageItems;
+  for (var i = 0; i < all.length; i++) {
+    var u = null;
+    try { u = all[i].uuid; } catch (e) {}
+    if (!u) { s.items = null; break; }
+    s.items[u] = true;
+  }
+  return s;
+};
+
+LazyLord.rollback = function (s) {
+  if (app.documents.length > s.docs) {
+    // The build opened a document of its own: it is the active one.
+    app.activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+    if (!s.doc) return true;
+  }
+  if (!s.doc) return true;
+  if (!s.items) return false;
+  var all = s.doc.pageItems;
+  var doomed = [];
+  for (var i = 0; i < all.length; i++) {
+    var u = null;
+    try { u = all[i].uuid; } catch (e) {}
+    if (u && !s.items[u]) doomed.push(all[i]);
+  }
+  // Outermost first: removing a new group removes what it holds, whose later
+  // remove() then fails harmlessly.
+  for (var k = 0; k < doomed.length; k++) {
+    try { doomed[k].remove(); } catch (eGone) {}
+  }
+  return true;
+};
+
 LazyLord._ai_doc = function (doc) {
   if (app.documents.length > 0 && !LazyLord.wantsNewDocument(doc)) return app.activeDocument;
   // New or nothing open: match the source page (artboard / comp / Figma frame) so

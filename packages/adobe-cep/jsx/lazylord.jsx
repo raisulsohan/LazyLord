@@ -59,6 +59,7 @@ LazyLord.warn = function (object, reason, resolution) {
 /** Entry point invoked from the panel: LazyLord.run("/path/to/ir.json"). */
 LazyLord.run = function (irPath) {
   var result = { ok: false, layersCreated: 0, message: "", diagnostics: [] };
+  var snap = null;
   LazyLord.resetDiagnostics();
   try {
     if (typeof LazyLord.build !== "function") {
@@ -67,13 +68,41 @@ LazyLord.run = function (irPath) {
     var raw = LazyLord.readFile(irPath);
     var doc = JSON.parse(raw);
     if (!doc || !doc.layers) throw new Error("Invalid IR payload.");
+    snap = LazyLord.takeSnapshot();
     result = LazyLord.build(doc);
   } catch (e) {
-    result.ok = false;
-    result.message = (e && e.message) ? e.message : String(e);
+    result = { ok: false, layersCreated: 0, message: (e && e.message) ? e.message : String(e) };
+    // All or nothing: a build that stops part-way takes back what it made.
+    if (snap) result.message += " " + LazyLord.undoBuild(snap);
   }
   result.diagnostics = LazyLord.diagnostics;
   return JSON.stringify(result);
+};
+
+/*
+ * Transactions. A host builder may define LazyLord.snapshot() — what exists
+ * before a build — and LazyLord.rollback(snapshot) — remove what the build
+ * added since, returning true when it all went. Rollback must only ever touch
+ * things that were NOT in the snapshot (matched by id, never by position), and
+ * leave anything it cannot identify alone.
+ */
+
+/** The host's snapshot, or null when it has none or cannot take one. */
+LazyLord.takeSnapshot = function () {
+  if (typeof LazyLord.snapshot !== "function") return null;
+  try { return LazyLord.snapshot(); } catch (e) { return null; }
+};
+
+/** Roll back after a failed build; returns a sentence for the error message. */
+LazyLord.undoBuild = function (snap) {
+  if (typeof LazyLord.rollback !== "function") return "";
+  try {
+    return LazyLord.rollback(snap)
+      ? "Everything this transfer had built was removed again."
+      : "Some of what this transfer had built could not be identified and was left in place.";
+  } catch (e) {
+    return "What this transfer had built could not all be removed (" + ((e && e.message) || e) + ").";
+  }
 };
 
 /**

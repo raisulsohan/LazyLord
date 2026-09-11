@@ -142,13 +142,25 @@ function handleMessage(client: Client, msg: Message) {
       break;
     }
 
+    case "chunk": {
+      // A large transfer in pieces: relayed to the same targets as the whole
+      // transfer would be. The first piece is logged and remembered for the ack.
+      const targets = targetsFor(client, msg.target);
+      if (msg.index === 0) {
+        log(`transfer ${msg.id}: ${msg.total} chunk(s) from ${roleLabel(client.role)} -> ${targets.length} host(s)`);
+        if (targets.length === 0) {
+          send(client.socket, { type: "ack", id: msg.id, from: "unknown", ok: false, message: notConnected(msg.target) });
+          return;
+        }
+        pruneOrigins();
+        transferOrigins.set(msg.id, { client, at: Date.now() });
+      }
+      for (const t of targets) send(t.socket, msg);
+      break;
+    }
+
     case "transfer": {
-      const targets = [...clients].filter((c) => {
-        if (c === client) return false; // never echo to the sender
-        // Figma receives like any other host now; only the sender is excluded.
-        if (msg.target && msg.target !== "unknown") return c.role === msg.target;
-        return true; // broadcast to all Adobe clients
-      });
+      const targets = targetsFor(client, msg.target);
       // Leaves, not top-level entries: a Figma frame arrives as one group.
       const layerCount = countLeaves(msg.document?.layers);
       const from = roleLabel(client.role);
@@ -159,9 +171,7 @@ function handleMessage(client: Client, msg: Message) {
           id: msg.id,
           from: "unknown",
           ok: false,
-          message: msg.target
-            ? `${roleLabel(msg.target)} is not connected. Open the LazyLord panel there first.`
-            : "No receiving app is connected. Open the LazyLord panel in Photoshop, Illustrator or After Effects, or the plugin in Figma.",
+          message: notConnected(msg.target),
         });
         return;
       }
@@ -195,6 +205,22 @@ function handleMessage(client: Client, msg: Message) {
     default:
       break;
   }
+}
+
+/** Who receives a transfer: the named app, or everyone but the sender. */
+function targetsFor(sender: Client, target: Role | undefined): Client[] {
+  return [...clients].filter((c) => {
+    if (c === sender) return false; // never echo to the sender
+    // Figma receives like any other host now; only the sender is excluded.
+    if (target && target !== "unknown") return c.role === target;
+    return true;
+  });
+}
+
+function notConnected(target: Role | undefined): string {
+  return target
+    ? `${roleLabel(target)} is not connected. Open the LazyLord panel there first.`
+    : "No receiving app is connected. Open the LazyLord panel in Photoshop, Illustrator or After Effects, or the plugin in Figma.";
 }
 
 // Heartbeat: drop dead sockets.

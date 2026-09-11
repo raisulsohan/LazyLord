@@ -364,6 +364,32 @@ LazyLord._ps_isTopOf = function (item, set) {
   }
 };
 
+/*
+ * Transactions (see LazyLord.run): the documents open and the active one's
+ * history state, before a build. A failed build closes a document it opened,
+ * unsaved, and steps the existing one back to that state — which keeps the
+ * undone steps in the History panel, so Redo can bring them back.
+ */
+LazyLord.snapshot = function () {
+  var s = { docs: app.documents.length, doc: null, state: null };
+  if (!app.documents.length) return s;
+  s.doc = app.activeDocument;
+  try { s.state = s.doc.activeHistoryState; } catch (e) {}
+  return s;
+};
+
+LazyLord.rollback = function (s) {
+  if (app.documents.length > s.docs) {
+    // The build opened a document of its own: it is the active one.
+    app.activeDocument.close(SaveOptions.DONOTSAVECHANGES);
+  }
+  if (!s.doc) return true;
+  if (!s.state) return false;
+  app.activeDocument = s.doc;
+  s.doc.activeHistoryState = s.state;
+  return true;
+};
+
 LazyLord._ps_doc = function (doc) {
   if (app.documents.length > 0 && !LazyLord.wantsNewDocument(doc)) return app.activeDocument;
   // The source page when there is one, so document-space artwork lands inside.

@@ -315,6 +315,19 @@ Worth knowing:
 - AE shape layers holding several painted groups now arrive as several shapes (they used to share the first fill).
 - A new AE comp / Illustrator or Photoshop document is sized to the source artboard, comp or top-level Figma frame, not just the selection.
 
+## Reliability, history and presets
+
+- **All or nothing.** If a build stops part-way with an error, what it had made is taken back:
+  - **After Effects:** new layers and project items are removed. They are matched by id, so the user's own are never touched.
+  - **Illustrator:** new items are removed by uuid, and a document the transfer opened is closed unsaved.
+  - **Photoshop:** the document steps back to its history state before the build, so Redo can bring it back.
+
+  Anything that cannot be identified is left alone, and the error says so. Per-layer fallbacks still give a partial build with diagnostics, as before. Layers an *Update* had already edited stay edited (use Undo). Figma builds are not rolled back yet.
+- **Large transfers** (JSON over 4 MB, usually because of images) travel in 1 MB chunks that the receiver joins back together, staying well under the bridge's 100 MB message limit.
+- **Temporary files.** Transfer folders in `<temp>/lazylord` older than 7 days are removed when a panel starts. Until then, an After Effects project that was never saved still links its generated images from there.
+- **History.** The Adobe panels and the Figma plugin keep the last 25 transfers sent and received: when, where to or from, what, how many layers, and any fallbacks or failure. It is kept per app, and can be cleared.
+- **Presets.** The Options section can save the Destination, Image scale and options under a name and bring them back in one step.
+
 ## Known limitations
 
 - **After Effects gradients** come from the Gradient Ramp effect because scripts cannot set shape-layer gradient colours. A Ramp has two colours and no per-stop transparency: extra stops are dropped and uneven alpha is averaged, both reported. Gradient **strokes** become their first colour.
@@ -387,6 +400,9 @@ cscript //Nologo tools\test-photoshop-reader.js
 ```
 ```bash
 cscript //Nologo tools\test-cep-panel.js
+```
+```bash
+cscript //Nologo tools\test-rollback.js
 ```
 
 The core geometry and the Figma plugin's serialiser run under Node ≥ 22.7 with type stripping (the script copies the core sources to `.lazylord-tmp/` first):

@@ -468,6 +468,33 @@ WScript.Echo("");
     ok("multi: bounds span both", near(ir.bounds.width, 250), String(ir.bounds.width));
 })();
 
+// 11b) Live sync: the stamp follows the history and the selection.
+(function () {
+    reset();
+    var a = layer("A", LayerKind.NORMAL, [100, 100, 50, 50]);
+    var b = layer("B", LayerKind.NORMAL, [300, 100, 50, 50]);
+    var doc = setUp(makeDoc({ layers: [a, b] }));
+    doc.id = 7;
+    doc.historyStates = { length: 3 };
+    doc.activeHistoryState = { name: "Move" };
+    select(doc, [a]);
+    doc.activeLayer = a;
+    var s1 = LazyLord.liveStamp();
+    ok("live stamp: a document gives one", /^[0-9a-z]+\.[0-9a-z]+$/.test(s1), s1);
+    ok("live stamp: the same each time", LazyLord.liveStamp() === s1);
+    doc.historyStates.length = 4;
+    doc.activeHistoryState = { name: "Color Fill" };
+    var s2 = LazyLord.liveStamp();
+    ok("live stamp: a new history state changes it", s2 !== s1);
+    a.bounds = bounds(110, 100, 50, 50); // a move, with the history already full
+    var s3 = LazyLord.liveStamp();
+    ok("live stamp: so does moving the active layer", s3 !== s2);
+    select(doc, [a, b]);
+    ok("live stamp: and a different selection", LazyLord.liveStamp() !== s3);
+    app.documents.length = 0;
+    ok("live stamp: no document is empty", LazyLord.liveStamp() === "");
+})();
+
 // 12) The document key is what stops a layer id matching another file's.
 (function () {
     reset();

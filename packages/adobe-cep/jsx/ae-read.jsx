@@ -52,6 +52,29 @@
  * pixels and go through the layer matrix.
  */
 
+/**
+ * Live sync: a cheap stamp of what a send would read, which the panel polls and
+ * sends again when it changes — the comp, the selected layers and, for each,
+ * the builder's own fingerprint (transform, outline, paint, text, footage)
+ * plus its name, blend mode, in/out points and switch. Keys are read, not the
+ * value at the playhead, so scrubbing the timeline is not a change. "" when
+ * there is nothing to send.
+ */
+LazyLord.liveStamp = function () {
+  var comp = app.project.activeItem;
+  if (!comp || !(comp instanceof CompItem)) return "";
+  var sel = comp.selectedLayers;
+  if (!sel || !sel.length) return "";
+  var out = [comp.id];
+  for (var i = 0; i < sel.length && i < 200; i++) {
+    var l = sel[i];
+    var extra = [];
+    try { extra = [l.index, l.name, l.blendingMode, l.inPoint, l.outPoint, l.enabled]; } catch (e) {}
+    out.push(LazyLord.printValue(extra) + LazyLord._ae_state(l));
+  }
+  return LazyLord.hashText(out.join("|"));
+};
+
 /* -------------------------------------------------------------------------
  * Entry point
  * ---------------------------------------------------------------------- */

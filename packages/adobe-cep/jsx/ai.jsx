@@ -1377,7 +1377,11 @@ LazyLord._ai_state = function (items) {
   return LazyLord.hashText(prints.join("|"));
 };
 
-LazyLord._ai_itemPrint = function (it) {
+/**
+ * One item as text. `budget` ({ points }) caps how many path points are read,
+ * for the live stamp; past it a path is only counted. Fingerprints pass none.
+ */
+LazyLord._ai_itemPrint = function (it, budget) {
   var out = [];
   function add(get) {
     try { out.push(LazyLord.printValue(get())); } catch (e) { out.push("-"); }
@@ -1389,11 +1393,11 @@ LazyLord._ai_itemPrint = function (it) {
   add(function () { return it.opacity; });
   var i;
   if (tn === "PathItem") {
-    LazyLord._ai_pathPrint(it, out);
+    LazyLord._ai_pathPrint(it, out, budget);
   } else if (tn === "CompoundPathItem") {
-    try { for (i = 0; i < it.pathItems.length; i++) LazyLord._ai_pathPrint(it.pathItems[i], out); } catch (eC) {}
+    try { for (i = 0; i < it.pathItems.length; i++) LazyLord._ai_pathPrint(it.pathItems[i], out, budget); } catch (eC) {}
   } else if (tn === "GroupItem") {
-    try { for (i = 0; i < it.pageItems.length; i++) out.push("(" + LazyLord._ai_itemPrint(it.pageItems[i]) + ")"); } catch (eG) {}
+    try { for (i = 0; i < it.pageItems.length; i++) out.push("(" + LazyLord._ai_itemPrint(it.pageItems[i], budget) + ")"); } catch (eG) {}
   } else if (tn === "TextFrame") {
     add(function () { return it.contents; });
     try {
@@ -1408,11 +1412,16 @@ LazyLord._ai_itemPrint = function (it) {
   return out.join(";");
 };
 
-LazyLord._ai_pathPrint = function (p, out) {
+LazyLord._ai_pathPrint = function (p, out, budget) {
   try {
     var pts = p.pathPoints;
-    for (var i = 0; i < pts.length; i++) {
-      out.push(LazyLord.printValue([pts[i].anchor, pts[i].leftDirection, pts[i].rightDirection]));
+    if (budget && budget.points < pts.length) {
+      out.push("n" + pts.length);
+    } else {
+      for (var i = 0; i < pts.length; i++) {
+        out.push(LazyLord.printValue([pts[i].anchor, pts[i].leftDirection, pts[i].rightDirection]));
+      }
+      if (budget) budget.points -= pts.length;
     }
   } catch (e) {}
   var bits = [];

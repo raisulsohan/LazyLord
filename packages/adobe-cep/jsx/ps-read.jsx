@@ -15,6 +15,26 @@
  * across — always reported, never silent.
  */
 
+/**
+ * Live sync: a cheap stamp the panel polls, sending again when it changes.
+ * Photoshop records every edit as a history state, so the stamp is the
+ * document, its history (how many states, which is current) and the selected
+ * layers with the bounds, opacity and visibility of the active one — enough to
+ * notice an edit without reading any pixels. "" when there is nothing to send.
+ */
+LazyLord.liveStamp = function () {
+  if (app.documents.length === 0) return "";
+  var d = app.activeDocument;
+  var out = [];
+  try { out.push(d.id, d.historyStates.length, d.activeHistoryState.name); } catch (e) {}
+  try { out.push(LazyLord._psr_selectedIds(d).join(",")); } catch (e2) {}
+  try {
+    var a = d.activeLayer;
+    out.push(LazyLord.printValue([a.id, a.name, a.opacity, a.visible]), String(a.bounds));
+  } catch (e3) {}
+  return LazyLord.hashText(out.join("|"));
+};
+
 /* -------------------------------------------------------------------------
  * Entry point
  * ---------------------------------------------------------------------- */

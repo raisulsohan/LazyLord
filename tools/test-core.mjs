@@ -1867,6 +1867,130 @@ const groupedDoc = () => ({
   ],
 });
 
+// Live sync, the plugin half: watch what was selected, export again on a change.
+await block("live (plugin)", async () => {
+  const timers = [];
+  const realSet = globalThis.setTimeout;
+  const realClear = globalThis.clearTimeout;
+  const settle = () => new Promise((r) => realSet(r, 5));
+  let handler = null;
+  const all = new Map();
+  globalThis.setTimeout = (fn) => timers.push(fn);
+  globalThis.clearTimeout = (id) => { if (id) timers[id - 1] = null; };
+  page.on = (type, cb) => { if (type === "nodechange") handler = cb; };
+  page.off = (type, cb) => { if (type === "nodechange" && handler === cb) handler = null; };
+  figma.getNodeByIdAsync = async (id) => all.get(id) || null;
+  const pending = () => timers.filter(Boolean).length;
+  const runTimers = async () => {
+    const due = timers.splice(0);
+    for (const fn of due) if (fn) fn();
+    await settle();
+  };
+  try {
+    const a = rectNode(10, 10, T(0));
+    const b = rectNode(10, 10, T(0, 50, 0));
+    const other = rectNode(5, 5, T(0, 200, 0));
+    scene([a, b, other]);
+    for (const n of [a, b, other]) all.set(n.id, n);
+
+    posted.length = 0;
+    page.selection = [];
+    await figma.ui.onmessage({ type: "live-start", scale: 2, place: "open" });
+    ok("live: nothing selected, nothing watched", posted.some((m) => m.type === "live" && !m.on && /Select what to keep in step/.test(m.message)) && !handler);
+
+    posted.length = 0;
+    page.selection = [a, b];
+    await figma.ui.onmessage({ type: "live-start", scale: 2, place: "open" });
+    await settle();
+    ok("live: on, counting what it watches", posted.some((m) => m.type === "live" && m.on && m.count === 2) && !!handler);
+    const first = posted.find((m) => m.type === "ir");
+    ok("live: its first export goes at once, marked start", first && first.live === "start" && first.documents[0].layers.length === 2);
+
+    posted.length = 0;
+    handler({ nodeChanges: [{ type: "PROPERTY_CHANGE", id: other.id, node: other }] });
+    ok("live: a change elsewhere is ignored", pending() === 0);
+    handler({ nodeChanges: [{ type: "DELETE", id: "9:9", node: { id: "9:9", removed: true } }] });
+    ok("live: a part removed is ignored", pending() === 0);
+    handler({ nodeChanges: [{ type: "PROPERTY_CHANGE", id: a.id, node: a }] });
+    handler({ nodeChanges: [{ type: "PROPERTY_CHANGE", id: b.id, node: b }] });
+    ok("live: changes in a row wait for a pause", pending() === 1);
+    await runTimers();
+    const change = posted.find((m) => m.type === "ir");
+    ok("live: then it exports again, marked change", change && change.live === "change" && posted.filter((m) => m.type === "ir").length === 1);
+
+    posted.length = 0;
+    all.delete(a.id);
+    all.delete(b.id);
+    handler({ nodeChanges: [{ type: "DELETE", id: a.id, node: { id: a.id, removed: true } }] });
+    await runTimers();
+    ok("live: stops once what it watched is gone", !handler &&
+      posted.some((m) => m.type === "live" && !m.on && /gone/.test(m.message)));
+
+    all.set(a.id, a);
+    page.selection = [a];
+    await figma.ui.onmessage({ type: "live-start", scale: 2, place: "open" });
+    await settle();
+    posted.length = 0;
+    await figma.ui.onmessage({ type: "live-stop" });
+    ok("live: switched off by the user, quietly", !handler && posted.some((m) => m.type === "live" && !m.on && m.message === ""));
+  } finally {
+    globalThis.setTimeout = realSet;
+    globalThis.clearTimeout = realClear;
+    delete page.on;
+    delete page.off;
+  }
+});
+
+// Live sync, the UI half: every export sent as an update of only what changed.
+await block("ui, live", async () => {
+  const ui = await loadUi();
+  const ws = ui.connect();
+  const live = ui.$("#live");
+  live.checked = true;
+  live.fire("change");
+  const start = ui.toPlugin.find((m) => m.type === "live-start");
+  ok("live ui: asks the plugin to start watching", start && start.scale === 2);
+  ui.fromPlugin({ type: "live", on: true, count: 2 });
+  ok("live ui: says what it keeps in step", ui.$("#status").textContent === "Live: keeping 2 objects in step…");
+
+  const moved = () => {
+    const d = groupedDoc();
+    d.layers[0].children[1].frame.x = 7;
+    return d;
+  };
+  const sendLive = (doc, kind) => {
+    ws.sent.length = 0;
+    ui.fromPlugin({ type: "ir", documents: [doc], live: kind });
+    return ws.sent.find((m) => m.type === "transfer");
+  };
+  const ack = (t) => ws.onmessage({ data: JSON.stringify({ type: "ack", id: t.id, from: "illustrator", ok: true, layersCreated: 1 }) });
+
+  const t1 = sendLive(groupedDoc(), "start");
+  ok("live ui: the first send is everything, as an update into the open document", t1 && countTree(t1.document.layers) === 3 &&
+    t1.document.options.existing === "update" && t1.document.options.destination === "active");
+  ok("live ui: a change while that is in flight waits", !sendLive(moved(), "change"));
+  ui.toPlugin.length = 0;
+  ack(t1);
+  ok("live ui: then asks for it again", ui.toPlugin.some((m) => m.type === "live-export"));
+  ok("live ui: live sends stay out of the history", !ui.toPlugin.some((m) => m.type === "save-list" && m.kind === "history"));
+  const t2 = sendLive(moved(), "change");
+  ok("live ui: only the changed layer goes", t2 && countTree(t2.document.layers) === 1 && t2.document.layers[0].children[0].id === "b");
+  ack(t2);
+  ok("live ui: nothing changed, nothing sent", !sendLive(moved(), "change") && ui.$("#status").textContent === "Live: up to date.");
+
+  ui.fromPlugin({ type: "live", on: false, message: "the objects it was keeping in step are gone" });
+  ok("live ui: stopped by the plugin, and says why", live.checked === false &&
+    ui.$("#status").textContent === "Live stopped: the objects it was keeping in step are gone");
+  ok("live ui: a late export after that is dropped", !sendLive(moved(), "change"));
+
+  live.checked = true;
+  live.fire("change");
+  ui.fromPlugin({ type: "live", on: true, count: 1 });
+  ui.toPlugin.length = 0;
+  ws.onclose();
+  ok("live ui: the bridge going away stops it", live.checked === false && ui.toPlugin.some((m) => m.type === "live-stop"));
+});
+
 // Markup: the same choices, labels and order as the Adobe panel.
 await block("markup", async () => {
   const dom = parseUi(uiHtml);

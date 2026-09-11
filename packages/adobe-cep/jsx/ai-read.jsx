@@ -44,6 +44,31 @@
  * host with live shapes can rebuild them parametrically.
  */
 
+/**
+ * Live sync: a cheap stamp of what a send would read, which the panel polls and
+ * sends again when it changes — each selected item's geometry, points, paint,
+ * text and linked file (the builder's conflict fingerprint), its name and blend
+ * mode. A large selection stops reading points after a few thousand and goes
+ * on with bounds, and looks at no more than 500 items, so the poll never
+ * stalls Illustrator. "" when there is
+ * nothing to send, including while text is being typed (the selection is then
+ * a text range, and the frame is read once editing ends).
+ */
+LazyLord.liveStamp = function () {
+  if (app.documents.length === 0) return "";
+  var sel = app.selection;
+  if (!sel || typeof sel.length !== "number" || sel.length === 0 || sel.typename === "TextRange") return "";
+  var budget = { points: 4000 };
+  var out = [];
+  for (var i = 0; i < sel.length && i < 500; i++) {
+    var it = sel[i];
+    var extra = [];
+    try { extra = [it.name, it.blendingMode]; } catch (e) {}
+    out.push(LazyLord.printValue(extra) + LazyLord._ai_itemPrint(it, budget));
+  }
+  return LazyLord.hashText(out.join("|"));
+};
+
 /* -------------------------------------------------------------------------
  * Entry point
  * ---------------------------------------------------------------------- */

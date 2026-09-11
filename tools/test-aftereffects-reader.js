@@ -329,6 +329,7 @@ function selectComp(layers) {
 // --- Load the real code (global scope) -------------------------------------
 eval(load("json2.js"));
 eval(load("lazylord.jsx"));
+eval(load("ae.jsx")); // the panel loads the builder too; the live stamp uses its fingerprint
 eval(load("ae-read.jsx"));
 
 // --- Assertions ------------------------------------------------------------
@@ -2127,6 +2128,24 @@ WScript.Echo("");
        v.children[1].fills.length === 0, tree([v]));
     ok("nested gradient: reported once, unfilled", LazyLord.diagnostics.length === 1 &&
        diagsWith("'Gradient Fill 1'", "arrive unfilled").length === 1, JSON.stringify(LazyLord.diagnostics));
+})();
+
+// Live sync: the stamp the panel polls.
+(function () {
+    var box = shapeLayer("Box", [rectNode([100, 50], [0, 0]), fillNode([1, 0, 0, 1])], transform([200, 300]));
+    var comp = selectComp([box]);
+    var s1 = LazyLord.liveStamp();
+    ok("live stamp: a selection gives one", /^[0-9a-z]+\.[0-9a-z]+$/.test(s1), s1);
+    ok("live stamp: the same each time", LazyLord.liveStamp() === s1);
+    comp.time = 5;
+    ok("live stamp: the playhead is not a change", LazyLord.liveStamp() === s1);
+    box.property("ADBE Transform Group").property("ADBE Position").value = [210, 300];
+    var s2 = LazyLord.liveStamp();
+    ok("live stamp: a moved layer changes it", s2 !== s1, s2);
+    box.property("ADBE Root Vectors Group").property(2).property("ADBE Vector Fill Color").value = [0, 0, 1, 1];
+    ok("live stamp: a recolour changes it", LazyLord.liveStamp() !== s2);
+    comp.selectedLayers = [];
+    ok("live stamp: nothing selected is empty", LazyLord.liveStamp() === "");
 })();
 
 WScript.Echo("");

@@ -116,6 +116,7 @@ function connect() {
 
   ws.onclose = () => {
     setConn(false, "Bridge offline");
+    stopLiveUi("the bridge went offline");
     peers = [];
     renderPeers();
     scheduleReconnect();
@@ -191,7 +192,8 @@ function onMessage(msg: Message) {
       } else {
         setStatus(`${roleLabel(msg.from)}: ${msg.message || "transfer failed"}`, "err");
       }
-      if (!inBatch) {
+      const wasLive = liveIds.delete(msg.id);
+      if (!inBatch && !wasLive) {
         recordHistory({
           dir: "out", peer: roleLabel(msg.from), name: sentNames.get(msg.id) || "", ok: !!msg.ok,
           layers: msg.layersCreated ?? 0, updated: (msg as any).layersUpdated ?? 0,
@@ -200,6 +202,7 @@ function onMessage(msg: Message) {
       }
       sentNames.delete(msg.id);
       updateSendButton();
+      liveNext();
       break;
     }
     case "transfer": {
@@ -619,30 +622,55 @@ window.onmessage = (event: MessageEvent) => {
       prefsApplied = true;
       applyPrefs(msg);
     }
+  } else if (msg.type === "live") {
+    liveOn = !!msg.on;
+    if (liveEl) liveEl.checked = liveOn;
+    if (!liveOn) liveQueued = false;
+    if (msg.message) setStatus(liveOn ? msg.message : `Live stopped: ${msg.message}`, "err");
+    else if (liveOn && msg.count) setStatus(`Live: keeping ${msg.count} object${msg.count === 1 ? "" : "s"} in step…`, "ok");
+    else if (!liveOn) setStatus("Live is off.", "");
   } else if (msg.type === "ir") {
+    // Live: "start" is its first send (everything), "change" a later one.
+    const live = msg.live === "start" || msg.live === "change" ? (msg.live as "start" | "change") : null;
+    if (live && !liveOn) return; // switched off while this was being exported
+    if (live && pending.size > 0) {
+      // Still sending the last change: export again once that is answered,
+      // so this one is not lost and the sends never overlap.
+      liveQueued = true;
+      return;
+    }
     // Several whole frames arrive as one document each (a comp / document per frame).
     let docs = (Array.isArray(msg.documents) ? msg.documents : [msg.document]) as Document[];
     const options = currentOptions();
+    // Live keeps one copy in step: it updates what its first send built.
+    if (live) {
+      options.existing = "update";
+      options.destination = "active";
+    }
+    const to = live ? (target || null) : ((msg.target as Role) || null);
     // Updating: only what changed since the last send to this app goes out.
-    const dest = (msg.target as string) || "all";
-    let prints = docs.map((d) => fingerprintLeaves(d, dest, options.existing === "update" && onlyChangedWanted()));
+    const dest = to || "all";
+    const prune = live ? live === "change" : options.existing === "update" && onlyChangedWanted();
+    let prints = docs.map((d) => fingerprintLeaves(d, dest, prune));
     const skipped = prints.reduce((n, p) => n + p.skipped, 0);
     docs = docs.filter((_, i) => !prints[i].pruned || prints[i].kept > 0);
     prints = prints.filter((p) => !p.pruned || p.kept > 0);
     if (!docs.length) {
-      setStatus("Nothing changed since the last send, so nothing was sent.", "ok");
+      setStatus(live ? "Live: up to date." : "Nothing changed since the last send, so nothing was sent.", "ok");
       updateSendButton();
       return;
     }
-    const note = skipped ? ` ${skipped} unchanged layer${skipped === 1 ? "" : "s"} not sent again.` : "";
+    const note = skipped && !live ? ` ${skipped} unchanged layer${skipped === 1 ? "" : "s"} not sent again.` : "";
     batch = docs.length > 1 ? { ids: new Set(), total: docs.length, done: 0, layers: 0, failures: [], from: "" } : null;
     docs.forEach((doc, i) => {
       addDiagnostics("Figma", doc.diagnostics);
       // The receiving app's builder lays the transfer out as asked here.
       doc.options = Object.assign({}, options);
-      dispatchTransfer(doc, (msg.target as Role) || undefined, i, prints[i]);
+      const id = dispatchTransfer(doc, to || undefined, i, prints[i]);
+      if (live) liveIds.add(id);
     });
     if (batch) setStatus(`Sent ${docs.length} frames, one ${frameUnit()} each…${note}`, "");
+    else if (live) setStatus(`Live: sent ${countLeaves(docs[0].layers)} layer(s)…`, "");
     else if (note) setStatus(`Sent ${countLeaves(docs[0].layers)} layer(s)…${note}`, "");
   } else if (msg.type === "built") {
     // The main thread finished rebuilding a transfer: tell the sender.
@@ -733,7 +761,7 @@ function rememberSent(p: Prints) {
   while (sentPrints.size > SENT_DOCS_MAX) sentPrints.delete(sentPrints.keys().next().value as string);
 }
 
-function dispatchTransfer(document: Document, tgt?: Role, index = 0, prints?: Prints) {
+function dispatchTransfer(document: Document, tgt?: Role, index = 0, prints?: Prints): string {
   const id = uuid();
   const transfer: TransferMessage = { type: "transfer", id, target: tgt, document };
   pending.set(id, Date.now());
@@ -758,9 +786,56 @@ function dispatchTransfer(document: Document, tgt?: Role, index = 0, prints?: Pr
       } else {
         setStatus("No response from Adobe (is the panel open?).", "err");
       }
+      liveIds.delete(id);
       updateSendButton();
+      liveNext();
     }
   }, 12000 + 8000 * index);
+  return id;
+}
+
+// --- Live sync -----------------------------------------------------------------
+// The main thread watches the objects and exports them again when they change
+// (code.ts); here each export is sent as an update of only what changed. A
+// change that arrives while the last one is still being sent waits for it.
+
+const liveEl = $<HTMLInputElement>("#live");
+let liveOn = false;
+let liveQueued = false;
+/** Live transfers, which stay out of the history. */
+const liveIds = new Set<string>();
+
+/** Once nothing is in flight, ask for the change that came in meanwhile. */
+function liveNext() {
+  if (!liveOn || !liveQueued || pending.size > 0) return;
+  liveQueued = false;
+  parent.postMessage({ pluginMessage: { type: "live-export" } }, "*");
+}
+
+function stopLiveUi(why: string) {
+  if (!liveOn) return;
+  parent.postMessage({ pluginMessage: { type: "live-stop" } }, "*");
+  liveOn = false;
+  liveQueued = false;
+  if (liveEl) liveEl.checked = false;
+  if (why) setStatus(`Live stopped: ${why}.`, "err");
+}
+
+if (liveEl) {
+  liveEl.addEventListener("change", () => {
+    if (!liveEl.checked) {
+      parent.postMessage({ pluginMessage: { type: "live-stop" } }, "*");
+      return;
+    }
+    if (!connected) {
+      liveEl.checked = false;
+      setStatus("Live needs the LazyLord bridge; start it and try again.", "err");
+      return;
+    }
+    diagnostics = [];
+    renderDiagnostics();
+    parent.postMessage({ pluginMessage: { type: "live-start", scale, place: placeSel.value } }, "*");
+  });
 }
 
 // --- Several frames, one document / comp each --------------------------------

@@ -205,28 +205,125 @@ async function postList(kind: ListKind): Promise<void> {
 // UI messages
 // ---------------------------------------------------------------------------
 
+/**
+ * The documents to send for `nodes`, or why there is nothing to send. Several
+ * whole frames or sections sent to new documents: one document (or comp) per
+ * frame, each at its size and under its name.
+ */
+async function exportNodes(nodes: readonly SceneNode[], scale: number, place: Place): Promise<{ docs: Document[] } | { error: string }> {
+  const sorted = sortByZOrder(topmostOnly(nodes));
+  const perFrame = place !== "open" && sorted.length > 1 && sorted.every(isWholeFrame);
+  const sets = perFrame ? sorted.map((n) => [n]) : [sorted];
+  const docs: Document[] = [];
+  for (const set of sets) docs.push(await buildDocument(scale, place, set));
+  const sendable = docs.filter((d) => d.layers.length > 0);
+  if (sendable.length === 0) {
+    const first = docs[0];
+    const why = first && first.diagnostics && first.diagnostics.length ? ` ${first.diagnostics[0].object}: ${first.diagnostics[0].reason}.` : "";
+    return { error: "Nothing to send — select at least one visible layer." + why };
+  }
+  return { docs: sendable };
+}
+
+// ---------------------------------------------------------------------------
+// Live sync
+// ---------------------------------------------------------------------------
+// While Live is on, the objects selected when it was switched on are watched:
+// a change anywhere inside them is exported again after a short pause (typing
+// and dragging fire many changes in a row) and the UI sends it as an update
+// carrying only what changed. The page's nodechange event is used because the
+// plugin loads pages dynamically, where documentchange needs every page loaded.
+
+type Live = { ids: string[]; scale: number; place: Place; page: PageNode };
+let live: Live | null = null;
+let liveTimer: ReturnType<typeof setTimeout> | undefined;
+const LIVE_DELAY_MS = 600;
+
+/** Whether a change touches a watched object: the object itself or anything inside it. */
+function touchesLive(change: NodeChange, roots: Set<string>): boolean {
+  // A removed node cannot be walked up from, and removing a part of an object
+  // leaves nothing for an update to send; a watched object going is noticed.
+  if (change.type === "DELETE") return roots.has(change.id);
+  let n: BaseNode | null = change.node as BaseNode;
+  while (n) {
+    if (roots.has(n.id)) return true;
+    n = n.parent;
+  }
+  return false;
+}
+
+function onLiveChange(event: NodeChangeEvent) {
+  if (!live) return;
+  const roots = new Set(live.ids);
+  if (!event.nodeChanges.some((c) => touchesLive(c, roots))) return;
+  if (liveTimer !== undefined) clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => {
+    liveTimer = undefined;
+    void liveExport("change");
+  }, LIVE_DELAY_MS);
+}
+
+async function liveExport(mode: "start" | "change") {
+  if (!live) return;
+  const found: SceneNode[] = [];
+  for (const id of live.ids) {
+    const n = await figma.getNodeByIdAsync(id);
+    if (n && !n.removed && n.type !== "PAGE" && n.type !== "DOCUMENT") found.push(n as SceneNode);
+  }
+  if (!found.length) {
+    stopLive("the objects it was keeping in step are gone");
+    return;
+  }
+  try {
+    const out = await exportNodes(found, live.scale, live.place);
+    if ("error" in out) figma.ui.postMessage({ type: "live", on: true, message: out.error });
+    else figma.ui.postMessage({ type: "ir", documents: out.docs, live: mode });
+  } catch (e) {
+    figma.ui.postMessage({ type: "live", on: true, message: (e as Error).message || String(e) });
+  }
+}
+
+function startLive(scale: number, place: Place) {
+  stopLive("");
+  const nodes = sortByZOrder(topmostOnly(figma.currentPage.selection));
+  if (!nodes.length) {
+    figma.ui.postMessage({ type: "live", on: false, message: "Select what to keep in step first." });
+    return;
+  }
+  live = { ids: nodes.map((n) => n.id), scale, place, page: figma.currentPage };
+  live.page.on("nodechange", onLiveChange);
+  figma.ui.postMessage({ type: "live", on: true, count: nodes.length });
+  void liveExport("start");
+}
+
+/** Stop watching; `why` is shown when it was not the user's own doing. */
+function stopLive(why: string) {
+  if (liveTimer !== undefined) clearTimeout(liveTimer);
+  liveTimer = undefined;
+  if (!live) return;
+  try { live.page.off("nodechange", onLiveChange); } catch { /* the page is gone */ }
+  live = null;
+  figma.ui.postMessage({ type: "live", on: false, message: why });
+}
+
 figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
   if (msg.type === "export") {
     try {
       const asked = cleanPrefs({ scale: msg.scale, place: msg.place });
-      const nodes = sortByZOrder(topmostOnly(figma.currentPage.selection));
-      // Several whole frames or sections sent to new documents: one document
-      // (or comp) per frame, each at its size and under its name.
-      const perFrame = asked.place !== "open" && nodes.length > 1 && nodes.every(isWholeFrame);
-      const sets = perFrame ? nodes.map((n) => [n]) : [nodes];
-      const docs: Document[] = [];
-      for (const set of sets) docs.push(await buildDocument(asked.scale, asked.place, set));
-      const sendable = docs.filter((d) => d.layers.length > 0);
-      if (sendable.length === 0) {
-        const first = docs[0];
-        const why = first && first.diagnostics && first.diagnostics.length ? ` ${first.diagnostics[0].object}: ${first.diagnostics[0].reason}.` : "";
-        figma.ui.postMessage({ type: "error", message: "Nothing to send — select at least one visible layer." + why });
-        return;
-      }
-      figma.ui.postMessage({ type: "ir", documents: sendable, target: msg.target || null });
+      const out = await exportNodes(figma.currentPage.selection, asked.scale, asked.place);
+      if ("error" in out) figma.ui.postMessage({ type: "error", message: out.error });
+      else figma.ui.postMessage({ type: "ir", documents: out.docs, target: msg.target || null });
     } catch (e) {
       figma.ui.postMessage({ type: "error", message: (e as Error).message || String(e) });
     }
+  } else if (msg.type === "live-start") {
+    const asked = cleanPrefs({ scale: msg.scale, place: msg.place });
+    startLive(asked.scale, asked.place);
+  } else if (msg.type === "live-stop") {
+    stopLive("");
+  } else if (msg.type === "live-export") {
+    // The UI was still sending when a change came in: it asks again once free.
+    await liveExport("change");
   } else if (msg.type === "receive") {
     // A transfer from another app: rebuild it on the current page.
     try {

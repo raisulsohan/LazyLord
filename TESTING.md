@@ -1,4 +1,4 @@
-# LazyLord — লাইভ টেস্ট চেকলিস্ট (v0.7)
+# LazyLord — লাইভ টেস্ট চেকলিস্ট (v0.8)
 
 এই সংস্করণের সব কোড শুধু নকল (mock) Adobe/Figma পরিবেশে টেস্ট করা হয়েছে। আসল অ্যাপে প্রথমবার চালিয়ে দেখার জন্য এই তালিকা।
 **⚠ চিহ্ন দেওয়া ঘরগুলো সবচেয়ে জরুরি।** এগুলো ডকুমেন্টেশন দেখে লেখা অনুমান, আসল অ্যাপ ছাড়া নিশ্চিত হওয়ার উপায় নেই।
@@ -183,6 +183,52 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] **বড় ট্রান্সফার:** অনেক বড় ছবিসহ ট্রান্সফার (৪ MB-র বেশি) পাঠালে প্যানেলের log-এ "sent in N pieces" দেখায়, আর গন্তব্যে ঠিকঠাক তৈরি হয়।
 - [ ] **পুরোনো temp ফাইল:** `%TEMP%\lazylord`-এ ৭ দিনের পুরোনো ফোল্ডার থাকলে প্যানেল খোলার সময় সেগুলো মুছে log-এ জানায়।
 - [ ] ⚠ **Rollback:** এটা ইচ্ছে করে ঘটানো কঠিন। কোনো ট্রান্সফার মাঝপথে error দিলে বার্তার শেষে "Everything this transfer had built was removed again" দেখায় কিনা, আর আপনার আগের layer অক্ষত থাকে কিনা, খেয়াল রাখুন।
+
+## ধাপ ২: Pro ফিচার
+
+- [ ] ⚠ **এক লেখায় কয়েক রকম স্টাইল (text runs):** Figma-তে একটা text-এর একটা শব্দ বোল্ড, অন্য রং আর বড় সাইজ করে AE, Illustrator আর Photoshop-এ পাঠান। তিন জায়গাতেই লেখাটা **live text** থাকে, আর ওই শব্দের স্টাইল আলাদা থাকে। AE-তে এর জন্য **After Effects 24.3 বা নতুন** লাগবে; পুরোনো AE-তে প্রথম অক্ষরের স্টাইল পুরো লেখায় বসে, আর তা নিয়ে সতর্কতা আসে।
+- [ ] **উল্টো দিকে:** Illustrator-এ মিশ্র স্টাইলের text Figma বা AE-তে পাঠান। স্টাইলগুলো ঠিক থাকে কিনা দেখুন।
+- [ ] **Hierarchy = Precomps (AE):** Figma-তে frame-এর ভেতরে frame আছে এমন ডিজাইন AE-তে পাঠান। প্রতিটা frame **নিজের মাপের precomp** হয়, ভেতরের frame তার ভেতরে nested precomp হয়, আর সব আগের জায়গাতেই দেখায়। Illustrator বা Photoshop-এ পাঠালে এটা Groups-এর মতো কাজ করে।
+- [ ] **Precompose / Decompose (AE প্যানেল):** AE-তে কয়েকটা layer সিলেক্ট করে **Precompose selected** দিন। সেগুলো একটা precomp-এ চলে যায়, আর দেখতে কিছু বদলায় না। তারপর precomp layer-টা সিলেক্ট করে **Decompose precomp** দিন। layer-গুলো আগের জায়গায় comp-এ ফিরে আসে, আর precomp layer-টা সরে যায়।
+- [ ] **Include guides:** Figma-র frame-এ ruler guide টেনে Options-এ **Include guides** দিয়ে পাঠান। AE (16.1+), Illustrator আর Photoshop-এ একই জায়গায় guide দেখা যায়। Illustrator-এ guide-গুলো লম্বা guide path হিসেবে আসে।
+- [ ] **Include swatches:** Figma-তে কয়েকটা color style রেখে **Include swatches** দিয়ে পাঠান। Illustrator-এর Swatches প্যানেলে একই নামে রং যোগ হয়। AE-তে **"Swatches"** নামে একটা guide layer আসে, যেখানে প্রতিটা রঙের একটা করে বর্গ থাকে; এটা রেন্ডারে আসে না। Photoshop-এ swatch যোগ হয় না, শুধু সতর্কতা আসে। একই নামের swatch আগে থেকে থাকলে সেটা দ্বিতীয়বার যোগ হয় না।
+- [ ] ⚠ **Import PSD from Photoshop (AE প্যানেল):** Photoshop-এ একটা PSD খুলে **সেভ করুন**। তারপর AE প্যানেলে **Import PSD from Photoshop** দিন। Photoshop-এর ফাইলটা layer-সহ composition হিসেবে AE-তে আসে। Photoshop চালু না থাকলে ফাইল বেছে নেওয়ার ডায়ালগ আসে। সেভ না করা বদল আসবে না, কারণ AE ফাইলের সেভ করা সংস্করণটাই পড়ে।
+
+## ধাপ ৩: Smart diff, conflict আর Live sync — নতুন
+
+এই তিনটেই **Existing = Update** নিয়ে কাজ করে। তাই প্রথমে একবার Add (বা Update) দিয়ে পাঠিয়ে গন্তব্যে layer তৈরি করে নিন।
+
+**Smart diff: শুধু বদলানো জিনিস যায়**
+
+- [ ] Existing = Update বাছলে Options-এ **"Only what changed"** চেকবক্স দেখা যায়, আর সেটা ডিফল্টে টিক দেওয়া থাকে।
+- [ ] কিছু না বদলে আবার Update পাঠান। কিছুই যায় না, আর "Nothing changed since the last send" লেখা আসে।
+- [ ] দশটা জিনিসের একটা সরিয়ে Update পাঠান। log/status-এ দেখায় "9 unchanged layers not sent again", আর গন্তব্যে শুধু ওইটাই বদলায়।
+- [ ] গন্তব্যে কোনো layer মুছে ফেললে Update সেটা আবার আনবে না, কারণ LazyLord জানে ওটা আগে পাঠানো হয়ে গেছে। তখন **"Only what changed"-এর টিক তুলে** পাঠান, সব আবার যাবে।
+- [ ] Figma প্লাগিন বন্ধ করে আবার খুললে প্রথম Update-এ সব একবার যায়। এটা প্রত্যাশিত; Adobe প্যানেল আগের পাঠানোর হিসাব মনে রাখে।
+
+**Conflict: গন্তব্যে হাতে করা বদল ধরা**
+
+- [ ] Existing = Update বাছলে Options-এ **"On conflict"** আসে: **Overwrite** (ডিফল্ট) আর **Keep my edits**।
+- [ ] ⚠ **AE, Overwrite:** Figma থেকে একটা shape AE-তে পাঠান। AE-তে সেটা হাতে সরান বা রং বদলান। এবার Figma-তে ওই shape-টা বদলে Update পাঠান। Figma-র বদলটা বসে যায়, আর সতর্কতার তালিকায় লেখা আসে "Was changed in After Effects since it was last sent; the update replaced those changes"।
+- [ ] ⚠ **AE, Keep my edits:** একই কাজ করুন, কিন্তু On conflict = **Keep my edits** রাখুন। AE-তে আপনার হাতের বদলটাই থাকে, layer ছোঁয়া হয় না, আর লেখা আসে "left as you made it"।
+- [ ] **হাত না দিলে conflict নেই:** AE-তে কিছু না বদলে শুধু playhead সরিয়ে Update পাঠান। কোনো conflict সতর্কতা আসে না।
+- [ ] ⚠ **Illustrator-এ একই পরীক্ষা:** Illustrator-এ item-এর রং বা একটা point বদলে Update পাঠান, দুটো অপশন দিয়েই। Keep my edits-এ আপনার বদলানো item-টাই থাকে, আর Overwrite-এ নতুনটা বসে।
+- [ ] ⚠ **সেভ করে খোলার পরও:** AE প্রোজেক্ট বা Illustrator ফাইল সেভ করে বন্ধ করুন, আবার খুলে কিছু না বদলে Update পাঠান। **ভুল করে conflict দেখানো উচিত না।** দেখালে জানাবেন, কারণ তার মানে সেভের পর কোনো মান একটু বদলে যায়।
+- [ ] আগের সংস্করণে তৈরি layer-এ (যাদের ট্যাগে `~` নেই) conflict আসে না; পরের Update থেকে তারাও ধরা পড়ে।
+- [ ] Photoshop বা Figma-তে পাঠালে Update হয় না, সবসময় যোগ হয়। তাই ওখানে conflict-এর প্রশ্নই নেই।
+
+**Live sync: কাজ করতে করতে পাঠানো**
+
+- [ ] **Figma → AE:** কিছু সিলেক্ট করে Send বোতামের নিচে **"Live — send changes as you work"** টিক দিন। প্রথমবার সব যায়, আর লেখা আসে "Live: keeping N objects in step…"। এবার Figma-তে ওগুলো সরান, রং বা লেখা বদলান। প্রায় আধা সেকেন্ড পরে AE-তে একই বদল দেখা যায়, আর নতুন layer তৈরি হয় না।
+- [ ] Live চালু থাকা অবস্থায় Figma-তে **অন্য কিছু** সিলেক্ট করলে কিছু বদলায় না। Live সেই জিনিসগুলোই দেখে যেগুলো চালু করার সময় সিলেক্ট করা ছিল।
+- [ ] দ্রুত টেনে সরালে বা টাইপ করলে প্রতিটা ধাপে আলাদা করে পাঠায় না। থামার পর একবার পাঠায়। একটা পাঠানো চলার সময় আরেকটা বদল এলে সেটা হারায় না, পরে যায়।
+- [ ] দেখা জিনিসগুলো মুছে ফেললে Live নিজে বন্ধ হয়, আর লেখা আসে "Live stopped: the objects it was keeping in step are gone"।
+- [ ] ⚠ **AE / Illustrator / Photoshop প্যানেল থেকে:** প্যানেলে টার্গেট বেছে **Live** টিক দিন। প্যানেল প্রতি দেড় সেকেন্ডে সিলেকশন দেখে, আর বদল পেলে পাঠায়। AE-তে layer সরান, Illustrator-এ path বদলান, Photoshop-এ layer সরান বা রং বদলান। গন্তব্যে বদলটা আসে কিনা দেখুন। কাজ করার সময় অ্যাপ আটকে যাচ্ছে বা ধীর লাগছে কিনা খেয়াল রাখুন (বিশেষ করে Illustrator-এ বড় সিলেকশনে)।
+- [ ] AE-তে শুধু playhead সরালে Live কিছু পাঠায় না।
+- [ ] Illustrator-এ text-এর ভেতরে টাইপ করার সময় পাঠায় না। টাইপ শেষ করে বাইরে ক্লিক করলে পাঠায়।
+- [ ] Bridge বন্ধ করলে বা গন্তব্য অ্যাপের প্যানেল বন্ধ করলে Live নিজে বন্ধ হয়, আর কারণ লেখা থাকে।
+- [ ] Live-এর পাঠানোগুলো History-তে জমে না; সেগুলো শুধু log-এ থাকে।
+- [ ] Live সবসময় খোলা document/comp-এ **Update** করে, Options-এর Existing বা Destination যা-ই থাকুক।
 
 ## কিছু ভুল হলে যা পাঠাবেন
 

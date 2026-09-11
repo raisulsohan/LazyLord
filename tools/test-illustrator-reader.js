@@ -223,6 +223,7 @@ app.activeDocument.artboards.length = 1;
 // --- Load the real code (global scope) -------------------------------------
 eval(load("json2.js"));
 eval(load("lazylord.jsx"));
+eval(load("ai.jsx")); // the panel loads the builder too; the live stamp uses its fingerprint
 eval(load("ai-read.jsx"));
 
 // --- Assertions ------------------------------------------------------------
@@ -1930,6 +1931,40 @@ function linkedImage(file, bw, bh, deg, opts) {
     } finally {
         LazyLord._air_export = realExport;
     }
+})();
+
+// Live sync: the stamp the panel polls.
+(function () {
+    var sq = squarePath();
+    app.selection = [sq];
+    var s1 = LazyLord.liveStamp();
+    ok("live stamp: a selection gives one", /^[0-9a-z]+\.[0-9a-z]+$/.test(s1), s1);
+    ok("live stamp: the same each time", LazyLord.liveStamp() === s1);
+    sq.pathPoints[1].anchor = [210, 500];
+    var s2 = LazyLord.liveStamp();
+    ok("live stamp: a moved point changes it", s2 !== s1);
+    sq.fillColor = rgb(0, 0, 255);
+    ok("live stamp: a recolour changes it", LazyLord.liveStamp() !== s2);
+    app.selection = [];
+    ok("live stamp: nothing selected is empty", LazyLord.liveStamp() === "");
+    app.selection = { typename: "TextRange", length: 3 };
+    ok("live stamp: typing in a text frame is empty until done", LazyLord.liveStamp() === "");
+
+    // Past the point budget a path is counted, not read, so a huge selection stays quick.
+    var many = [];
+    for (var n = 0; n < 5; n++) {
+        var pts = [];
+        for (var i = 0; i < 1000; i++) pts.push(pt([i, n * 10]));
+        many.push(pathItem("P" + n, pts));
+    }
+    app.selection = many;
+    var big = LazyLord.liveStamp();
+    many[4].pathPoints[1].anchor = [1.5, 40];
+    ok("live stamp: beyond the budget only the count is read", LazyLord.liveStamp() === big);
+    many[4].geometricBounds = [0, 41, 999, 40];
+    ok("live stamp: but its bounds still are", LazyLord.liveStamp() !== big);
+    many[0].pathPoints[1].anchor = [1.5, 0];
+    ok("live stamp: within it every point counts", LazyLord.liveStamp() !== big);
 })();
 
 WScript.Echo("");

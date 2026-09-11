@@ -174,11 +174,12 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
-           "push-conflict", "push-conflict-row"];
+           "push-conflict", "push-conflict-row", "push-live"];
+var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
              "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
-             "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button", "push-only-changed": "input",
+             "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button", "push-only-changed": "input", "push-live": "input",
              "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
              "push-destination": "select" };
@@ -1345,6 +1346,84 @@ run("smart diff", function () {
     els["push-only-changed"].checked = false;
     var all = push(art(10));
     ok("diff: switched off, everything is sent", all && all.document.layers.length === 2);
+});
+
+// 13c) Live: poll a stamp, send what changed as an update, stop cleanly.
+run("live", function () {
+    var store = new MemoryStorage();
+    // Adding, to a new document: Live sends updates into the open one anyway.
+    store.setItem("lazylord.prefs.illustrator", JSON.stringify({ existing: "add", destination: "page", target: "aftereffects" }));
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "aftereffects"]);
+
+    function art(boxX) {
+        return {
+            version: "1.0", source: "illustrator", sourceKey: "doc-L", name: "Art", originSpace: "document",
+            canvas: { width: 100, height: 100 }, bounds: { x: 0, y: 0, width: 50, height: 50 },
+            layers: [
+                { id: "a", name: "A", type: "vector", frame: frame(boxX, 0), subpaths: [square()], fills: [], strokes: [] },
+                { id: "b", name: "B", type: "vector", frame: frame(0, 20), subpaths: [square()], fills: [], strokes: [] }
+            ],
+            diagnostics: []
+        };
+    }
+    /** The host answers the stamp poll, then (if a read follows) the read. */
+    function stamp(s, doc) {
+        var call = lastEval();
+        if (!call || call.script !== "LazyLord.liveStamp()") return "no poll";
+        var before = sock.sent.length, evals = evalCalls.length;
+        call.cb(s);
+        if (doc && evalCalls.length > evals) {
+            files["C:/tmp/live/ir.json"] = { data: JSON.stringify(doc), enc: "" };
+            lastEval().cb(JSON.stringify({ ok: true, layerCount: 2, irPath: "C:/tmp/live/ir.json", message: "", diagnostics: [] }));
+        }
+        return sock.sent.length > before ? lastSent(sock) : null;
+    }
+
+    els["push-live"].checked = true;
+    els["push-live"].fire("change");
+    ok("live: says it is on", linesWith("Live: changes to the selection are sent to After Effects").length === 1, texts(els["log"].children));
+    var first = stamp("s1", art(0));
+    ok("live: the first send carries everything", first && first.document.layers.length === 2, first && JSON.stringify(first.document.layers));
+    ok("live: as an update into the open document", first && first.document.options.existing === "update" &&
+       first.document.options.destination === "active", first && JSON.stringify(first.document.options));
+    fireTimer(LIVE_POLL);
+    ok("live: no poll while the send is under way", lastEval().script !== "LazyLord.liveStamp()", lastEval().script);
+    deliver(sock, { type: "ack", id: first.id, from: "aftereffects", ok: true, layersCreated: 2 });
+    ok("live: its sends stay out of the history", !store.getItem("lazylord.history.illustrator"), store.getItem("lazylord.history.illustrator"));
+
+    fireTimer(LIVE_POLL);
+    var same = stamp("s1", art(0));
+    ok("live: an unchanged stamp reads nothing", same === null && lastEval().script === "LazyLord.liveStamp()");
+    fireTimer(LIVE_POLL);
+    var noop = stamp("s2", art(0));
+    ok("live: a stamp that moved without a real change sends nothing, quietly", noop === null && linesWith("Nothing changed").length === 0,
+       texts(els["log"].children));
+    fireTimer(LIVE_POLL);
+    var moved = stamp("s3", art(10));
+    ok("live: a change sends just that layer", moved && moved.document.layers.length === 1 && moved.document.layers[0].id === "a",
+       moved && JSON.stringify(moved.document.layers));
+    ok("live: logged as a live send", linesWith("Live: sent 1 layer to After Effects").length === 1, texts(els["log"].children));
+    deliver(sock, { type: "ack", id: moved.id, from: "aftereffects", ok: true, layersCreated: 0, layersUpdated: 1 });
+
+    fireTimer(LIVE_POLL);
+    ok("live: nothing selected sends nothing", stamp("", art(10)) === null);
+
+    els["push-live"].checked = false;
+    els["push-live"].fire("change");
+    ok("live: turned off", linesWith("Live is off.").length === 1, texts(els["log"].children));
+    var evals = evalCalls.length;
+    fireTimer(LIVE_POLL);
+    ok("live: no more polls once off", evalCalls.length === evals);
+
+    // The destination leaving stops it.
+    els["push-live"].checked = true;
+    els["push-live"].fire("change");
+    stamp("s9", art(10));
+    peersMsg(sock, "peers", ["illustrator"]);
+    fireTimer(LIVE_POLL);
+    ok("live: stops when the destination disconnects", els["push-live"].checked === false &&
+       linesWith("Live stopped: the destination app disconnected").length === 1, texts(els["log"].children));
 });
 
 // 14) A build that updated layers reports both halves in its one line.

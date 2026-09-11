@@ -59,6 +59,7 @@
   var pushCard = document.getElementById("push-card");
   var pushSub = document.getElementById("push-sub");
   var pushBtn = document.getElementById("push");
+  var liveEl = document.getElementById("push-live");
   var targetsEl = document.getElementById("push-targets");
   var layoutSel = document.getElementById("push-layout");
   var hierarchySel = document.getElementById("push-hierarchy");
@@ -1145,14 +1146,71 @@
     return name + ".png";
   }
 
+  // --- Live sync ------------------------------------------------------------
+  // While Live is on, the panel asks the host for a cheap stamp of the
+  // selection (LazyLord.liveStamp) every LIVE_POLL_MS, and sends again when it
+  // changes. Live sends always update what the first one built, and only what
+  // changed goes (smart diff). A stamp that moves because of the read itself
+  // costs one extra read whose diff is empty, then settles; an edit made while
+  // a send is under way is caught by the next poll, never lost.
+
+  var LIVE_POLL_MS = 1500;
+  var liveOn = false;
+  var liveGen = 0;
+  var liveStamp = null;
+  var livePolling = false;
+
+  function startLive() {
+    if (!currentTarget()) {
+      stopLive("no destination app is connected");
+      return;
+    }
+    liveOn = true;
+    liveGen++;
+    liveStamp = null;
+    log("Live: changes to the selection are sent to " + roleLabel(currentTarget()) + " as you work.", "ok");
+    livePoll(liveGen);
+  }
+
+  function stopLive(why) {
+    var was = liveOn;
+    liveOn = false;
+    liveGen++;
+    if (liveEl) liveEl.checked = false;
+    if (why) log("Live stopped: " + why + ".", "warn");
+    else if (was) log("Live is off.");
+  }
+
+  function livePoll(gen) {
+    if (!liveOn || gen !== liveGen) return;
+    setTimeout(function () { livePoll(gen); }, LIVE_POLL_MS);
+    if (!currentTarget()) { stopLive("the destination app disconnected"); return; }
+    if (pushBusy || livePolling || !jsxReady) return;
+    livePolling = true;
+    cs.evalScript("LazyLord.liveStamp()", function (res) {
+      livePolling = false;
+      if (!liveOn || gen !== liveGen || res === liveStamp) return;
+      var first = liveStamp === null;
+      liveStamp = res;
+      if (res === "") return; // nothing selected: wait for a selection
+      doPush(first ? "live-start" : "live");
+    });
+  }
+
   // --- Push ---------------------------------------------------------------
 
-  function doPush() {
+  /**
+   * Send the selection. `mode` is unset for the Send button; "live-start" is
+   * Live's first send (everything, updating what is there), "live" a later
+   * one (only what changed, and quietly when nothing did).
+   */
+  function doPush(mode) {
+    var live = mode === "live" || mode === "live-start";
     var target = currentTarget();
     if (!target) { log("No destination app is connected.", "err"); return; }
     if (!jsxReady) {
       loadJsx(function (ok) {
-        if (ok) doPush();
+        if (ok) doPush(mode);
         else log("Could not load the host scripts (" + jsxError + ").", "err");
       });
       return;
@@ -1162,6 +1220,12 @@
     // sent, even if a select is changed while the host is still reading.
     var options = pushOptions();
     var place = destinationSel ? destinationSel.value : "active";
+    // Live keeps one copy in step: it updates what its first send built.
+    if (live) {
+      options.existing = "update";
+      place = "active";
+    }
+    var prune = live ? mode === "live" : (options.existing === "update" && onlyChangedWanted());
     var reading = { scale: currentScale() };
     var id = newId();
     var dir;
@@ -1174,7 +1238,7 @@
 
     setPushBusy(true);
     setDiagnostics([], id);
-    log("Reading the " + roleLabel(role) + " selection…");
+    if (!live) log("Reading the " + roleLabel(role) + " selection…");
 
     cs.evalScript("LazyLord.runRead(" + jsonStr(dir) + ", " + JSON.stringify(reading) + ")", function (res) {
       var r;
@@ -1205,13 +1269,13 @@
       applyDestination(doc, place);
 
       // Updating: only what changed since the last send to this app goes out.
-      var diff = fingerprintLeaves(doc, target, options.existing === "update" && onlyChangedWanted());
+      var diff = fingerprintLeaves(doc, target, prune);
       if (diff.pruned && diff.kept === 0) {
-        log("Nothing changed since the last send to " + roleLabel(target) + ", so nothing was sent.", "ok");
+        if (!live) log("Nothing changed since the last send to " + roleLabel(target) + ", so nothing was sent.", "ok");
         setPushBusy(false);
         return;
       }
-      if (diff.skipped) log(plural(diff.skipped, "unchanged layer") + " not sent again.");
+      if (diff.skipped && !live) log(plural(diff.skipped, "unchanged layer") + " not sent again.");
       if (target === "figma") embedImagesForFigma(doc);
 
       pendingPush = id;
@@ -1220,14 +1284,16 @@
         images: imageStats(doc),
         diagnostics: doc.diagnostics || r.diagnostics || [],
         sentKey: diff.key,
-        prints: diff.prints
+        prints: diff.prints,
+        live: live
       };
       var parts = sendTransfer({ type: "transfer", id: id, target: target, document: doc });
       if (parts > 1) log("Large transfer: sent in " + parts + " pieces.");
       // Counted here, not taken from the reader's layerCount, which only sees
       // the top level: layers inside groups count too.
       var note = optionsNote(options);
-      log("Sent " + layerPhrase(doc.layers) + " to " + roleLabel(target) + (note ? " · " + note : "") + "…");
+      log((live ? "Live: sent " : "Sent ") + layerPhrase(doc.layers) + " to " + roleLabel(target) +
+        (note && !live ? " · " + note : "") + "…");
 
       setTimeout(function () {
         if (pendingPush !== id) return;
@@ -1278,6 +1344,8 @@
       log((late ? "Late reply from " + roleLabel(msg.from) + ": " : "") +
         (msg.message || "The transfer failed."), "err");
     }
+    // Live sends would push every real send out of the history; they stay in the log.
+    if (info.live) return;
     recordHistory({
       dir: "out", peer: roleLabel(msg.from), name: info.name || "", ok: !!msg.ok,
       layers: msg.layersCreated || 0, updated: msg.layersUpdated || 0,
@@ -1665,7 +1733,11 @@
   document.getElementById("reconnect").addEventListener("click", connect);
   autoEl.addEventListener("change", function () { savePref("autoReceive", !!autoEl.checked); });
   if (canPush) {
-    pushBtn.addEventListener("click", doPush);
+    pushBtn.addEventListener("click", function () { doPush(); });
+    if (liveEl) liveEl.addEventListener("change", function () {
+      if (liveEl.checked) startLive();
+      else stopLive();
+    });
     // One listener per row rather than per chip: the target chips are rebuilt
     // whenever the connected apps change.
     targetsEl.addEventListener("click", function (e) {

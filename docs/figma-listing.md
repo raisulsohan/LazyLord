@@ -74,18 +74,21 @@ Built by Raisul Sohan — https://raisulsohan.com/
 
 ## Tags
 
+Figma allows **five**, and offers a recommended list first. Two of those fit —
+**Vector** and **Image**. PDF, HTML, Web, Figma to code and GIF do not: tagging
+what a plugin cannot do disappoints whoever searched for it.
+
+Spend the other three on **Add custom tags**, because people search by where
+the artwork is going:
+
 ```
-illustrator
-photoshop
-after effects
-export
-vector
-handoff
-motion
-svg
-adobe
-developer handoff
+Illustrator
+Photoshop
+After Effects
 ```
+
+No need for an "export" tag — the category already says Import & export, and
+the slot is worth more as an app name.
 
 ## Support contact
 

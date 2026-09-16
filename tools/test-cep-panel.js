@@ -174,13 +174,14 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
-           "push-conflict", "push-conflict-row", "push-live", "ver"];
+           "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
              "push-preset-delete": "button", "history": "details", "history-list": "ul", "history-clear": "button",
              "ae-precompose": "button", "ae-decompose": "button", "ae-import-psd": "button", "push-only-changed": "input", "push-live": "input",
-             "diag-list": "ul", "push-options": "details", "push-layout": "select", "push-hierarchy": "select",
+             "diag-list": "ul", "push-options": "details", "log-card": "details",
+             "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
              "push-destination": "select" };
 
@@ -449,6 +450,12 @@ run("prefs", function () {
        els["ver"].textContent === "v" + (read(CEP + "CSXS\\manifest.xml").match(/ExtensionBundleVersion="([\d.]+)"/) || [])[1],
        els["ver"].textContent);
     ok("prefs: push card shown on a host with a reader", els["push-card"].hidden === false);
+    // The log is folded, but whatever it last said is still readable.
+    ok("prefs: the log stays folded", els["log-card"].open !== true);
+    ok("prefs: its newest line shows on the summary",
+       els["log-last"].textContent.length > 0 &&
+       lastLog().text.indexOf(els["log-last"].textContent) > 0,
+       els["log-last"].textContent + " / " + lastLog().text);
     peersMsg(sock, "welcome", ["illustrator", "photoshop", "aftereffects", "figma"]);
     ok("prefs: Illustrator defaults to After Effects", chipValue(sel, "target") === "aftereffects", chipValue(sel, "target"));
     // Figma receives now, so every connected app but this one is offered.
@@ -680,6 +687,8 @@ run("failed receive", function () {
     lastEval().cb(JSON.stringify({ ok: false, layersCreated: 0, message: "No document is open.", diagnostics: [] }));
     ok("failed: error logged", lastLog().kind === "err" && has(lastLog().text, "No document is open."), lastLog().text);
     ok("failed: no summary line", linesWith("created").length === 0);
+    // Folded away is fine until something goes wrong; then it opens itself.
+    ok("failed: the log opens itself", els["log-card"].open === true);
     ok("failed: ack says so", lastSent(sock).ok === false);
 });
 
@@ -1188,6 +1197,18 @@ run("markup", function () {
        HIERARCHY_VALUES.join("|"));
     ok("markup: both selects are labelled", has(HTML_SRC, '<label for="push-layout">Layout</label>') &&
        has(HTML_SRC, '<label for="push-hierarchy">Hierarchy</label>'));
+
+    // The log reads as clutter until it is needed, so it folds away too.
+    var logTag = /<details[^>]*id="log-card"[^>]*>/.exec(HTML_SRC);
+    ok("markup: the log is folded away", logTag !== null && !/\sopen[\s>=]/.test(logTag[0]), logTag && logTag[0]);
+    ok("markup: its newest line shows on the summary",
+       /<summary[^>]*>[^<]*Log[\s\S]*?id="log-last"[\s\S]*?<\/summary>/.test(HTML_SRC));
+    // The footer used to print the bridge address; that is diagnostic, and the
+    // panel is the only place a user learns who wrote it.
+    ok("markup: the footer credits the author", has(HTML_SRC, "by Raisul Sohan"));
+    ok("markup: the bridge address moved to the connection chip",
+       !/<footer[\s\S]*?7878[\s\S]*?<\/footer>/.test(HTML_SRC) &&
+       /<div id="conn"[^>]*title="[^"]*7878/.test(HTML_SRC));
 });
 
 // 12) Phase 3: the Existing / Keyframes options on the push card.

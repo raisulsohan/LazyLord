@@ -57,6 +57,8 @@
   var hostEl = document.getElementById("host");
   var hostSub = document.getElementById("host-sub");
   var logEl = document.getElementById("log");
+  var logCard = document.getElementById("log-card");
+  var logLast = document.getElementById("log-last");
   var autoEl = document.getElementById("auto");
   var pushCard = document.getElementById("push-card");
   var pushSub = document.getElementById("push-sub");
@@ -150,6 +152,13 @@
     // Live adds lines all session long: keep the newest LOG_MAX.
     while (logEl.children && logEl.children.length > LOG_MAX && logEl.firstChild) logEl.removeChild(logEl.firstChild);
     logEl.scrollTop = logEl.scrollHeight;
+    /* The log itself stays shut: the newest line shows beside its summary, and
+       anything that went wrong opens it without being asked. */
+    if (logLast) {
+      logLast.textContent = msg;
+      logLast.className = "a-last" + (kind === "err" || kind === "warn" ? " " + kind : "");
+    }
+    if (logCard && (kind === "err" || kind === "warn")) logCard.open = true;
   }
   var LOG_MAX = 500;
 

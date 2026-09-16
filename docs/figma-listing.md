@@ -4,7 +4,7 @@ Everything the publish form asks for. Copy each block as it is; the steps
 around it are in [PUBLISHING.md](../PUBLISHING.md).
 
 The two images are already the sizes Figma wants — **`assets/icon.png`**
-(128×128) and **`assets/cover.png`** (1920×960). They are rendered from the
+(128×128) and **`assets/thumbnail.png`** (1920×1080). They are rendered from the
 SVGs by `node tools/render-art.mjs`, so change the SVG and run that rather than
 editing a PNG by hand.
 
@@ -98,6 +98,13 @@ https://github.com/raisulsohan/LazyLord/issues
 
 ---
 
+## Before any of this: two-factor authentication
+
+Figma refuses to publish from an account without it — the form says so in red at
+the bottom and the Next button will not take you past it. Turn it on at
+<https://www.figma.com/settings> under **Security**, with an authenticator app,
+and keep the recovery codes somewhere safe.
+
 ## Where the Publish button is
 
 Figma moved it out of the Plugins submenu. From the **desktop app**, with a
@@ -118,7 +125,7 @@ account — *Plugins → Development → Import plugin from manifest…* and pic
 | Page | What to put |
 | --- | --- |
 | **Describe your resource** | Category: **Design tools → Import & export** — that is what this does, and where people look for it. Name, tagline and description are above. |
-| **Choose some images** | `assets/icon.png` and `assets/cover.png`. |
+| **Choose some images** | Icon: `assets/icon.png`. Thumbnail: `assets/thumbnail.png` — Figma asks for 1920×1080 here, not the 2:1 the README banner uses. The playground file is optional and LazyLord has no use for one: it needs an Adobe app open, which a shared Figma file cannot provide. |
 | **Data security** | The disclosure form — answers below. |
 
 ### Data security answers

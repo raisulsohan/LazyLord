@@ -141,10 +141,10 @@ id বদলে গেলে বা নতুন করে লাগলে ও�
 Figma Community-তে লাগে:
 
 - **আইকন** — ১২৮×১২৮ PNG
-- **কভার আর্ট** — ১৯২০×৯৬০ PNG
+- **থাম্বনেইল** — ১৯২০×১০৮০ PNG
 
 দুটোই **বানানো আছে**, ঠিক মাপে: `assets/icon.png` (১২৮×১২৮) আর
-`assets/cover.png` (১৯২০×৯৬০)। সরাসরি আপলোড করে দিন।
+`assets/thumbnail.png` (১৯২০×১০৮০)। সরাসরি আপলোড করে দিন।
 
 নকশা বদলাতে চাইলে `assets/icon.svg` বা `assets/banner.svg` বদলে চালান:
 
@@ -171,7 +171,7 @@ node tools/render-art.mjs
    - **Tags** — যেমন: illustrator, photoshop, after effects, export, vector,
      handoff, motion
    - **Support contact** — একটা ইমেইল বা GitHub issues-এর লিংক। এটা বাধ্যতামূলক।
-   - আইকন আর কভার আর্ট।
+   - আইকন আর থাম্বনেইল।
 3. Submit for review।
 
 ### ধাপ ৪: রিভিউ

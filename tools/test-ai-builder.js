@@ -2023,5 +2023,68 @@ WScript.Echo("");
     ok("kerning: nothing reported", !/kern/i.test(JSON.stringify(LazyLord.diagnostics)), JSON.stringify(LazyLord.diagnostics));
 })();
 
+// Effects as live effects: PageItem.applyEffect, where this Illustrator has it.
+function liveEffects(on) {
+    var kinds = [PathItem, CompoundPathItem, GroupItem, TextFrame, PlacedItem];
+    for (var i = 0; i < kinds.length; i++) {
+        if (on) kinds[i].prototype.applyEffect = function (xml) { (this.liveEffects = this.liveEffects || []).push(xml); };
+        else delete kinds[i].prototype.applyEffect;
+    }
+}
+function aiDiags(re, resolution) {
+    var out = [];
+    for (var i = 0; i < LazyLord.diagnostics.length; i++) {
+        var d = LazyLord.diagnostics[i];
+        if (re.test(d.reason) && (!resolution || d.resolution === resolution)) out.push(d);
+    }
+    return out;
+}
+(function () {
+    resetMock();
+    var aiDoc = openDoc();
+    var dot = vectorLayer("Dot", { x: 10, y: 10, width: 50, height: 50 }, [rectPath(50, 50)], [{ type: "solid", color: rgba(1, 0, 0) }], [], {
+        effects: [{ kind: "layer-blur", radius: 8 },
+                  { kind: "drop-shadow", color: rgba(0, 0, 0, 0.25), offset: { x: 3, y: 4 }, radius: 10, spread: 2 },
+                  { kind: "inner-shadow", color: rgba(0, 0, 0, 0.5), offset: { x: 0, y: 1 }, radius: 2 },
+                  { kind: "background-blur", radius: 4 }]
+    });
+    liveEffects(true);
+    try { build(canvasDoc([dot])); } finally { liveEffects(false); }
+    var path = aiDoc.pathItems[0];
+    var fx = (path && path.liveEffects) || [];
+    ok("ai effects: the blur and the drop shadow become live effects, in order",
+       fx.length === 2 && /name="Adobe PSL Gaussian Blur"/.test(fx[0]) && /R blur 4 /.test(fx[0]) && /name="Adobe Drop Shadow"/.test(fx[1]),
+       JSON.stringify(fx));
+    ok("ai effects: the shadow's offset, opacity, distance and blur",
+       /R horz 3 R vert 4 /.test(fx[1]) && /R opac 0.25 /.test(fx[1]) && /R dist 5 /.test(fx[1]) && /R blur 5 /.test(fx[1]), fx[1]);
+    ok("ai effects: spread is reported", aiDiags(/no spread/, "approximated").length === 1, JSON.stringify(LazyLord.diagnostics));
+    ok("ai effects: inner shadow and background blur are reported, once",
+       aiDiags(/no live effect for inner shadow, background blur/, "skipped").length === 1, JSON.stringify(LazyLord.diagnostics));
+    ok("ai effects: a black shadow needs no word about colour", aiDiags(/black/).length === 0);
+
+    // A coloured shadow is drawn black, and said.
+    resetMock();
+    aiDoc = openDoc();
+    liveEffects(true);
+    try {
+        build(canvasDoc([vectorLayer("Glow", { x: 10, y: 10, width: 50, height: 50 }, [rectPath(50, 50)], [{ type: "solid", color: rgba(1, 1, 1) }], [], {
+            effects: [{ kind: "drop-shadow", color: rgba(1, 0, 0, 0.5), offset: { x: 0, y: 0 }, radius: 6 }]
+        })]));
+    } finally { liveEffects(false); }
+    ok("ai effects: a coloured shadow is reported as black", aiDiags(/drop shadow is black/, "approximated").length === 1,
+       JSON.stringify(LazyLord.diagnostics));
+})();
+
+(function () {
+    // An Illustrator without applyEffect: said, and the artwork still built.
+    resetMock();
+    var aiDoc = openDoc();
+    build(canvasDoc([vectorLayer("Dot", { x: 10, y: 10, width: 50, height: 50 }, [rectPath(50, 50)], [{ type: "solid", color: rgba(1, 0, 0) }], [], {
+        effects: [{ kind: "layer-blur", radius: 8 }]
+    })]));
+    ok("ai effects: without applyEffect, reported and still built",
+       aiDoc.pathItems.length === 1 && aiDiags(/cannot add live effects from a script/, "skipped").length === 1, JSON.stringify(LazyLord.diagnostics));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

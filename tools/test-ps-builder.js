@@ -78,6 +78,7 @@ ActionList.prototype.putUnitDouble = function (u, v) { this.items.push({ kind: "
 function ActionReference() { this.parts = []; }
 ActionReference.prototype.putClass = function (c) { this.parts.push({ kind: "class", cls: c }); };
 ActionReference.prototype.putEnumerated = function (c, t, v) { this.parts.push({ kind: "enum", cls: c, type: t, value: v }); };
+ActionReference.prototype.putProperty = function (c, p) { this.parts.push({ kind: "prop", cls: c, value: p }); };
 
 // --- Minimal Photoshop DOM stand-ins ---------------------------------------
 var Units = { PIXELS: "px", CM: "cm" };
@@ -361,8 +362,27 @@ function executeAction(id, desc, mode) {
         if (host.throwAfterCreate) throw new Error("mock: failed after creating the layer");
     } else if (id === "Mk  " && refClass(desc) === "Path") {
         d.activeLayer.vectorMask = d.selectedPath ? d.selectedPath.pixels : null;
+    } else if (id === "setd" && desc.get("T   ").cls === "Lefx") {
+        d.activeLayer.layerStyle = desc.get("T   ").value;
     } else if (id === "setd") {
         d.activeLayer.strokeStyle = desc.get("T   ").value.get("strokeStyle").value;
+    } else if (id === "newPlacedLayer") {
+        // Convert to Smart Object: a new layer in the old one's place, which is gone.
+        var old = d.activeLayer, box = old.parent;
+        var so = new MockLayer(d, "smartobject", old.name);
+        so.bounds = old.bounds.slice();
+        so.opacity = old.opacity;
+        so.blendMode = old.blendMode;
+        so.convertedFrom = old.kind;
+        so.smartFilters = [];
+        box.children.splice(idxOf(box.children, old), 1, so);
+        so.parent = box;
+        relist(box);
+        old.removed = true;
+        d.activeLayer = so;
+    } else if (id === "GsnB") {
+        if (!d.activeLayer.smartFilters) throw new Error("mock: a filter would rasterise a layer that is not a smart object");
+        d.activeLayer.smartFilters.push({ filter: "GsnB", radius: desc.get("Rds ").value });
     } else if (id === "Plc ") {
         var pl = new MockLayer(d, "smartobject", "placed");
         pl.bounds = [d.width / 2 - 50, d.height / 2 - 25, d.width / 2 + 50, d.height / 2 + 25];
@@ -1858,6 +1878,47 @@ WScript.Echo("");
                             sequence: { frames: ["C:/tmp/Walk_0000.png", "C:/tmp/Walk_0001.png"] } }]));
     ok("sequence: only the first frame, and said", /only the first of its 2 frames/.test(JSON.stringify(LazyLord.diagnostics)),
        JSON.stringify(LazyLord.diagnostics));
+})();
+
+// Effects: shadows as layer styles, a layer blur as a smart filter.
+(function () {
+    reset();
+    var dot = vec("Dot", { x: 10, y: 10, width: 50, height: 50, rotation: 0, opacity: 1 }, [solid(1, 0, 0)]);
+    dot.effects = [{ kind: "layer-blur", radius: 8 },
+                   { kind: "drop-shadow", color: { r: 0, g: 0, b: 0, a: 0.25 }, offset: { x: 0, y: 4 }, radius: 10, spread: 2 },
+                   { kind: "inner-shadow", color: { r: 1, g: 0, b: 0, a: 0.5 }, offset: { x: 2, y: 0 }, radius: 3, blendMode: "multiply" },
+                   { kind: "background-blur", radius: 4 }];
+    var res = LazyLord.build(irDoc([dot], { sourceKey: "doc-FX" }));
+    var sos = ofKind("smartobject");
+    var so = sos[0];
+    ok("ps effects: a blurred layer becomes a smart object, in its place", res.layersCreated === 1 && sos.length === 1 &&
+       so.convertedFrom === LayerKind.SOLIDFILL && ofKind(LayerKind.SOLIDFILL).length === 0, String(sos.length));
+    ok("ps effects: with a Gaussian Blur smart filter, at half Figma's radius",
+       so && so.smartFilters.length === 1 && so.smartFilters[0].radius === 4, so && JSON.stringify(so.smartFilters));
+    var st = so && so.layerStyle;
+    var ds = st && st.get("DrSh"), is = st && st.get("IrSh");
+    ok("ps effects: the drop shadow is a layer style on the smart object",
+       ds && ds.value.get("Opct").value === 25 && near(ds.value.get("lagl").value, 90) && near(ds.value.get("Dstn").value, 4) &&
+       ds.value.get("blur").value === 10 && near(ds.value.get("Ckmt").value, 20) && ds.value.get("Md  ").value === "Nrml" &&
+       ds.value.get("layerConceals").value === true, ds && JSON.stringify(ds.value.keys));
+    ok("ps effects: so is the inner shadow, colour and blend mode kept",
+       is && near(is.value.get("lagl").value, 180) && is.value.get("Clr ").value.get("Rd  ").value === 255 &&
+       is.value.get("Md  ").value === "Mltp" && !is.value.get("layerConceals"), is && JSON.stringify(is.value.keys));
+    ok("ps effects: the background blur is reported", !!diagFor("Dot", /no counterpart here for background blur/), diags());
+    var meta = so && LazyLord._ps_readMeta(so);
+    ok("ps effects: the smart object carries the tag, so an update finds it", meta && meta.tag === "figma|doc-FX|Dot", so && so.xmpMetadata.rawData);
+})();
+
+(function () {
+    // A Photoshop that will not convert: the blur is reported, the layer and its shadow stay.
+    reset();
+    host.fail = function (id) { return id === "newPlacedLayer"; };
+    var dot = vec("Dot", { x: 10, y: 10, width: 50, height: 50, rotation: 0, opacity: 1 }, [solid(1, 0, 0)]);
+    dot.effects = [{ kind: "layer-blur", radius: 8 }, { kind: "drop-shadow", color: { r: 0, g: 0, b: 0, a: 0.5 }, offset: { x: 0, y: 2 }, radius: 4 }];
+    LazyLord.build(irDoc([dot]));
+    var fill = ofKind(LayerKind.SOLIDFILL)[0];
+    ok("ps effects: a refused conversion leaves the blur off, said", !!diagFor("Dot", /needs the layer to be a smart object/) &&
+       fill && fill.layerStyle && fill.layerStyle.get("DrSh"), diags());
 })();
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

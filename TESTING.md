@@ -311,6 +311,11 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] Illustrator-এ "AVATAR" লিখে Optical kerning আর A-V জোড়ায় হাতে -80 kern দিন, AE-তে পাঠান। ⚠ AE 24.3+-এ Character panel-এ Optical আর সেই জোড়ায় -80 দেখায়? (ধরে নিয়েছি একটা অক্ষরের kerning মানে তার আগের ফাঁক — উল্টো হলে পাশের জোড়ায় বসবে)
 - [ ] একই লেখা Figma-তে পাঠান — জোড়ার ফাঁক Illustrator-এর মতো দেখায়?
 
+**Illustrator আর Photoshop-এ effect**
+- [ ] Figma-তে একটা ellipse-এ Layer blur 8, Drop shadow (কালো 25%, y 4, blur 10) আর Inner shadow দিয়ে Illustrator-এ পাঠান। ⚠ Appearance panel-এ **Gaussian Blur** আর **Drop Shadow** live effect আসে, মাপ Figma-র মতো দেখায়? Inner shadow রিপোর্ট হয়?
+- [ ] একই জিনিস Photoshop-এ। ⚠ লেয়ারটা smart object হয়ে **Gaussian Blur** smart filter পায়, আর Layer Style-এ Drop Shadow ও Inner Shadow ঠিক কোণ/দূরত্ব/মাপে আসে?
+- [ ] রঙিন (লাল) shadow Illustrator-এ কালো হয়ে আসে আর সেটা রিপোর্ট হয়?
+
 **After Effects: ছবির ফোল্ডার আর frame sequence**
 - [ ] AE প্যানেলে Images → Choose… দিয়ে একটা ফোল্ডার বাছুন (⚠ ফোল্ডার বাছার উইন্ডো খোলে?), তারপর ছবিসহ কিছু পাঠান — ছবি সেই ফোল্ডারে যায়? Default চাপলে আবার প্রজেক্টের পাশে?
 - [ ] Photoshop-এ ৮টা লেয়ারের একটা গ্রুপ (বেশিরভাগ hidden), Options-এ **Layers as frames** টিক দিয়ে AE-তে পাঠান। ⚠ AE-তে একটাই footage হয়ে ৮ ফ্রেমের sequence চলে, comp-এর frame rate-এ? সেভ করা প্রজেক্টে "… frames" ফোল্ডারে ফ্রেমগুলো কপি হয়?

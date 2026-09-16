@@ -17,8 +17,10 @@
  */
 
 import type {
+  BlendMode as IRBlendMode,
   ClipPath,
   Diagnostic,
+  Effect as IREffect,
   Document,
   GroupLayer,
   ImageLayer,
@@ -968,6 +970,8 @@ function applyBlendAndEffects(node: SceneNode, layer: Layer, ctx: Ctx) {
   if (!list || !list.length || !("effects" in node)) return;
 
   const effects: Effect_[] = [];
+  const left: string[] = [];
+  const shadowBlend = (bm: IRBlendMode | undefined): BlendMode_ => (bm && BLEND_TO_FIGMA[bm]) || "NORMAL";
   for (const fx of list) {
     if (fx.kind === "drop-shadow" || fx.kind === "inner-shadow") {
       effects.push({
@@ -977,8 +981,28 @@ function applyBlendAndEffects(node: SceneNode, layer: Layer, ctx: Ctx) {
         radius: Math.max(0, fx.radius),
         spread: Math.max(0, fx.spread || 0),
         visible: true,
-        blendMode: "NORMAL",
+        blendMode: shadowBlend(fx.blendMode),
       });
+    } else if (fx.kind === "outer-glow" || fx.kind === "inner-glow") {
+      // A glow is a shadow that does not move: Figma draws one exactly that way.
+      effects.push({
+        type: fx.kind === "outer-glow" ? "DROP_SHADOW" : "INNER_SHADOW",
+        color: { r: clamp01(fx.color.r), g: clamp01(fx.color.g), b: clamp01(fx.color.b), a: clamp01(fx.color.a) },
+        offset: { x: 0, y: 0 },
+        radius: Math.max(0, fx.radius),
+        spread: Math.max(0, (fx.kind === "outer-glow" ? fx.spread : fx.choke) || 0),
+        visible: true,
+        blendMode: shadowBlend(fx.blendMode),
+      });
+      if (fx.kind === "inner-glow" && fx.source === "center") {
+        warn(ctx, layer.name, "Its inner glow comes from the centre, which Figma cannot do, so it glows from the edges", "approximated");
+      }
+    } else if (fx.kind === "stroke") {
+      if (!applyStyleStroke(node, fx)) left.push("Layer Style stroke (the layer already has a stroke)");
+    } else if (fx.kind === "color-overlay") {
+      if (!applyColourOverlay(node, fx)) left.push("colour overlay");
+    } else if (fx.kind === "gradient-overlay" || fx.kind === "satin" || fx.kind === "bevel") {
+      left.push(fx.kind === "bevel" ? "bevel and emboss" : fx.kind.replace(/-/g, " "));
     } else if (fx.kind === "layer-blur" || fx.kind === "background-blur") {
       // Figma grew progressive blurs later, so the plain kind now says so.
       effects.push({
@@ -990,6 +1014,9 @@ function applyBlendAndEffects(node: SceneNode, layer: Layer, ctx: Ctx) {
     }
   }
 
+  if (left.length) {
+    warn(ctx, layer.name, `Figma has no ${left.join(", ")}, so ${left.length === 1 ? "it was" : "they were"} left off`, "skipped");
+  }
   if (!effects.length) return;
   try {
     (node as SceneNode & BlendMixin).effects = effects;
@@ -998,5 +1025,31 @@ function applyBlendAndEffects(node: SceneNode, layer: Layer, ctx: Ctx) {
   }
 }
 
-/** Figma's own Effect, named apart from the IR's. */
+/** Figma's own Effect and BlendMode, named apart from the IR's. */
 type Effect_ = DropShadowEffect | InnerShadowEffect | BlurEffect;
+
+/** A Photoshop Layer Style stroke as the node's own stroke, when it has none. */
+function applyStyleStroke(node: SceneNode, fx: Extract<IREffect, { kind: "stroke" }>): boolean {
+  if (!("strokes" in node)) return false;
+  const n = node as SceneNode & GeometryMixin & MinimalStrokesMixin;
+  if (n.strokes && n.strokes.length) return false;
+  n.strokes = [solidPaint(fx.color)];
+  n.strokeWeight = Math.max(0, fx.width);
+  if ("strokeAlign" in n) {
+    (n as SceneNode & { strokeAlign: string }).strokeAlign = fx.position === "inside" ? "INSIDE" : (fx.position === "center" ? "CENTER" : "OUTSIDE");
+  }
+  return true;
+}
+
+/** A colour overlay as a paint over the node's fills, at the overlay's opacity and blend mode. */
+function applyColourOverlay(node: SceneNode, fx: Extract<IREffect, { kind: "color-overlay" }>): boolean {
+  if (!("fills" in node)) return false;
+  const n = node as SceneNode & MinimalFillsMixin;
+  const fills: unknown[] = Array.isArray(n.fills) ? (n.fills as ReadonlyArray<unknown>).slice() : [];
+  const paint = solidPaint(fx.color) as SolidPaint & { blendMode?: string };
+  const mode = fx.blendMode && BLEND_TO_FIGMA[fx.blendMode];
+  if (mode) paint.blendMode = mode;
+  fills.push(paint);
+  n.fills = fills as unknown as typeof n.fills;
+  return true;
+}

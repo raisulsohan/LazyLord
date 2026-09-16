@@ -7,6 +7,10 @@
  * named "Figma plugin\dist\code.js" instead of a folder. The download is the
  * one artefact every user touches, so it is built here instead, with forward
  * slashes and nothing else surprising in it.
+ *
+ * An entry can also carry a Unix mode. macOS's Archive Utility only makes a
+ * `.command` installer double-clickable when the zip says it is executable;
+ * without that, double-clicking one fails with an access-privileges error.
  */
 import { deflateRawSync } from "node:zlib";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -38,20 +42,23 @@ function dosStamp(date) {
   };
 }
 
-/** Every file under `dir`, as { name, path } with ZIP-shaped names. */
+/* Installer scripts a Mac user double-clicks. */
+const EXECUTABLE = /\.(command|sh)$/i;
+
+/** Every file under `dir`, as { name, path, mode? } with ZIP-shaped names. */
 export function walk(dir, prefix = "") {
   const out = [];
   for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
     const path = join(dir, entry.name);
     const name = prefix + entry.name;
     if (entry.isDirectory()) out.push(...walk(path, name + "/"));
-    else out.push({ name, path });
+    else out.push(EXECUTABLE.test(entry.name) ? { name, path, mode: 0o755 } : { name, path });
   }
   return out;
 }
 
 /**
- * Write `files` (from walk(), or any {name, path} list) to `outFile`.
+ * Write `files` (from walk(), or any {name, path, mode?} list) to `outFile`.
  * Names are used exactly as given, so pass them with forward slashes.
  */
 export function writeZip(outFile, files) {
@@ -85,7 +92,8 @@ export function writeZip(outFile, files) {
 
     const entry = Buffer.alloc(46);
     entry.writeUInt32LE(0x02014b50, 0);   // central directory header
-    entry.writeUInt16LE(20, 4);           // made by 2.0, MS-DOS
+    /* "Made by" Unix (3) when a mode is given, so the mode is honoured. */
+    entry.writeUInt16LE(file.mode ? (3 << 8) | 20 : 20, 4);
     entry.writeUInt16LE(20, 6);
     entry.writeUInt16LE(0x0800, 8);
     entry.writeUInt16LE(stored ? 0 : 8, 10);
@@ -95,7 +103,8 @@ export function writeZip(outFile, files) {
     entry.writeUInt32LE(data.length, 20);
     entry.writeUInt32LE(body.length, 24);
     entry.writeUInt16LE(name.length, 28);
-    entry.writeUInt32LE(0, 36);           // external attributes: a plain file
+    /* External attributes: a plain file, or a regular file with that mode. */
+    entry.writeUInt32LE(file.mode ? ((0o100000 | file.mode) << 16) >>> 0 : 0, 38);
     entry.writeUInt32LE(offset, 42);      // where its local header starts
     central.push(entry, name);
 

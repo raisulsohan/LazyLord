@@ -15,7 +15,7 @@
 import { execFileSync, execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
-  chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync,
+  cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -293,18 +293,19 @@ function assemble() {
   mkdirSync(payload, { recursive: true });
   cpSync(zxp, join(payload, zxpName));
 
-  /* The installers are copied by hand rather than in bulk: cmd.exe misreads a
-     .bat with Unix line endings, and a .command has to stay executable. */
+  /* cmd.exe misreads a .bat with Unix line endings, and bash misreads a
+     .command with Windows ones, so each is rewritten with the endings its
+     shell needs rather than copied as it is. The executable bit a .command
+     needs is not a file's to carry from Windows: tools/zip.mjs writes it. */
   for (const name of readdirSync(join(root, "tools", "installer"))) {
     const from = join(root, "tools", "installer", name);
     const to = join(payload, name);
     if (/\.(bat|cmd|txt)$/i.test(name)) {
-      const text = readFileSync(from, "utf8").replace(/\r?\n/g, "\r\n");
-      writeFileSync(to, text);
+      writeFileSync(to, readFileSync(from, "utf8").replace(/\r?\n/g, "\r\n"));
+    } else if (/\.(command|sh)$/i.test(name)) {
+      writeFileSync(to, readFileSync(from, "utf8").replace(/\r\n/g, "\n"));
     } else {
-      const text = readFileSync(from, "utf8").replace(/\r\n/g, "\n");
-      writeFileSync(to, text);
-      if (name.endsWith(".command")) chmodSync(to, 0o755);
+      cpSync(from, to);
     }
   }
 

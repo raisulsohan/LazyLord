@@ -7,11 +7,10 @@
  *   node tools/package-zxp.mjs --skip-build
  *
  * Adobe's own ZXPSignCmd does the signing; tools/get-zxpsigncmd.mjs fetches it.
- * Nothing is written inside the repository: the key that signs it stays in a
- * release folder of its own and the finished zip goes to a downloads folder,
- * both outside it (see `release` and `downloads` below); the half-built pieces
- * go to the system temp folder and are swept up at the end. One zip comes
- * out — that is the whole release.
+ * The key that signs it sits in the repository folder but never in git (see
+ * `certDir` below); the finished zip goes to a downloads folder beside the
+ * repository; the half-built pieces go to the system temp folder and are
+ * swept up at the end. One zip comes out — that is the whole release.
  */
 import { execFileSync, execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -29,16 +28,17 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const VERSION = pkg.version;
 
 /*
- * The signing key lives outside the repository, two levels up: D:\GitHub\LazyLord
- * keeps it in D:\LazyLord Release. LAZYLORD_RELEASE_DIR overrides it.
+ * The signing key lives in the repository folder, in "Signing key (do not
+ * share)", kept out of git three ways: .gitignore, .git/info/exclude (which
+ * no commit can change) and the pre-commit guard in tools/git-hooks.
+ * LAZYLORD_KEY_DIR overrides where it is.
  *
- * The finished zip goes beside the repository instead, in "00 Install from
- * here" (D:\GitHub\00 Install from here), which holds only the newest
- * LazyLord zip. LAZYLORD_DOWNLOAD_DIR overrides it.
+ * The finished zip goes beside the repository, in "00 Install from here"
+ * (D:\GitHub\00 Install from here), which holds only the newest LazyLord zip.
+ * LAZYLORD_DOWNLOAD_DIR overrides it.
  */
-const release = process.env.LAZYLORD_RELEASE_DIR || resolve(root, "..", "..", "LazyLord Release");
 const downloads = process.env.LAZYLORD_DOWNLOAD_DIR || resolve(root, "..", "00 Install from here");
-const certDir = join(release, "Signing key (do not share)");
+const certDir = process.env.LAZYLORD_KEY_DIR || join(root, "Signing key (do not share)");
 const p12 = join(certDir, "lazylord.p12");
 const pwFile = join(certDir, "password.txt");
 
@@ -337,7 +337,6 @@ function zip() {
 /* ------------------------------------------------------------------- main */
 
 const tool = signTool();
-mkdirSync(release, { recursive: true });
 
 if (has("--cert")) {
   makeCert(tool);

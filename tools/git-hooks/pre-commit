@@ -1,0 +1,11 @@
+#!/bin/sh
+# Refuse a commit that would put the signing key or its password into git.
+# Enabled with: git config core.hooksPath tools/git-hooks
+bad=$(git diff --cached --name-only --diff-filter=ACMR | grep -iE '(^|/)Signing key \(do not share\)/|\.p12$|(^|/)password\.txt$')
+if [ -n "$bad" ]; then
+  echo "Refusing to commit the signing key or its password:" >&2
+  echo "$bad" >&2
+  echo "Unstage it with: git restore --staged <file>" >&2
+  exit 1
+fi
+exit 0

@@ -16,8 +16,13 @@ packages/adobe-cep/js/relay.js
 packages/adobe-cep/js/select.js
 # Design reference exported from Figma Make (not part of the build)
 design-make/
+# The signing key and its password: kept in the repository folder, never in
+# git. Also listed in .git/info/exclude, and tools/git-hooks/pre-commit refuses
+# them if they are ever forced in.
+/Signing key (do not share)/
+*.p12
+password.txt
 # A release is built outside the repository (see tools/package-zxp.mjs), so
 # nothing signed lands here. These are a safety net.
 release/
 tools/vendor/
-*.p12

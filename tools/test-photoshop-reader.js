@@ -87,7 +87,13 @@ function executeAction(id, desc, mode) {
     var target = desc && desc.map["c:T   "];
     var layerNow = app.activeDocument.activeLayer;
     AM.actions.push({ id: id, to: target ? target.parts[0][1] : null, activeKind: layerNow ? layerNow.kind : null });
-    if (MOCK.failMaskSelection) throw new Error("the layer has no mask to load");
+    if (id === "c:dlfx" && MOCK.failClearStyle) throw new Error("the copy has no style to clear");
+    if (id !== "c:dlfx" && MOCK.failMaskSelection) throw new Error("the layer has no mask to load");
+}
+function actionsCalled(id) {
+    var out = [];
+    for (var i = 0; i < AM.actions.length; i++) if (AM.actions[i].id === id) out.push(AM.actions[i]);
+    return out;
 }
 
 function List(items) { this.items = items; this.count = items.length; }
@@ -407,7 +413,7 @@ WScript.Echo("");
        near(app.created[0].duplicated[0].layer.bounds[0], 0) &&
        near(app.created[0].duplicated[0].layer.bounds[1], 0),
        dump(app.created[0].duplicated[0].layer.bounds));
-    ok("raster: reported", !!diagWith(/Pixel layers are sent as an image/), dump(LazyLord.diagnostics));
+    ok("raster: a pixel layer is an image already, so nothing is reported", LazyLord.diagnostics.length === 0, dump(LazyLord.diagnostics));
     ok("raster: pixel size follows the scale", l.pixelWidth === 400 && l.pixelHeight === 200,
        l.pixelWidth + "x" + l.pixelHeight);
     ok("raster: the scratch document was scaled", !!app.created[0].resized, dump(app.created[0].resized));
@@ -898,6 +904,32 @@ function fxOfKind(l, kind) {
     select(doc, [pix]);
     var l = readIt().layers[0];
     ok("styles: an image layer does not also send its style", l && l.type === "image" && !l.effects, dump(l));
+    ok("styles: and its copy keeps the style, baked in", actionsCalled("c:dlfx").length === 0);
+
+    // To After Effects, the style comes off the pixels and travels as effects.
+    reset();
+    pix = layer("Photo", LayerKind.NORMAL, [0, 0, 40, 40]);
+    AM.styles["#" + pix.id] = new Desc({ dropShadow: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 100 }) });
+    doc = setUp(makeDoc({ layers: [pix] }));
+    select(doc, [pix]);
+    l = readIt({ target: "aftereffects" }).layers[0];
+    var cleared = actionsCalled("c:dlfx");
+    ok("styles, to AE: the image carries the style as effects", l && l.type === "image" && l.effects && l.effects.length === 1 &&
+       l.effects[0].kind === "drop-shadow", dump(l));
+    ok("styles, to AE: cleared on the scratch copy, never on the user's layer", cleared.length === 1 &&
+       cleared[0].activeKind === "copy", dump(AM.actions));
+    ok("styles, to AE: nothing reported", LazyLord.diagnostics.length === 0, dump(LazyLord.diagnostics));
+
+    // A copy whose style cannot be cleared keeps it in the pixels, and says so.
+    reset();
+    pix = layer("Photo", LayerKind.NORMAL, [0, 0, 40, 40]);
+    AM.styles["#" + pix.id] = new Desc({ dropShadow: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 100 }) });
+    doc = setUp(makeDoc({ layers: [pix] }));
+    select(doc, [pix]);
+    MOCK.failClearStyle = true;
+    l = readIt({ target: "aftereffects" }).layers[0];
+    ok("styles, to AE: an uncleared style stays baked, reported", l && !l.effects &&
+       !!diagWith(/could not be taken off the pixels/), dump(LazyLord.diagnostics));
 })();
 
 // AD) Adjustment layers are read as IR adjustment layers, not empty pictures.

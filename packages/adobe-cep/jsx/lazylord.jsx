@@ -113,6 +113,9 @@ LazyLord.undoBuild = function (snap) {
  * builder never sees because they change what is written, not how it is built:
  *   { scale }     image export scale, 1 / 2 / 3 / 4 (default 2)
  *   { sequence }  Photoshop: the selected layers as the frames of one image sequence
+ *   { target }    the app it is going to ("" for all): Photoshop lifts a pixel
+ *                 layer's style off its pixels only for After Effects, which
+ *                 rebuilds every style it reads
  */
 LazyLord.runRead = function (outDir, opts) {
   var result = { ok: false, layerCount: 0, irPath: "", message: "", diagnostics: [] };
@@ -480,7 +483,11 @@ LazyLord.normaliseReadOptions = function (opts) {
   var scale = opts ? Number(opts.scale) : NaN;
   var ok = false;
   for (var i = 0; i < LazyLord.SCALES.length; i++) if (LazyLord.SCALES[i] === scale) ok = true;
-  return { scale: ok ? scale : LazyLord.DEFAULT_SCALE, sequence: !!(opts && opts.sequence === true) };
+  return {
+    scale: ok ? scale : LazyLord.DEFAULT_SCALE,
+    sequence: !!(opts && opts.sequence === true),
+    target: (opts && typeof opts.target === "string") ? opts.target : ""
+  };
 };
 
 /** What runRead was last asked for; readers use it when rasterising. */

@@ -75,6 +75,7 @@ LazyLord.readSelection = function (outDir, opts) {
       doc: psDoc,
       outDir: outDir,
       scale: (opts && opts.scale) || LazyLord.readOptions.scale,
+      target: (opts && opts.target) || "",
       idCounter: 1,
       imageIndex: 0,
       minX: 0,
@@ -348,7 +349,21 @@ LazyLord._psr_convert = function (ctx, lyr) {
     if (vec) return LazyLord._psr_withMask(ctx, lyr, vec);
   }
 
-  return LazyLord._psr_raster(ctx, lyr, LazyLord._psr_reasonFor(kind));
+  return LazyLord._psr_raster(ctx, lyr, LazyLord._psr_reasonFor(kind), LazyLord._psr_liftStyles(ctx, lyr, kind));
+};
+
+/**
+ * The layer style of a pixel layer or smart object, to be sent as effects
+ * rather than baked into its image: only to After Effects, which rebuilds
+ * each one as an editable layer style. Anywhere else, or with no style, null,
+ * and the style stays in the pixels, where it looks right everywhere.
+ */
+LazyLord._psr_liftStyles = function (ctx, lyr, kind) {
+  if (ctx.target !== "aftereffects") return null;
+  if (kind !== LayerKind.NORMAL && kind !== LayerKind.SMARTOBJECT) return null;
+  if (!LazyLord._psr_hasStyles(lyr)) return null;
+  var styles = LazyLord._psr_styles(ctx, lyr, lyr.name || "Layer");
+  return styles.length ? styles : null;
 };
 
 /** Why this layer had to be rasterised, in the user's own vocabulary. */
@@ -359,7 +374,8 @@ LazyLord._psr_reasonFor = function (kind) {
   if (kind === LayerKind.SOLIDFILL) return "This fill layer has no outline to read, so it is sent as an image";
   if (kind === LayerKind.VIDEO || kind === LayerKind.LAYER3D) return "3D and video layers are sent as a flattened image";
   if (kind && kind !== LayerKind.NORMAL) return "Adjustment layers are sent as a flattened image";
-  return "Pixel layers are sent as an image";
+  // A pixel layer is an image already: nothing is lost, so nothing to report.
+  return null;
 };
 
 LazyLord._psr_group = function (ctx, lset) {
@@ -820,7 +836,12 @@ LazyLord._psr_font = function (psName) {
  * Duplicate the layer into a scratch document its own size and save a PNG.
  * The source document is never modified: the duplicate is made in the copy.
  */
-LazyLord._psr_raster = function (ctx, lyr, reason) {
+/**
+ * A layer as a PNG image layer. `reason` is reported when there is one;
+ * `lifted`, the layer's style as effects, is exported off the pixels and
+ * sent alongside them.
+ */
+LazyLord._psr_raster = function (ctx, lyr, reason, lifted) {
   var box = LazyLord._psr_box(lyr);
   if (!box || box.width <= 0 || box.height <= 0) {
     LazyLord.warn(lyr.name || "Layer", "The layer is empty, so there was nothing to send", "skipped");
@@ -830,15 +851,20 @@ LazyLord._psr_raster = function (ctx, lyr, reason) {
   var name = lyr.name || "Layer";
   var file = LazyLord.join(ctx.outDir, LazyLord._psr_safe(name) + "-" + (ctx.imageIndex++) + ".png");
 
+  var bare = false;
   try {
-    LazyLord._psr_export(ctx, lyr, box, file);
+    bare = LazyLord._psr_export(ctx, lyr, box, file, false, !!lifted);
   } catch (e) {
     LazyLord.warn(name, "Could not be rasterised — " + LazyLord._ps_msg(e), "skipped");
     return null;
   }
 
-  LazyLord.warn(name, reason, "rasterized");
-  return {
+  if (reason) LazyLord.warn(name, reason, "rasterized");
+  if (lifted && !bare) {
+    LazyLord.warn(name, "Its layer style could not be taken off the pixels, so it is part of the image " +
+      "instead of After Effects layer styles", "approximated");
+  }
+  var out = {
     id: LazyLord._psr_id(ctx, lyr),
     name: name,
     type: "image",
@@ -848,6 +874,8 @@ LazyLord._psr_raster = function (ctx, lyr, reason) {
     pixelWidth: Math.round(box.width * ctx.scale),
     pixelHeight: Math.round(box.height * ctx.scale)
   };
+  if (lifted && bare) out.effects = lifted;
+  return out;
 };
 
 /**
@@ -917,7 +945,13 @@ LazyLord._psr_sequence = function (ctx, source) {
   };
 };
 
-LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame) {
+/**
+ * Export `lyr` alone as a PNG of `box`, through a scratch document. With
+ * `bare`, the copy's layer style is cleared first (the user's layer is never
+ * touched); true when that was done.
+ */
+LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame, bare) {
+  var stripped = false;
   var src = ctx.doc;
   var res = LazyLord._pv(src.resolution) || 72;
   var w = Math.max(1, Math.ceil(box.width));
@@ -939,6 +973,19 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame) {
     } else {
       copy.translate(-LazyLord._pv(b[0]), -LazyLord._pv(b[1]));
     }
+    // Cleared after the move: the bounds it was measured by include the style.
+    if (bare) {
+      try {
+        var cid = LazyLord._ps_cid;
+        tmp.activeLayer = copy;
+        var here = new ActionReference();
+        here.putEnumerated(cid("Lyr "), cid("Ordn"), cid("Trgt"));
+        var clear = new ActionDescriptor();
+        clear.putReference(cid("null"), here);
+        executeAction(cid("dlfx"), clear, DialogModes.NO);
+        stripped = true;
+      } catch (eS) {}
+    }
 
     if (ctx.scale !== 1) {
       tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);
@@ -952,6 +999,7 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame) {
     try { tmp.close(SaveOptions.DONOTSAVECHANGES); } catch (e1) {}
     try { app.activeDocument = src; } catch (e2) {}
   }
+  return stripped;
 };
 
 /* -------------------------------------------------------------------------

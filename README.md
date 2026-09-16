@@ -310,7 +310,7 @@ Figma rotation used to pivot on the layer's top-left; vectors now have their tra
 | Clipping mask | Alpha track matte on the base layer | Mask group |
 | Layer mask | Luma track matte from the mask | Luminance mask |
 | Gradient fill layer | Real shape gradient, every stop | Native gradient |
-| Layer style: drop / inner shadow, outer / inner glow, stroke, colour overlay | The same **After Effects layer styles** | Shadows, glows, stroke and overlay where Figma has them |
+| Layer style: drop / inner shadow, outer / inner glow, stroke, colour overlay | The same **After Effects layer styles** — on shape, text, pixel and smart object layers alike | Shadows, glows, stroke and overlay where Figma has them (a pixel layer's style stays in its image) |
 | Layer style: gradient overlay, satin, bevel & emboss | Layer styles | Reported |
 | Adjustment layer: Brightness/Contrast, Levels, Hue/Saturation, Exposure, Vibrance, Invert, Threshold, Posterize, Black & White, Photo Filter, Color Balance | **Adjustment layer** with the matching effect, opacity, blend mode and mask | Reported (Figma has none) |
 | Adjustment layer: Curves, Gradient Map and the rest | Reported | Reported |

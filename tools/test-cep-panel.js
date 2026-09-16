@@ -722,6 +722,7 @@ run("push", function () {
     els["push"].fire("click");
     var call = lastEval();
     ok("push: reader run", has(call.script, "LazyLord.runRead("), call.script);
+    ok("push: the reader is told where it is going", has(call.script, '"target":"aftereffects"'), call.script);
     call.cb(JSON.stringify({ ok: true, layerCount: 3, irPath: "C:/tmp/pushed/ir.json", message: "",
                             diagnostics: pushed.diagnostics }));
 

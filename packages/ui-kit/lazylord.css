@@ -103,6 +103,8 @@ body {
 .a-logo { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .a-mark { color: var(--accent); width: 14px; height: 14px; flex: none; display: block; }
 .a-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
+/* Only the Adobe panel fills this in; the Figma plugin carries no element. */
+.a-ver { font-size: 9.5px; color: var(--faint); letter-spacing: .01em; }
 
 .a-conn { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .a-conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; transition: background var(--ease), box-shadow var(--ease); }

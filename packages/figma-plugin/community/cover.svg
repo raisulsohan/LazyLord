@@ -1,0 +1,55 @@
+<!--
+  Figma Community cover art — 1920 x 960 (Figma's 2:1 slot).
+  Export as PNG at 1x. This is the image on the plugin's Community page and in
+  search results, so keep the wordmark clear of the edges.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="960" viewBox="0 0 1920 960" fill="none">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1920" y2="960" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#15121f"/>
+      <stop offset="1" stop-color="#0d0b13"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="820" y1="300" x2="1100" y2="580" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8f74ff"/>
+      <stop offset="1" stop-color="#5a3be0"/>
+    </linearGradient>
+    <linearGradient id="wire" x1="360" y1="440" x2="1560" y2="440" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6c4cff" stop-opacity=".15"/>
+      <stop offset=".5" stop-color="#6c4cff" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#6c4cff" stop-opacity=".15"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="960" fill="url(#sky)"/>
+
+  <!-- The path a transfer takes, with a stop for each app. -->
+  <path d="M360 440 H1560" stroke="url(#wire)" stroke-width="3"/>
+  <g fill="#0d0b13" stroke="#6c4cff" stroke-width="3">
+    <circle cx="360" cy="440" r="14"/>
+    <circle cx="760" cy="440" r="14"/>
+    <circle cx="1160" cy="440" r="14"/>
+    <circle cx="1560" cy="440" r="14"/>
+  </g>
+  <g fill="#8b86a3" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="30" text-anchor="middle">
+    <text x="360" y="516">Figma</text>
+    <text x="760" y="516">Illustrator</text>
+    <text x="1160" y="516">Photoshop</text>
+    <text x="1560" y="516">After Effects</text>
+  </g>
+
+  <!-- Mark and wordmark. -->
+  <path d="M960 196 L1044 280 L960 364 L876 280 Z" fill="url(#mark)"/>
+  <path d="M960 232 L1008 280 L960 328 L912 280 Z" fill="#15121f"/>
+
+  <text x="960" y="700" text-anchor="middle" fill="#ffffff"
+        font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="96" font-weight="700"
+        letter-spacing="-2">LazyLord</text>
+  <text x="960" y="766" text-anchor="middle" fill="#9a93b5"
+        font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="38">
+    Vectors, live text and images — Figma to Adobe and back
+  </text>
+  <text x="960" y="836" text-anchor="middle" fill="#6f6885"
+        font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="28">
+    Nothing leaves your machine
+  </text>
+</svg>

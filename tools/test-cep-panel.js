@@ -174,7 +174,7 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
-           "push-conflict", "push-conflict-row", "push-live"];
+           "push-conflict", "push-conflict-row", "push-live", "ver"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
@@ -442,6 +442,12 @@ run("prefs", function () {
     var sel = els["push-targets"];
 
     ok("prefs: auto-receive on by default", els["auto"].checked === true);
+    // A bug report starts with which LazyLord it was, so the panel shows it.
+    ok("prefs: the panel prints its own version",
+       /^v\d+\.\d+\.\d+$/.test(els["ver"].textContent), els["ver"].textContent);
+    ok("prefs: that version matches the manifest",
+       els["ver"].textContent === "v" + (read(CEP + "CSXS\\manifest.xml").match(/ExtensionBundleVersion="([\d.]+)"/) || [])[1],
+       els["ver"].textContent);
     ok("prefs: push card shown on a host with a reader", els["push-card"].hidden === false);
     peersMsg(sock, "welcome", ["illustrator", "photoshop", "aftereffects", "figma"]);
     ok("prefs: Illustrator defaults to After Effects", chipValue(sel, "target") === "aftereffects", chipValue(sel, "target"));

@@ -4,14 +4,16 @@
 
 LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://battleaxe.co/overlord). Select layers anywhere, press **Send**, and they are rebuilt as **native** shape layers, path items, text layers and images in the app you sent them to — not flattened screenshots.
 
-> Status: **v0.9 — the same everywhere.** All four hosts both send and receive, with the same
-> options everywhere: where the transfer lands and at what size, how it is laid out, whether it
-> adds layers or updates the ones an earlier transfer built, plus blend modes and effects.
-> Update, conflict detection and **Live** sync now work in all four, not just After Effects and
-> Illustrator. The bridge runs inside the panel, so there is no window to keep open.
+> Status: **v1.0 — packaged.** All four hosts both send and receive, with the same options
+> everywhere: where the transfer lands and at what size, how it is laid out, whether it adds
+> layers or updates the ones an earlier transfer built, plus blend modes and effects. Update,
+> conflict detection and **Live** sync now work in all four, not just After Effects and
+> Illustrator. The bridge runs inside the panel — no window to keep open — and the panel ships
+> as a signed `.zxp` that installs with a double-click, so a user needs neither Node nor an
+> extension manager.
 >
 > Everything is covered by mocked-host test suites. v0.7 has been run in the real apps; **the
-> v0.8–v0.9 additions have not been yet** — TESTING.md lists what to check, and host-API
+> v0.8–v1.0 additions have not been yet** — TESTING.md lists what to check, and host-API
 > behaviour marked *unverified* below is the first thing to look at.
 
 ---
@@ -69,7 +71,26 @@ lazylord/
 
 ---
 
+## Install
+
+Grab `LazyLord-<version>.zip` from the [releases page](../../releases), unzip it, and run
+**Install LazyLord.bat** (macOS: **Install LazyLord (macOS).command**). That is the whole
+install: the panel inside is signed, so nothing else is needed — no Node.js, no extension
+manager, no debug switch. Then open it with **Window → Extensions (legacy) → LazyLord** in
+Photoshop, Illustrator or After Effects.
+
+For the Figma half, the zip carries the plugin: in the Figma **desktop** app, **Plugins →
+Development → Import plugin from manifest…** and pick `Figma plugin/manifest.json`. (Once the
+plugin is on Figma Community that step goes away.)
+
+Cutting a release is [PUBLISHING.md](PUBLISHING.md); in short, `npm run release:cert` once and
+`npm run release` each time.
+
+---
+
 ## Prerequisites
+
+*(for building from source — a user installing the release needs none of this)*
 
 - **Node.js 18+** and npm (for building the plugin/bridge)
 - **Figma desktop app** (needed to run a local dev plugin that talks to localhost)

@@ -1,0 +1,18 @@
+<!--
+  Figma Community plugin icon — 128 x 128.
+  Export as PNG at 1x from Figma (File > Place image, then Export), or from any
+  vector editor. Figma shows it wherever the plugin is listed.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7b5cff"/>
+      <stop offset="1" stop-color="#5a3be0"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <!-- The panel's own mark: a diamond, sent and received. -->
+  <path d="M64 24 L104 64 L64 104 L24 64 Z" fill="#fff" fill-opacity=".14"/>
+  <path d="M64 38 L90 64 L64 90 L38 64 Z" fill="#fff"/>
+  <circle cx="64" cy="64" r="9" fill="#5a3be0"/>
+</svg>

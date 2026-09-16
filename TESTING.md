@@ -296,6 +296,7 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] Layer mask (নরম কিনারা সহ)। AE-তে luma matte, Figma-তে mask — কিনারা ঠিক?
 - [ ] Gradient fill layer (৩ stop, কোণ ৩০°)। কোণ আর রং মেলে?
 - [ ] Layer style: drop shadow, outer glow, stroke, colour overlay, bevel। ⚠ AE-তে Layer Styles-এ ঠিক মানসহ আসে? (Layer ▸ Layer Styles কমান্ড দিয়ে যোগ করা হয়)
+- [ ] একই style একটা **pixel layer**-এ দিয়ে AE-তে পাঠান। ⚠ AE-তে ছবির ওপর আলাদা Layer Styles আসে, আর ছবির ভেতরে shadow দুবার দেখা যায় না? (style সরানো হয় শুধু PS-এর অস্থায়ী কপি থেকে — আপনার লেয়ার অক্ষত থাকার কথা)
 - [ ] Adjustment layer: Brightness/Contrast, Levels, Hue/Saturation, Photo Filter, Color Balance। ⚠ AE-তে adjustment layer-এ ঠিক effect আর মান? নিচের লেয়ারগুলো একই রকম দেখায়?
 - [ ] Curves adjustment — রিপোর্ট হয়, কিছু বানায় না?
 

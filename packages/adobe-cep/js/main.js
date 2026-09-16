@@ -1468,7 +1468,7 @@
     }
     var prune = live ? mode === "live" : (options.existing === "update" && onlyChangedWanted());
     // Guides and swatches cost a walk of the whole document, so the reader skips what was not asked for.
-    var reading = { scale: currentScale(), guides: options.guides, swatches: options.swatches };
+    var reading = { scale: currentScale(), guides: options.guides, swatches: options.swatches, target: target };
     // Frames are a one-off export: Live keeps layers in step, not sequences.
     if (sequenceWanted() && !live) reading.sequence = true;
     var id = newId();

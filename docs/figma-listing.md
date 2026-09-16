@@ -114,7 +114,7 @@ account — *Plugins → Development → Import plugin from manifest…* and pic
 
 | Page | What to put |
 | --- | --- |
-| **Describe your resource** | Category: **Design tools**. Name, tagline and description are above. |
+| **Describe your resource** | Category: **Design tools → Import & export** — that is what this does, and where people look for it. Name, tagline and description are above. |
 | **Choose some images** | `assets/icon.png` and `assets/cover.png`. |
 | **Data security** | The disclosure form — answers below. |
 

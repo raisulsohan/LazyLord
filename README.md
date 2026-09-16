@@ -54,7 +54,7 @@ uploaded, no account is needed, and it keeps working offline.
 | --- | --- |
 | **Operating system** | Windows 10 or 11, or macOS |
 | **Adobe apps** | Photoshop, Illustrator or After Effects — 2021 or newer. Any one of them is enough |
-| **Figma** | Optional. The **desktop app**, not the browser (a browser tab cannot reach your computer) |
+| **Figma** | Optional. The desktop app, or Chrome, Edge or Firefox once the plugin comes from Figma Community (not Safari) |
 | **Anything else** | No. No Node.js, no extension manager, no account, no subscription |
 
 ---
@@ -90,7 +90,8 @@ yours. **`2 - Add the Figma plugin.bat`** (macOS: the matching `.command`) does
 everything up to them: it copies the plugin somewhere permanent and puts the one
 path you need on the clipboard. Then:
 
-1. Open the Figma **desktop app** — a browser tab cannot reach your computer.
+1. Open the Figma **desktop app** — Figma only imports plugins there. (Installed
+   from Figma Community instead, LazyLord runs in the browser too.)
 2. **Menu → Plugins → Development → Import plugin from manifest…**
 3. In the file window, paste the copied path (**Ctrl+V**, or **Cmd+Shift+G**
    then **Cmd+V** on macOS) and press Enter.
@@ -371,7 +372,7 @@ Worth knowing:
 | **LazyLord is not in the Window menu** | Restart the app. Adobe only looks for new panels while it starts up. |
 | **The panel opens blank** | Run **`Fix a blank panel.bat`** from the download folder and restart the app. On macOS, in Terminal: `defaults write com.adobe.CSXS.11 PlayerDebugMode 1`. Adobe's signature check fails on some machines; this tells it to load the panel anyway. |
 | **The dot never turns green** | Something else may be holding port 7878. Close other panels and start the app again with only LazyLord open. |
-| **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first, and use the Figma **desktop app** — a browser tab cannot reach your computer. |
+| **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first. In a browser, allow Figma to reach apps on this device if it asks; Safari never allows it, so use Chrome, Edge, Firefox or the desktop app. |
 | **Something arrived wrong** | Open **Log** in the panel and copy what it says, then [open an issue](../../issues) with that and a screenshot of both sides. The panel lists everything it could not rebuild, so the answer is usually already in there. |
 
 ---
@@ -398,7 +399,10 @@ LazyLord itself made earlier, and if you have edited one of those layers by
 hand it stops and asks which version to keep.
 
 **Can I use it with Figma in the browser?**
-No — a browser tab cannot reach your computer. The Figma desktop app can.
+Yes, in Chrome, Edge or Firefox, once the plugin is installed from Figma
+Community (a plugin added from the download runs only in the desktop app). If
+the browser asks whether figma.com may reach apps on this device, allow it —
+that is the LazyLord panel. Safari blocks it, so use another browser there.
 
 **Windows and macOS both?**
 Yes. The installer for each is in the download.

@@ -94,7 +94,7 @@ rem ---------------------------------------------------------------- 6. Figma
 echo.
 echo [6/7] Figma plugin
 echo       Figma does not allow scripts to install plugins, so do this once:
-echo         1. Open the Figma DESKTOP app - the browser version cannot reach the bridge.
+echo         1. Open the Figma DESKTOP app - Figma only imports plugins there.
 echo         2. Menu - Plugins - Development - Import plugin from manifest...
 echo         3. Pick this file - its path is already on your clipboard, paste it:
 echo            %FIGMA_MANIFEST%

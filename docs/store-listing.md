@@ -91,8 +91,7 @@ REQUIREMENTS
 
 • Windows 10 or 11, or macOS
 • Photoshop, Illustrator or After Effects, 2021 or newer — any one is enough
-• The Figma desktop app, if you use Figma (a browser tab cannot reach your
-  computer)
+• If you use Figma: the desktop app, or Chrome, Edge or Firefox (not Safari)
 
 
 PRIVACY
@@ -124,7 +123,7 @@ Yes, completely. There is no trial, no account and no subscription, and you can 
 **Which apps do I need?**
 
 ```
-Any one of Photoshop, Illustrator or After Effects, 2021 or newer, is enough to get started. Figma is optional — if you use it, you need the Figma desktop app, because a browser tab cannot reach your computer.
+Any one of Photoshop, Illustrator or After Effects, 2021 or newer, is enough to get started. Figma is optional — it works in the Figma desktop app, and in Chrome, Edge or Firefox once the plugin is installed from Figma Community (Safari blocks it).
 ```
 
 **Does my work get uploaded anywhere?**

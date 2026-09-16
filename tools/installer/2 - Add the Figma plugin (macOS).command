@@ -40,7 +40,7 @@ printf '%s' "${HOME_DIR}/manifest.json" | pbcopy 2>/dev/null || true
 
 echo "Now, in Figma:"
 echo
-echo "  1. Open the Figma DESKTOP app (the browser cannot reach your computer)."
+echo "  1. Open the Figma DESKTOP app (Figma only imports plugins there)."
 echo "  2. Menu > Plugins > Development > Import plugin from manifest…"
 echo "  3. A file window opens. Press Cmd+Shift+G, then Cmd+V to paste the path,"
 echo "     then Return — the path is already copied."

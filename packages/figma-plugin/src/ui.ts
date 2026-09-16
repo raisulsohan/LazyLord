@@ -257,6 +257,11 @@ function renderPeers() {
     link.textContent = "get it here";
     peersEl.appendChild(link);
     peersEl.appendChild(document.createTextNode(" if you have not installed it."));
+    // In a browser the page may need the user's leave to reach this machine.
+    if (!connected) {
+      peersEl.appendChild(document.createTextNode(
+        " In a browser, allow Figma to reach apps on this device if it asks (Safari does not allow it)."));
+    }
   } else {
     peersEl.textContent = "Listening: " + adobe.map(roleLabel).join(", ");
   }

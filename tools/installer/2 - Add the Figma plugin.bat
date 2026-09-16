@@ -41,7 +41,7 @@ echo %HOME_DIR%\manifest.json| clip
 
 echo Now, in Figma:
 echo.
-echo   1. Open the Figma DESKTOP app  ^(the browser cannot reach your computer^).
+echo   1. Open the Figma DESKTOP app  ^(Figma only imports plugins there^).
 echo   2. Menu - Plugins - Development - Import plugin from manifest...
 echo   3. A file window opens. The path is already copied, so just press
 echo      Ctrl+V and then Enter.

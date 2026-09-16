@@ -32,7 +32,8 @@ STEP 2 — THE FIGMA PLUGIN (only if you use Figma)
   macOS:   double-click "2 - Add the Figma plugin (macOS).command"
 
   It copies the plugin somewhere permanent and copies one path for you. Then,
-  in the Figma DESKTOP app (the browser version cannot reach your computer):
+  in the Figma DESKTOP app (Figma only imports plugins there; the Figma
+  Community version of LazyLord also runs in Chrome, Edge or Firefox):
 
     Menu > Plugins > Development > Import plugin from manifest...
 
@@ -76,8 +77,9 @@ IF SOMETHING IS WRONG
       the app with only LazyLord open.
 
   Figma says it cannot connect
-      Open a LazyLord panel in Photoshop, Illustrator or After Effects first,
-      and use the Figma desktop app rather than the browser.
+      Open a LazyLord panel in Photoshop, Illustrator or After Effects first.
+      In a browser, allow Figma to reach apps on this device if it asks.
+      Safari never allows it: use Chrome, Edge, Firefox or the desktop app.
 
   Anything else
       The panel's Log says what happened. Copy it into an issue at

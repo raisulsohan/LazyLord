@@ -56,8 +56,9 @@ takes about a minute and needs nothing else — no Node.js, no extension
 manager, no account.
 
 Two more things worth knowing:
-• Use the Figma DESKTOP app. A browser tab cannot reach the apps on your
-  computer, so the plugin cannot connect there.
+• It works in the Figma desktop app and in Chrome, Edge or Firefox. If the
+  browser asks whether Figma may reach apps on this device, allow it. Safari
+  does not allow it.
 • Keep one LazyLord panel open in an Adobe app while you work. That panel is
   what the plugin talks to.
 

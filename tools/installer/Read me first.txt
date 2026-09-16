@@ -1,0 +1,92 @@
+LazyLord
+Move vectors, live text and images between Figma, Photoshop, Illustrator and
+After Effects. Everything stays on your machine.
+
+
+WHAT IS IN THIS FOLDER
+----------------------
+  LazyLord-<version>.zxp        the panel for Photoshop, Illustrator and
+                                After Effects
+  Install LazyLord.bat          Windows: installs that panel
+  Install LazyLord (macOS)      macOS: the same, double-click it
+  Uninstall LazyLord.bat        removes it again
+  Fix a blank panel.bat         only if the panel opens empty
+  Figma plugin\                 the Figma half, imported by hand (see below)
+
+
+1. INSTALL THE ADOBE PANEL
+--------------------------
+  Close Photoshop, Illustrator and After Effects.
+  Windows: run "Install LazyLord.bat".
+  macOS:   double-click "Install LazyLord (macOS).command". If macOS refuses,
+           right-click it and choose Open.
+
+  Then start an app and open the panel:
+    Photoshop      Window > Extensions (legacy) > LazyLord
+    Illustrator    Window > Extensions > LazyLord
+    After Effects  Window > Extensions > LazyLord
+
+  The dot in the panel turns green when it is ready. There is no separate
+  bridge program and nothing to keep running in a console window: the first
+  LazyLord panel you open does that job itself. Keep one panel open.
+
+
+2. ADD THE FIGMA PLUGIN
+-----------------------
+  Figma does not let an installer add a plugin, so this part is manual - once.
+
+    1. Open the Figma DESKTOP app. The browser version cannot reach your
+       computer, so it cannot talk to the Adobe panel.
+    2. Menu > Plugins > Development > Import plugin from manifest...
+    3. Choose  Figma plugin\manifest.json  from this folder.
+       Keep this folder where it is - Figma reads it from there each time.
+    4. Run it from Plugins > Development > LazyLord.
+
+  Figma will ask to allow the plugin to talk to ws://localhost:7878. That is
+  the LazyLord panel on your own machine. Nothing is sent anywhere else.
+
+  You can skip this step if you only move things between the Adobe apps.
+
+
+3. USING IT
+-----------
+  Select something, then press "Send to ..." and pick where it should go.
+  The other side rebuilds it natively - real paths, real text, real layers.
+
+  Options worth knowing:
+    Existing   Add makes new layers. Update finds what LazyLord sent before
+               and replaces it where it stands.
+    On conflict  what to do when you have edited that layer by hand since:
+               keep yours, or overwrite it.
+    Live       keeps one app updating as you work.
+
+
+IF SOMETHING IS WRONG
+---------------------
+  The panel is not in the Window menu
+      Restart the app. Adobe only looks for new panels while starting up.
+
+  The panel opens blank
+      Run "Fix a blank panel.bat" (macOS: in Terminal, type
+      defaults write com.adobe.CSXS.11 PlayerDebugMode 1 ) and restart the app.
+      Adobe's signature check fails on some machines; this tells it to load the
+      panel anyway.
+
+  The dot never turns green
+      Something else may be using port 7878. Close other panels, or restart
+      the app with only LazyLord open.
+
+  Figma says it cannot connect
+      Open a LazyLord panel in Photoshop, Illustrator or After Effects first,
+      and use the Figma desktop app rather than the browser.
+
+
+REMOVING IT
+-----------
+  Windows: run "Uninstall LazyLord.bat".
+  macOS:   delete
+           ~/Library/Application Support/Adobe/CEP/extensions/com.lazylord.panel
+  In Figma: Plugins > Development > Manage plugins in development > remove.
+
+
+LazyLord is free and open source, MIT licensed.

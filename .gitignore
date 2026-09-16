@@ -17,3 +17,7 @@ packages/adobe-cep/js/relay.js
 packages/adobe-cep/js/select.js
 # Design reference exported from Figma Make (not part of the build)
 design-make/
+# Signed release packages, and the signing key that makes them.
+release/
+tools/vendor/
+*.p12

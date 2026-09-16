@@ -10,6 +10,8 @@
   var DEFAULT_PORT = 7878;
   var BRIDGE_URL = "ws://127.0.0.1:" + DEFAULT_PORT;
   var PROTOCOL_VERSION = 1;
+  /** Kept in step with package.json by tools/package-zxp.mjs. */
+  var PANEL_VERSION = "1.0.0";
 
   /** Hosts that ship a reader module and can therefore originate a transfer. */
   var READ_MODULE = { illustrator: "ai-read", aftereffects: "ae-read", photoshop: "ps-read" };
@@ -133,6 +135,10 @@
 
   hostEl.firstChild.nodeValue = roleLabel(role);
   hostSub.textContent = appName + " " + (env.appVersion || "");
+
+  /* Which LazyLord this is — the first thing a bug report needs. */
+  var verEl = document.getElementById("ver");
+  if (verEl) verEl.textContent = "v" + PANEL_VERSION;
 
   function log(msg, kind) {
     var line = document.createElement("div");

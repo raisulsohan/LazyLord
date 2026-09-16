@@ -1,138 +1,112 @@
-# LazyLord
+<div align="center">
+
+<img src="assets/banner.svg" alt="LazyLord — move artwork between Figma, Illustrator, Photoshop and After Effects" width="820">
 
 **Move vectors, live text and images between Figma, Photoshop, Illustrator and After Effects — any of them to any other.**
 
-LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://battleaxe.co/overlord). Select layers anywhere, press **Send**, and they are rebuilt as **native** shape layers, path items, text layers and images in the app you sent them to — not flattened screenshots.
+Select something. Press **Send**. It arrives in the other app as *real* artwork —
+editable paths, live text, proper layers — not a flattened screenshot.
 
-> Status: **v1.0 — packaged.** All four hosts both send and receive, with the same options
-> everywhere: where the transfer lands and at what size, how it is laid out, whether it adds
-> layers or updates the ones an earlier transfer built, plus blend modes and effects. Update,
-> conflict detection and **Live** sync now work in all four, not just After Effects and
-> Illustrator. The bridge runs inside the panel — no window to keep open — and the panel ships
-> as a signed `.zxp` that installs with a double-click, so a user needs neither Node nor an
-> extension manager.
->
-> Everything is covered by mocked-host test suites. v0.7 has been run in the real apps; **the
-> v0.8–v1.0 additions have not been yet** — TESTING.md lists what to check, and host-API
-> behaviour marked *unverified* below is the first thing to look at.
+[![Download LazyLord](https://img.shields.io/badge/Download-v1.0.0-6c4cff?style=for-the-badge&labelColor=1a1a1a)](../../releases/latest)
+[![Licence: MIT](https://img.shields.io/badge/Licence-MIT-2ea043?style=for-the-badge&labelColor=1a1a1a)](LICENSE)
+[![Windows and macOS](https://img.shields.io/badge/Windows-%C2%B7%20macOS-444?style=for-the-badge&labelColor=1a1a1a)](#what-you-need)
+
+**[Download](#download-and-install) · [How to use it](#what-talks-to-what) · [What travels](#what-transfers) · [Trouble?](#if-something-goes-wrong)**
+
+</div>
 
 ---
 
-## How it works
+## Why
 
-Figma plugins can only reach `localhost`, and Adobe apps script through CEP/ExtendScript. LazyLord connects them with a tiny local WebSocket relay — the bridge — which **runs inside the LazyLord panel**: the first panel opened in Photoshop, Illustrator or After Effects hosts it, so there is nothing to start and no window to keep open. If that app quits, the next panel to reconnect takes it over. Any connected app can send; the bridge routes a transfer to the chosen destination and the acknowledgement back to whoever started it.
+Getting artwork out of one app and into another usually means exporting SVGs,
+re-importing, watching gradients flatten, retyping text that arrived as a
+picture, and doing it again every time the design changes.
 
-```
-┌────────────┐                     ┌─────────────────────────────────────────┐
-│   Figma    │ ◄──── IR / ack ───► │  LazyLord panel (first one opened)      │
-│  plugin    │                     │   └ bridge :7878 (Node, ws, loopback)   │ ◄─► other panels
-└────────────┘                     └─────────────────────────────────────────┘
-        every app sends and receives; the bridge routes by destination
-```
+LazyLord skips all of that. It reads what you selected, describes it in a form
+every app understands, and rebuilds it natively on the other side. Send again
+after a change and it can **update what it built before, where it stands** —
+your position, your grouping, your edits kept.
 
-1. **Figma plugin** reads the selection and serialises it to a host-neutral **IR** (intermediate representation): groups, bezier contours, paints, clip paths, live-text properties and PNG fallbacks. `packages/figma-plugin`
-2. **Bridge** routes each transfer to its target app and each acknowledgement back to its originator. It accepts only LazyLord's own clients (the Figma plugin, CEP panels, local tools) — a web page open in a browser is refused. `packages/bridge` (`relay.ts`, bundled into the panel as `js/relay.js`; `server.ts` runs it stand-alone)
-3. **Adobe CEP panel** (one panel, three hosts) rebuilds incoming IR natively, and serialises its own selection to send out. `packages/adobe-cep`
-4. **Core** holds the shared IR types, the transfer protocol, the SVG-path → bezier math and the pure geometry (transform baking, gradient handles, artboard detection) used by every side. `packages/core`
+It is free, open source, and works entirely on your own computer. Nothing is
+uploaded, no account is needed, and it keeps working offline.
 
-Everything runs on your machine — **no data leaves localhost.**
+> LazyLord is an independent, open alternative to Battle Axe's Overlord.
+> It is not affiliated with Adobe, Figma, or Battle Axe.
 
----
+<br>
 
-## Repository layout
-
-```
-lazylord/
-├── packages/
-│   ├── core/           # IR types, protocol, SVG-path → bezier, geometry helpers (TS)
-│   ├── ui-kit/         # the one stylesheet both front ends wear
-│   ├── figma-plugin/   # Figma plugin: selection ⇄ IR over WebSocket (TS + esbuild)
-│   ├── bridge/         # Local WebSocket relay (Node + ws)
-│   └── adobe-cep/      # CEP panel for PS/AI/AE (HTML/JS + ExtendScript)
-│       ├── js/main.js  #   panel: bridge client, send flow, options, diagnostics
-│       └── jsx/        #   ae/ai/ps builders + ae-read / ai-read / ps-read (readers)
-├── tools/
-│   ├── install-cep.ps1              # install the panel for dev (Windows)
-│   ├── install-cep.sh               # install the panel for dev (macOS)
-│   ├── sync-ui-css.mjs              # copies ui-kit/lazylord.css into the panel
-│   ├── check-extendscript.js        # ES3 syntax check (needs only cscript)
-│   ├── test-ae-builder.js           # AE builder vs. a mocked AE DOM
-│   ├── test-ai-builder.js           # Illustrator builder vs. a mocked AI DOM
-│   ├── test-ps-builder.js           # Photoshop builder vs. mocked ActionManager/DOM
-│   ├── test-illustrator-reader.js   # Illustrator reader vs. a mocked AI DOM
-│   ├── test-aftereffects-reader.js  # AE reader vs. a mocked AE DOM
-│   ├── test-photoshop-reader.js     # Photoshop reader vs. mocked ActionManager/DOM
-│   ├── test-cep-panel.js            # CEP panel vs. mocked CSInterface/WebSocket
-│   ├── test-core.mjs                # core geometry + Figma plugin vs. a mocked scene (Node)
-│   ├── test-bridge.mjs              # the relay over real sockets (Node)
-│   └── smoke-test.mjs               # path-parser checks against the built core
-└── package.json        # npm workspaces
-```
+|  | |
+| --- | --- |
+| **Real artwork** | Bézier paths stay paths, text stays editable text, images stay images |
+| **Both directions** | All four apps send *and* receive — twelve routes in all |
+| **Update in place** | Send again and it replaces what it made before, where it sits |
+| **Notices your edits** | Changed that layer by hand? It asks before overwriting |
+| **Live** | Keep one app updating as you work in another |
+| **Honest** | Anything an app cannot rebuild is listed, not silently dropped |
+| **Private** | Everything runs on your machine, over your own loopback |
 
 ---
 
-## Install
+## What you need
 
-Grab `LazyLord-<version>.zip` from the [releases page](../../releases), unzip it, and run
-**Install LazyLord.bat** (macOS: **Install LazyLord (macOS).command**). That is the whole
-install: the panel inside is signed, so nothing else is needed — no Node.js, no extension
-manager, no debug switch. Then open it with **Window → Extensions (legacy) → LazyLord** in
-Photoshop, Illustrator or After Effects.
-
-For the Figma half, the zip carries the plugin: in the Figma **desktop** app, **Plugins →
-Development → Import plugin from manifest…** and pick `Figma plugin/manifest.json`. (Once the
-plugin is on Figma Community that step goes away.)
-
-Cutting a release is [PUBLISHING.md](PUBLISHING.md); in short, `npm run release:cert` once and
-`npm run release` each time.
+| | |
+| --- | --- |
+| **Operating system** | Windows 10 or 11, or macOS |
+| **Adobe apps** | Photoshop, Illustrator or After Effects — 2021 or newer. Any one of them is enough |
+| **Figma** | Optional. The **desktop app**, not the browser (a browser tab cannot reach your computer) |
+| **Anything else** | No. No Node.js, no extension manager, no account, no subscription |
 
 ---
 
-## Prerequisites
+## Download and install
 
-*(for building from source — a user installing the release needs none of this)*
+### 1. The Adobe panel
 
-- **Node.js 18+** and npm (for building the plugin/bridge)
-- **Figma desktop app** (needed to run a local dev plugin that talks to localhost)
-- One or more of **Photoshop / Illustrator / After Effects, 2021 or newer** (CEP 11)
+1. **[Download `LazyLord-1.0.0.zip`](../../releases/latest)** from the releases page.
+2. **Unzip it** — right-click → *Extract All* on Windows, double-click on macOS.
+   Do not run anything from inside the zip itself.
+3. **Close** Photoshop, Illustrator and After Effects.
+4. Run **`Install LazyLord.bat`** (macOS: **`Install LazyLord (macOS).command`** —
+   if macOS refuses to open it, right-click it and choose *Open*).
+5. Start an Adobe app and open the panel:
 
-## Quick start
+   | | |
+   | --- | --- |
+   | Photoshop | **Window → Extensions (legacy) → LazyLord** |
+   | Illustrator | **Window → Extensions → LazyLord** |
+   | After Effects | **Window → Extensions → LazyLord** |
 
-**Windows, one step:** double-click `install.bat`. It checks Node.js (and offers to install it with winget), runs `npm install`, builds everything, links the Adobe panel into Photoshop, Illustrator and After Effects with CEP debug mode on, and walks you through the single Figma click (the manifest path is put on your clipboard). Then open the LazyLord panel in any Adobe app — it runs the bridge — and follow [TESTING.md](TESTING.md) for the live-app checklist. `install.bat /uninstall` removes the panel.
+That is the whole install. The dot in the panel turns green when it is ready.
 
-Manually, on any platform:
+> **Keep one LazyLord panel open** while you work. There is no separate program
+> to start and no console window to leave running — the first panel you open
+> quietly does that job for the others, and for Figma.
 
-```bash
-# 1. install & build everything (the bridge is bundled into the panel)
-npm install
-npm run build
+### 2. The Figma plugin — only if you use Figma
 
-# 2. verify the core math
-npm test
-```
+Figma does not let an installer add a plugin, so this part is by hand, once:
 
-`npm run bridge` (or `start-bridge.bat`) still runs the bridge on its own, for troubleshooting or with no Adobe app open; a panel finding the port taken simply uses it.
+1. Open the Figma **desktop app**.
+2. **Menu → Plugins → Development → Import plugin from manifest…**
+3. Choose **`Figma plugin/manifest.json`** from the folder you unzipped.
+   Keep that folder where it is — Figma reads it from there each time.
+4. Run it from **Plugins → Development → LazyLord**.
 
-### Install the Figma plugin
+Figma asks whether the plugin may talk to `ws://localhost:7878`. That address is
+the LazyLord panel on your own machine. Nothing goes anywhere else.
 
-1. `npm run build:figma` (already done by `npm run build`).
-2. In the Figma **desktop** app: **Menu → Plugins → Development → Import plugin from manifest…**
-3. Pick `packages/figma-plugin/manifest.json`.
-4. Run **Plugins → Development → LazyLord**.
+### Updating
 
-### Install the Adobe panel
+Download the new zip and run the installer again. It replaces the old panel.
 
-Enable CEP debug mode and link the panel into your CEP extensions folder:
+### Removing it
 
-```bash
-# Windows (PowerShell)
-./tools/install-cep.ps1
+Run **`Uninstall LazyLord.bat`** (macOS: delete
+`~/Library/Application Support/Adobe/CEP/extensions/com.lazylord.panel`).
+In Figma: **Plugins → Development → Manage plugins in development → remove**.
 
-# macOS
-./tools/install-cep.sh
-```
-
-Restart the Adobe app, then open **Window → Extensions (legacy) → LazyLord**.
+---
 
 ## What talks to what
 
@@ -154,7 +128,7 @@ reported on the transfer rather than left to be discovered. The tables under
 
 ### Transfer from Figma
 
-1. Bridge running, LazyLord panel open in your Adobe app (its dot turns green).
+1. A LazyLord panel open in your Adobe app, its dot green. (That panel is the bridge; nothing else has to be running.)
 2. In Figma, select layers, open LazyLord, choose a target (or **All apps**), pick an **Image scale** (1x–4x, default 2x), press **Send**.
 3. Watch the layers appear natively in the Adobe document. ✨
 
@@ -209,7 +183,7 @@ Transfers pushed from Illustrator or pulled from After Effects always go into th
 | | **Keep my edits** | That layer is left as it was edited, and reported |
 | **Only what changed** | on (default) | While updating: only the layers whose source changed since the last successful send to that app go out; nothing at all when nothing changed |
 
-Split + Flatten + Add is what earlier versions produced, with two intentional fixes (see *Behaviour changes in v0.4*).
+Split + Flatten + Add is what earlier versions produced, with two intentional fixes (see [docs/history.md](docs/history.md)).
 
 #### Shape updating
 
@@ -250,6 +224,15 @@ Notes worth knowing:
 After every transfer the panel prints a one-line summary (layers, images — originals vs. generated — and fallbacks by kind), and lists anything that needed a fallback, naming the object and the reason, sorted skipped → rasterized → approximated.
 
 ---
+
+## Making the window the size you want
+
+- **The Figma plugin** has a grip in its bottom-right corner. A plugin window is only ever the
+  size the plugin asks for — there is no window chrome to drag — so the grip *is* the chrome:
+  drag it and the window resizes. The size is remembered and restored next time you open it.
+- **The Adobe panel** resizes the way every Adobe panel does, by dragging its edge. Dock it,
+  float it, make it tall and narrow beside your artboard — it reflows rather than overflowing,
+  so the rows of buttons go from one column to as many as fit.
 
 ## What transfers
 
@@ -341,23 +324,6 @@ Worth knowing:
   because an export renders the layer, not how it composites with what is under it.
 - A blend mode a host does not have leaves the layer Normal, reported.
 
-## Behaviour changes in v0.4
-
-- **Illustrator stacking order fixed.** The Illustrator reader used to send overlapping artwork upside down; it now sends it bottom-to-top like every other source.
-- **After Effects paint order.** In split layout, strokes now draw over fills, as in the source.
-- AE shape layers holding several painted groups now arrive as several shapes (they used to share the first fill).
-- A new AE comp / Illustrator or Photoshop document is sized to the source artboard, comp or top-level Figma frame, not just the selection.
-
-## In-depth review (v0.8.1)
-
-Four independent reviews (builders, readers, panel + bridge, Figma + core) turned up about sixty defects; the confirmed ones are fixed, with regression tests. The ones that matter most:
-
-- **Security:** the bridge refused nothing — any web page could connect, receive transfers or push files into a panel, and a transfer id could name a folder outside the temp directory. Now only LazyLord's own clients connect, and ids are made safe before they touch the disk.
-- **Wrong target:** the Figma plugin gave every file the same source key (`figma.root.id` is `"0:0"` everywhere), so an Update from one file could overwrite layers sent from another. Each file now gets its own key, kept in its plugin data. Illustrator could tag — and a later Update remove — the user's own artwork on a layer above the active one.
-- **Update:** After Effects wrote comp-space values into parented layers (they jumped), relinked images to the temporary folder, dropped mixed text styles, failed on keyed fonts, reset gradient opacity, left LazyLord's own clip masks behind, and updated a duplicate instead of the original.
-- **Readers:** blend modes never left After Effects, Illustrator or Photoshop; Photoshop group clips were in the wrong space, shape layers lost strokes and got holes where contours overlapped, and a send changed the user's layer selection; Illustrator ignored spot-colour tints and cropped rasterised strokes; After Effects ignored reversed shape direction and sent a whole PSD for one of its layers.
-- **Smart diff and Live:** moving a whole selection, or fading a group, was not seen as a change; a failed live send was never retried; Reconnect started an endless reconnect loop; Live and Send could overlap; a Figma page-sized frame received artwork piled in its corner, rotated images off-centre and clipped layers unclipped.
-
 ## Reliability, history and presets
 
 - **All or nothing.** If a build stops part-way with an error, what it had made is taken back:
@@ -389,129 +355,73 @@ Four independent reviews (builders, readers, panel + bridge, Figma + core) turne
 - **Not yet implemented:** Illustrator live effects and Photoshop layer styles.
 - **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
-- **Not verified in real apps.** Every host-API assumption was checked against documentation and forums only. The main ones:
-  - the Gradient Ramp property names and the space its points use on shape layers;
-  - Photoshop's ActionManager descriptors for shape, gradient and vector-mask layers;
-  - whether setting `Layer.parent` in AE keeps the child's visual position;
-  - the mapping of Illustrator's `GradientColor.matrix`;
-  - that `AVLayer.comment` and `PageItem.note` persist in a saved project/document and survive a round trip (the whole mapping engine rests on this), and that the values the conflict fingerprint reads back are unchanged by a save and reopen;
-  - that `PageNode.on("nodechange")` fires for the edits Live watches, with the node's parents readable;
-  - that a Photoshop layer's `xmpMetadata.rawData` can be written by a script and is kept in the saved PSD;
-  - that `Property.setValueAtTime` on a shape path and a Text Document behaves as the scripting guide describes, and that `numKeys` reads back as expected;
-  - that Illustrator's `document.pageItems` really does reach nested items (the mocked tests only cover top-level artwork), and that `PageItem.move(..., ElementPlacement.PLACEBEFORE)` puts an item directly in front of the reference;
-  - that `FootageSource.replace` relinks a layer without disturbing its transform;
-  - Photoshop's `targetLayers` ActionManager call and its Background-layer index offset, and that a shape layer's vector mask really does appear in `document.pathItems` once that layer is active;
-  - the AE effect match names and control indices for Drop Shadow and Gaussian Blur, and that its shadow dial is measured clockwise from straight up;
-  - that a Figma plugin can create the nodes the builder asks for — `createVector` with `vectorPaths`, `createImage`, `figma.group` — and that `isMask` on the first child of a group clips the rest.
+- **Version 1.0 is new.** Sending and receiving has been used by hand in all four apps. The newer parts — updating in place in Photoshop and Figma, conflict detection and Live — pass a large automated test suite against mocked hosts, but have had far less real-world use, and Adobe scripting differs between app versions. When something arrives wrong the panel's **Log** usually says why; [tell me about it](../../issues) and it gets fixed. The host-API assumptions still to be confirmed are listed in [docs/development.md](docs/development.md).
 
 ---
 
-## Development
+---
 
-```bash
-npm run dev:figma        # rebuild the Figma plugin on change
-npm run bridge           # run the bridge stand-alone, with logs (the panel normally runs it)
-npm run test:bridge      # the relay over real sockets
-```
+## If something goes wrong
 
-- **Debug the Figma UI**: right-click the plugin → *Open Console*.
-- **Debug the Adobe panel**: open the port from `packages/adobe-cep/.debug` in Chrome (e.g. `http://localhost:8770`) for the panel's DevTools; ExtendScript `$.writeln` output goes to the ExtendScript Toolkit / VS Code debugger.
-- **Change the port**: set `LAZYLORD_PORT` for the bridge and update `BRIDGE_URL` in `packages/figma-plugin/src/ui.ts`, `packages/adobe-cep/js/main.js`, and the Figma `manifest.json` `networkAccess`.
-
-### Tests
-
-The CEP side is plain ES3 and needs no build, so it is checked with Windows Script Host, whose JScript engine is the same language level ExtendScript targets. No install required:
-
-```bash
-cscript //Nologo tools\check-extendscript.js
-```
-
-That parses every `.jsx`/`.js` file in the panel and catches what modern editors accept but ExtendScript rejects — above all **trailing commas**, which throw at load time. The other suites run the real modules against mocked host DOMs:
-
-```bash
-cscript //Nologo tools\test-ae-builder.js
-```
-```bash
-cscript //Nologo tools\test-ai-builder.js
-```
-```bash
-cscript //Nologo tools\test-ps-builder.js
-```
-```bash
-cscript //Nologo tools\test-illustrator-reader.js
-```
-```bash
-cscript //Nologo tools\test-aftereffects-reader.js
-```
-```bash
-cscript //Nologo tools\test-photoshop-reader.js
-```
-```bash
-cscript //Nologo tools\test-cep-panel.js
-```
-```bash
-cscript //Nologo tools\test-rollback.js
-```
-
-The core geometry and the Figma plugin's serialiser run under Node ≥ 22.7 with type stripping (the script copies the core sources to `.lazylord-tmp/` first):
-
-```bash
-node --experimental-transform-types tools/test-core.mjs
-```
-
-They pin down the maths that is otherwise invisible until something looks wrong on screen: y-flips, tangent signs, rotation direction and pivots, gradient handles, clip spaces, group order and opacity, and every fallback's diagnostic. The Phase 3 suites cover the mapping engine end to end — tags surviving a user's own comment, ids from different files not matching, a second transfer editing rather than duplicating, keys landing at the playhead, and a reworked shape being reported rather than clobbered. The v0.6 ones add the Photoshop reader, the Figma builder (including a subpaths → SVG → subpaths round trip and gradient handles that survive the transform they are turned into), and that a shadow offset becomes the direction-and-distance dial After Effects actually uses.
-
-### Architecture notes
-
-- The **IR** (`packages/core/src/ir.ts`) is the contract. Y is down everywhere (Figma/AE convention); Illustrator and Photoshop flip Y against the active artboard/canvas on the way in and out.
-- A layer's geometry is in its **local** space (origin at its frame's top-left); frames, clip paths and group boxes are in **frame** space (selection-normalised). Vectors are always baked (rotation 0); text and images carry a clockwise rotation about their frame centre.
-- Bezier tangents are stored **relative to their vertex** (After Effects `Shape` convention), so AE reconstruction is direct and other hosts add the anchor back. Converting a point and its handle *before* subtracting is what makes the y-flip come out right.
-- **Groups** are structural: a group's children keep frames in the same frame space, so a target that does not rebuild hierarchy just flattens (`LazyLord.flattenLayers`).
-- All SVG-path parsing (including arcs and quadratics → cubics) happens once in `packages/core/src/svg-path.ts`; ExtendScript only ever consumes plain numbers.
-- `Document.originSpace` says whether `bounds` is a real page offset (`"document"`: Illustrator, After Effects, Figma inside one frame) or an arbitrary canvas point (`"canvas"`). Only the former is added back when placing, and only then does `Document.canvas` size a new document or comp.
-- Every conversion that is not native records a diagnostic (`approximated`, `rasterized` or `skipped`) naming the object and the reason.
-- A host that can push ships a **reader** module registered in `READ_MODULE` in `js/main.js`. Adding one is how the remaining directions get built.
-- **Identity** is `source app | source document | layer id`, built by `LazyLord.tagKey` and stored on the built layer by the host's own means. `Document.sourceKey` carries the middle part: without it, ids from different files would collide. The tag helpers in `lazylord.jsx` are host-agnostic; only reading and writing the field is per-host, which is what a Photoshop implementation would have to solve.
-- An update **writes what LazyLord owns and searches for it first** (`_ae_findParts`) rather than trusting the structure it left behind, so a layer the user has since reworked is reported instead of clobbered.
-
-## License
-
-MIT — see `LICENSE`.
+| What you see | What to do |
+| --- | --- |
+| **LazyLord is not in the Window menu** | Restart the app. Adobe only looks for new panels while it starts up. |
+| **The panel opens blank** | Run **`Fix a blank panel.bat`** from the download folder and restart the app. On macOS, in Terminal: `defaults write com.adobe.CSXS.11 PlayerDebugMode 1`. Adobe's signature check fails on some machines; this tells it to load the panel anyway. |
+| **The dot never turns green** | Something else may be holding port 7878. Close other panels and start the app again with only LazyLord open. |
+| **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first, and use the Figma **desktop app** — a browser tab cannot reach your computer. |
+| **Something arrived wrong** | Open **Log** in the panel and copy what it says, then [open an issue](../../issues) with that and a screenshot of both sides. The panel lists everything it could not rebuild, so the answer is usually already in there. |
 
 ---
 
-## The interface
+## Questions people ask
 
-Both front ends wear one stylesheet, `packages/ui-kit/lazylord.css`. The Figma plugin inlines it
-at build time (Figma only loads a single HTML file); the Adobe panel links a copy that
-`npm run build` syncs into `packages/adobe-cep/css/`. **Edit the source, never the copy** — the
-copy carries a "generated" banner and git ignores it.
+**Is it really free?**
+Yes. MIT licensed — free to use, at work too, and free to change.
 
-Only the colours differ, and only because the hosts do: the plugin reads Figma's own light/dark
-theme variables, while a CEP panel has no theme to read and Adobe expects dark, so the panel
-re-declares the same tokens. Everything else — the section labels, the chip rows, the option
-disclosure, the fallback list — is the same component in both.
+**Does my work leave my computer?**
+No. The apps talk to each other over your own machine's loopback address, the
+same way a local preview server works. There is no server, no account, and no
+telemetry. Unplug the internet and it still works.
 
-Two things stay different on purpose: the panel shows what the plugin has no use for (which host
-it is running in, a running log, the auto-receive switch), and the plugin has a resize grip the
-panel does not need.
+**Do I need Overlord, Node.js, or an extension manager?**
+No. The download is self-contained.
 
-### Resizing
+**Why does Photoshop call it "Extensions (legacy)"?**
+That is Adobe's own menu name for this kind of panel. Nothing is wrong.
 
-- **The Figma plugin** has a grip in its bottom-right corner. A plugin window is only ever the
-  size the plugin asks for — there is no chrome to drag — so the grip *is* the chrome: drag it and
-  the window resizes, down to 300 × 360 and up to whatever Figma allows. The size is remembered
-  and restored next time you open the plugin.
-- **The Adobe panel** is resized the way every Adobe panel is, by dragging its edge — between
-  240 × 240 and whatever your display allows.
+**Will it touch my existing layers?**
+Only if you ask. **Add** always makes new layers. **Update** replaces what
+LazyLord itself made earlier, and if you have edited one of those layers by
+hand it stops and asks which version to keep.
 
-  > A CEP panel will not grow past its `<Size>` unless the manifest also declares a `<MaxSize>`.
-  > Leaving it out is why the panel was once stuck at 300 × 360 however hard its edge was
-  > dragged; `packages/adobe-cep/CSXS/manifest.xml` now declares one, and a test asserts it
-  > stays there. **CEP only reads the manifest when the host app starts**, so a change to it
-  > needs a full restart of Photoshop, Illustrator or After Effects — `install.bat` links the
-  > panel with a junction, so there is nothing to reinstall.
+**Can I use it with Figma in the browser?**
+No — a browser tab cannot reach your computer. The Figma desktop app can.
 
-Either way the layout reflows rather than overflowing: the Send-to and Image-scale rows are
-`auto-fit` grids, so they go from one column at the narrowest to as many as fit, and stop growing
-past a readable width instead of stretching a handful of chips across a wide window.
+**Windows and macOS both?**
+Yes. The installer for each is in the download.
+
+---
+
+## Changing it yourself
+
+LazyLord is open source and the code is meant to be read. Building it,
+running the test suites and how the pieces fit together are in
+**[docs/development.md](docs/development.md)**. Packaging a signed release of
+your own is in **[PUBLISHING.md](PUBLISHING.md)**, and
+**[docs/history.md](docs/history.md)** keeps the notes from how it was built.
+
+Issues and pull requests are welcome.
+
+---
+
+## Who made this
+
+LazyLord is designed and built by **[Raisul Sohan](https://raisulsohan.com/)**.
+
+If it saved you an afternoon, [say hello](https://raisulsohan.com/). If it did
+not, [tell me why](../../issues) — that is more useful.
+
+## Licence
+
+[MIT](LICENSE). Use it, change it, ship it. Adobe, Photoshop, Illustrator,
+After Effects and Figma are trademarks of their respective owners.

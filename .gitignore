@@ -8,7 +8,6 @@ Thumbs.db
 packages/figma-plugin/build/
 packages/**/dist/
 .lazylord-tmp/
-.claude/
 # Synced from packages/ui-kit/lazylord.css by tools/sync-ui-css.mjs
 packages/adobe-cep/css/
 # The relay the panel runs, bundled by packages/bridge/scripts/bundle-relay.mjs
@@ -17,7 +16,8 @@ packages/adobe-cep/js/relay.js
 packages/adobe-cep/js/select.js
 # Design reference exported from Figma Make (not part of the build)
 design-make/
-# Signed release packages, and the signing key that makes them.
+# A release is built outside the repository (see tools/package-zxp.mjs), so
+# nothing signed lands here. These are a safety net.
 release/
 tools/vendor/
 *.p12

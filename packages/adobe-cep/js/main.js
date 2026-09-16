@@ -12,6 +12,7 @@
   var PROTOCOL_VERSION = 1;
   /** Kept in step with package.json by tools/package-zxp.mjs. */
   var PANEL_VERSION = "1.0.0";
+  var AUTHOR_URL = "https://raisulsohan.com/";
 
   /** Hosts that ship a reader module and can therefore originate a transfer. */
   var READ_MODULE = { illustrator: "ai-read", aftereffects: "ae-read", photoshop: "ps-read" };
@@ -141,6 +142,21 @@
   /* Which LazyLord this is — the first thing a bug report needs. */
   var verEl = document.getElementById("ver");
   if (verEl) verEl.textContent = "v" + PANEL_VERSION;
+
+  /* A panel is a browser with nowhere to go: a plain link would load the site
+     inside it, with no way back. CEP hands the URL to the real browser. */
+  var authorEl = document.getElementById("author");
+  if (authorEl) {
+    authorEl.onclick = function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      try {
+        window.cep.util.openURLInDefaultBrowser(AUTHOR_URL);
+      } catch (err) {
+        log("Could not open " + AUTHOR_URL + " — " + (err.message || err), "warn");
+      }
+      return false;
+    };
+  }
 
   function log(msg, kind) {
     var line = document.createElement("div");

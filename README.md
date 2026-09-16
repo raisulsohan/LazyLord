@@ -2,7 +2,11 @@
 
 <img src="assets/banner.svg" alt="LazyLord — move artwork between Figma, Illustrator, Photoshop and After Effects" width="820">
 
+# LazyLord — a full replacement for Overlord, but free forever!
+
 **Move vectors, live text and images between Figma, Photoshop, Illustrator and After Effects — any of them to any other.**
+
+Everything you would buy Overlord for, with nothing to pay, today or later.
 
 Select something. Press **Send**. It arrives in the other app as *real* artwork —
 editable paths, live text, proper layers — not a flattened screenshot.
@@ -12,6 +16,8 @@ editable paths, live text, proper layers — not a flattened screenshot.
 [![Windows and macOS](https://img.shields.io/badge/Windows-%C2%B7%20macOS-444?style=for-the-badge&labelColor=1a1a1a)](#what-you-need)
 
 **[Download](#download-and-install) · [How to use it](#what-talks-to-what) · [What travels](#what-transfers) · [Trouble?](#if-something-goes-wrong)**
+
+**Stuck somewhere?** [Email me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) at **lettertosohan@gmail.com** with the details, and I will sort it out.
 
 </div>
 
@@ -31,7 +37,7 @@ your position, your grouping, your edits kept.
 It is free, open source, and works entirely on your own computer. Nothing is
 uploaded, no account is needed, and it keeps working offline.
 
-> LazyLord is an independent, open alternative to Battle Axe's Overlord.
+> LazyLord is an independent, free replacement for Battle Axe's Overlord.
 > It is not affiliated with Adobe, Figma, or Battle Axe.
 
 <br>
@@ -397,7 +403,7 @@ Worth knowing:
 - **Not yet implemented:** sending Illustrator's own live effects out of Illustrator.
 - **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
-- **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. The features new in 1.1 — real gradients, components as precomps, Photoshop masks, layer styles, adjustment layers and frame sequences, kerning, the image folder and browser Figma — pass the automated checks but have not yet been run by hand in the real apps. Adobe scripting also differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](../../issues) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
+- **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. The features new in 1.1 — real gradients, components as precomps, Photoshop masks, layer styles, adjustment layers and frame sequences, kerning, the image folder and browser Figma — pass the automated checks but have not yet been run by hand in the real apps. Adobe scripting also differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
 
 ---
 
@@ -405,13 +411,21 @@ Worth knowing:
 
 ## If something goes wrong
 
+**If anything stops you, email me: [lettertosohan@gmail.com](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem).** Tell me
+what happened in detail and I will solve it. The more you send, the faster that goes:
+
+- which apps and versions (for example *After Effects 2025, Photoshop 2024, Windows 11*);
+- what you selected, what you pressed, and what you expected to happen;
+- a screenshot of both apps;
+- the text from the panel's **Log** and its list of fallbacks.
+
 | What you see | What to do |
 | --- | --- |
 | **LazyLord is not in the Window menu** | Restart the app. Adobe only looks for new panels while it starts up. |
 | **The panel opens blank** | Run **`Fix a blank panel.bat`** from the download folder and restart the app. On macOS, in Terminal: `defaults write com.adobe.CSXS.11 PlayerDebugMode 1`. Adobe's signature check fails on some machines; this tells it to load the panel anyway. |
 | **The dot never turns green** | Something else may be holding port 7878. Close other panels and start the app again with only LazyLord open. |
 | **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first. In a browser, allow Figma to reach apps on this device if it asks; Safari never allows it, so use Chrome, Edge, Firefox or the desktop app. |
-| **Something arrived wrong** | Open **Log** in the panel and copy what it says, then [open an issue](../../issues) with that and a screenshot of both sides. The panel lists everything it could not rebuild, so the answer is usually already in there. |
+| **Something arrived wrong** | Open **Log** in the panel and copy what it says, then [email me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) that and a screenshot of both sides (or [open an issue](../../issues)). The panel lists everything it could not rebuild, so the answer is usually already in there. |
 
 ---
 

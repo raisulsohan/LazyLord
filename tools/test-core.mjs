@@ -10,7 +10,7 @@
 // pointed at those copies. What a flattening target makes of the plugin's
 // layer tree is checked with the real LazyLord.flattenLayers / applyOrigin
 // from packages/adobe-cep/jsx/lazylord.jsx, loaded read-only into a sandbox.
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import vm from "node:vm";
@@ -2660,6 +2660,29 @@ await block("ui, late prefs", async () => {
   ok("chunks: pieces left waiting past the timeout are dropped",
     stale.add(parts[parts.length - 1], PR.CHUNK_TIMEOUT_MS + 1) === null);
 }
+
+// The Figma manifest: what Community checks, checked here first.
+await block("figma manifest", async () => {
+  const manifest = JSON.parse(readFileSync(join(root, "packages/figma-plugin/manifest.json"), "utf8"));
+  // Figma issues these; a hand-written one cannot be published, and swapping in
+  // a different one would orphan the listing and everyone who installed it.
+  ok("manifest: the plugin id is the one Figma issued", /^\d{15,}$/.test(manifest.id), manifest.id);
+  ok("manifest: still the same id", manifest.id === "1681970197584828240", manifest.id);
+  ok("manifest: named LazyLord", manifest.name === "LazyLord", manifest.name);
+  // Only editors it has actually been run in: an untested one fails review.
+  ok("manifest: Figma design files only", JSON.stringify(manifest.editorType) === JSON.stringify(["figma"]),
+     JSON.stringify(manifest.editorType));
+  const net = manifest.networkAccess || {};
+  ok("manifest: reaches the local bridge and nothing else",
+     JSON.stringify(net.allowedDomains) === JSON.stringify(["ws://localhost:7878"]),
+     JSON.stringify(net.allowedDomains));
+  // Figma requires a reason whenever localhost is in the list.
+  ok("manifest: and says why, as Figma requires for localhost",
+     typeof net.reasoning === "string" && net.reasoning.length > 40, net.reasoning);
+  for (const file of [manifest.main, manifest.ui]) {
+    ok("manifest: " + file + " is built", existsSync(join(root, "packages/figma-plugin", file)));
+  }
+});
 
 if (knownIssues.length) {
   console.log(`\nKnown issues outside this suite's files (not counted as failures):`);

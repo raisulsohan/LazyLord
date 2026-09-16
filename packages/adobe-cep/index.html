@@ -63,7 +63,9 @@
         <span class="a-title">LazyLord</span>
         <span class="a-ver" id="ver"></span>
       </div>
-      <div id="conn" class="a-conn a-conn--off"><span class="dot"></span><span id="conn-text">Offline</span></div>
+      <!-- The address the bridge listens on used to sit in the footer; it is
+           diagnostic, so it lives here now, where it is asked for. -->
+      <div id="conn" class="a-conn a-conn--off" title="LazyLord bridge — ws://127.0.0.1:7878"><span class="dot"></span><span id="conn-text">Offline</span></div>
     </header>
 
     <main class="a-body">
@@ -203,14 +205,21 @@
         </details>
       </section>
 
+      <!--
+        The log matters when something has gone wrong and nowhere else, so it
+        is shut: its newest line sits beside the summary, and a warning or an
+        error opens it on its own.
+      -->
       <section class="a-block">
-        <label class="a-label">Log</label>
-        <div id="log" class="a-log">Waiting for the LazyLord bridge…</div>
+        <details class="a-opts" id="log-card">
+          <summary class="a-label">Log <span class="a-last" id="log-last"></span></summary>
+          <div id="log" class="a-log">Waiting for the LazyLord bridge…</div>
+        </details>
       </section>
     </main>
 
     <footer class="a-foot">
-      <span>Bridge: <code>ws://127.0.0.1:7878</code></span>
+      <span>by Raisul Sohan</span>
       <span>data stays on this machine</span>
     </footer>
   </div>

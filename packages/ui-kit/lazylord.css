@@ -379,6 +379,20 @@ body {
 .a-opts summary:hover { color: var(--muted); }
 .a-opts[open] summary { margin-bottom: 8px; }
 .a-opts-note { margin-left: 2px; color: var(--accent); font-weight: 600; }
+/* The newest log line, shown beside its summary so the log can stay shut. */
+.a-last {
+  min-width: 0;
+  flex: 1;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.a-last.warn { color: var(--warn); }
+.a-last.err { color: var(--err); }
 .a-opts .a-peers { margin: 2px 0 8px; font-style: italic; font-size: 10.5px; }
 
 .a-opt {

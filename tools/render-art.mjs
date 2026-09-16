@@ -3,7 +3,7 @@
  *
  *   node tools/render-art.mjs
  *
- * Figma's listing takes a 128x128 icon and 1920x960 cover art, as PNG. Rather
+ * Figma's publish form takes a 128x128 icon and a 1920x1080 thumbnail, as PNG. Rather
  * than keep hand-exported copies that drift from the source, this renders them
  * from assets/*.svg with the copy of Chromium already on the machine (Edge, or
  * Chrome) and writes the PNGs next to them.
@@ -39,7 +39,7 @@ const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 const ART = [
   { svg: "icon.svg", png: "icon.png", width: 128, height: 128 },
-  { svg: "banner.svg", png: "cover.png", width: 1920, height: 960 },
+  { svg: "thumbnail.svg", png: "thumbnail.png", width: 1920, height: 1080 },
 ];
 
 mkdirSync(work, { recursive: true });

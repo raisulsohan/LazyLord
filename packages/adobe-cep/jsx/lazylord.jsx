@@ -333,6 +333,21 @@ LazyLord.kernsOf = function (layer) {
   return out;
 };
 
+/**
+ * Ask the user for a folder, starting in `start` when it exists. A JSON
+ * string: { path } with the folder's full path, or "" when cancelled.
+ */
+LazyLord.chooseFolder = function (prompt, start) {
+  var picked = null;
+  try {
+    var from = start ? new Folder(start) : null;
+    picked = (from && from.exists) ? from.selectDlg(prompt) : Folder.selectDialog(prompt);
+  } catch (e) {
+    picked = null;
+  }
+  return JSON.stringify({ path: picked ? picked.fsName : "" });
+};
+
 /** Absolute path of a layer's image file, whichever field carries it. */
 LazyLord.imagePath = function (layer) {
   return layer.filePath || layer.pngPath || null;

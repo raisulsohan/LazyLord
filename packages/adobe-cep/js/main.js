@@ -279,6 +279,7 @@
     if (swatchesEl && typeof prefs.swatches === "boolean") swatchesEl.checked = prefs.swatches;
     if (destinationSel && contains(DESTINATIONS, prefs.destination)) destinationSel.value = prefs.destination;
     if (scalesEl && contains(SCALES, String(prefs.scale))) selectChip(scalesEl, "scale", prefs.scale);
+    renderImageFolder();
     updateDestNote();
     updateOptionsNote();
   }
@@ -1060,6 +1061,54 @@
     });
   }
 
+  // --- Where received images are kept (After Effects) ------------------------
+  // After Effects links the images a transfer brings in, so they have to live
+  // somewhere lasting: beside the saved project by default, or in a folder
+  // the user picks here. Illustrator and Photoshop embed them.
+
+  var imageFolderRow = document.getElementById("image-folder-row");
+  var imageFolderEl = document.getElementById("image-folder");
+  var imageFolderReset = document.getElementById("image-folder-reset");
+
+  function chosenImageFolder() {
+    return typeof prefs.imageFolder === "string" && prefs.imageFolder ? prefs.imageFolder : "";
+  }
+
+  function renderImageFolder() {
+    if (!imageFolderRow || role !== "aftereffects") return;
+    imageFolderRow.hidden = false;
+    var dir = chosenImageFolder();
+    if (imageFolderEl) {
+      imageFolderEl.textContent = dir ? "Images: " + dir : "Images: beside the project";
+      imageFolderEl.title = dir;
+    }
+    if (imageFolderReset) imageFolderReset.hidden = !dir;
+  }
+
+  function chooseImageFolder() {
+    if (!jsxReady) { log("The host scripts are not loaded yet.", "err"); return; }
+    cs.evalScript("LazyLord.chooseFolder(" + jsonStr("Where should LazyLord keep the images it brings in?") + "," +
+      jsonStr(chosenImageFolder()) + ")", function (res) {
+      var r;
+      try { r = JSON.parse(res); } catch (e) { r = null; }
+      if (!r || typeof r.path !== "string") { log("The folder could not be chosen: " + res, "err"); return; }
+      if (!r.path) return; // cancelled
+      savePref("imageFolder", r.path);
+      renderImageFolder();
+      log("Images from now on go in " + r.path + ".", "ok");
+    });
+  }
+
+  function resetImageFolder() {
+    savePref("imageFolder", "");
+    renderImageFolder();
+    log("Images from now on go beside the project.", "ok");
+  }
+
+  var imageFolderChoose = document.getElementById("image-folder-choose");
+  if (imageFolderChoose) imageFolderChoose.addEventListener("click", chooseImageFolder);
+  if (imageFolderReset) imageFolderReset.addEventListener("click", resetImageFolder);
+
   // --- Push targets -------------------------------------------------------
 
   /* --- Chip rows -----------------------------------------------------------
@@ -1641,6 +1690,12 @@
         }
       });
       var images = imageStats(doc);
+      // Where this app keeps them is this panel's choice, not the sender's.
+      if (doc.options && typeof doc.options === "object") delete doc.options.imageFolder;
+      if (role === "aftereffects" && chosenImageFolder()) {
+        if (!doc.options || typeof doc.options !== "object") doc.options = {};
+        doc.options.imageFolder = chosenImageFolder();
+      }
 
       var irPath = joinPath(dir, "ir.json");
       writeText(irPath, JSON.stringify(doc));

@@ -487,6 +487,9 @@ body {
 
 .a-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 
+/* A long folder path gives way to the buttons beside it. */
+.a-path { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .a-check { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11.5px; cursor: pointer; transition: color var(--ease); }
 .a-check:hover { color: var(--fg-2); }
 .a-check input { margin: 0; width: 13px; height: 13px; accent-color: var(--accent); cursor: pointer; }

@@ -3118,6 +3118,31 @@ function override(pl, name) {
     }
 })();
 
+// A folder chosen in the panel keeps images, saved project or not.
+(function () {
+    mockFiles["C:/Temp/lazylord/t9/5_6.png"] = true;
+    app.project.file = null;
+    copies = []; foldersCreated = [];
+    var r = build(irDoc([imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t9/5_6.png", false)],
+                        { options: { imageFolder: "E:\\Shots\\Images" } }));
+    ok("image folder: made, and the image copied into it", foldersCreated.join() === "E:/Shots/Images" &&
+       copies.length === 1 && copies[0].to === "E:/Shots/Images/Hero.png" && app.imports[0] === "E:/Shots/Images/Hero.png",
+       JSON.stringify(copies) + " " + foldersCreated.join());
+    ok("image folder: no word about an unsaved project", r.diags.length === 0, dump(r.diags));
+
+    // A folder that cannot be made: said, and the usual place is used.
+    var make = Folder.prototype.create;
+    Folder.prototype.create = function () { return false; };
+    try {
+        r = build(irDoc([imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t9/5_6.png", false)],
+                        { options: { imageFolder: "Q:\\Gone" } }));
+    } finally {
+        Folder.prototype.create = make;
+    }
+    ok("image folder: unusable, reported, and the temporary file linked as before",
+       diagsMatching(r.diags, /could not be used/).length === 1 && app.imports[0] === "C:/Temp/lazylord/t9/5_6.png", dump(r.diags));
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

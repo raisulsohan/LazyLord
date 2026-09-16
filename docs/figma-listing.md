@@ -95,6 +95,48 @@ https://github.com/raisulsohan/LazyLord/issues
 
 ---
 
+## Where the Publish button is
+
+Figma moved it out of the Plugins submenu. From the **desktop app**, with a
+design file open (not the home screen):
+
+1. Click the **Figma logo**, top-left.
+2. **Plugins** → **Manage plugins** (older builds: *Plugins → Development →
+   Manage plugins in development*).
+3. Find LazyLord under **Development**, click the **⋯** beside it, and choose
+   **Publish**.
+
+If it is not in that list, the manifest has not been imported into this Figma
+account — *Plugins → Development → Import plugin from manifest…* and pick
+`packages/figma-plugin/manifest.json`.
+
+## The pages the Publish modal asks for
+
+| Page | What to put |
+| --- | --- |
+| **Describe your resource** | Category: **Design tools**. Name, tagline and description are above. |
+| **Choose some images** | `assets/icon.png` and `assets/cover.png`. |
+| **Data security** | The disclosure form — answers below. |
+
+### Data security answers
+
+Every one of these is simply true, and all of it is verifiable in the source.
+
+- **Does the plugin collect or store user data?** No.
+- **Does it send data to a server or third party?** No. The only address it
+  contacts is `ws://localhost:7878`, which is the user's own computer.
+- **Does it use analytics or tracking?** No.
+- **Does it require an account, login or payment?** No.
+- **Where does data go?** Between the Figma desktop app and the LazyLord panel
+  running inside Photoshop, Illustrator or After Effects on the same machine.
+  Nothing is uploaded, and it works with the internet disconnected.
+- **Third-party services used?** None.
+
+Review takes up to about two weeks, and the plugin sits under **Published**
+with an **In review** badge until then.
+
+---
+
 ## If the reviewer asks about network access
 
 The manifest declares one domain and nothing else:

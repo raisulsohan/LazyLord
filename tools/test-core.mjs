@@ -2019,11 +2019,15 @@ await block("ui, no panel yet", async () => {
   const peers = ui.$("#peers");
   ok("no panel: says nothing is connected", /No Adobe app connected yet/.test(peers.textContent), peers.textContent);
   ok("no panel: says what to do about it", /Open the LazyLord panel/.test(peers.textContent), peers.textContent);
+  ok("no panel: connected, so no word about browsers", !/In a browser/.test(peers.textContent), peers.textContent);
   const link = (peers.children || []).find((c) => c.tagName === "A");
   ok("no panel: and links to where the panel comes from",
      link && String(link.href).indexOf("github.com/raisulsohan/LazyLord/releases") > 0, link && link.href);
   ws.onmessage({ data: JSON.stringify({ type: "peers", peers: ["figma", "photoshop"] }) });
   ok("no panel: the hint goes once a panel is there", /Listening/.test(ui.$("#peers").textContent), ui.$("#peers").textContent);
+  ws.onclose();
+  ok("no bridge: a browser user is told to allow the connection", /In a browser, allow Figma/.test(ui.$("#peers").textContent),
+     ui.$("#peers").textContent);
 });
 
 // Live sync, the UI half: every export sent as an update of only what changed.

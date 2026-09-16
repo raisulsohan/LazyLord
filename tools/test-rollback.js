@@ -212,6 +212,21 @@ eval(load("ps.jsx"));
        res.message.indexOf("removed again") > 0, res.message);
 })();
 
+// A builder that refuses before building anything: no rollback, no word about one.
+(function () {
+    var rolled = false;
+    LazyLord.snapshot = function () { return { taken: true }; };
+    LazyLord.rollback = function () { rolled = true; return true; };
+    LazyLord.build = function () {
+        var e = new Error("Save the project first.");
+        e.nothingBuilt = true;
+        throw e;
+    };
+    var res = JSON.parse(LazyLord.run("ir.json"));
+    ok("refused: the message is only the reason", res.ok === false && res.message === "Save the project first.", res.message);
+    ok("refused: nothing is rolled back", rolled === false);
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

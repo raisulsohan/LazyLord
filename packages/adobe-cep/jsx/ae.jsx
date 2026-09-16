@@ -28,6 +28,9 @@
 
 LazyLord.build = function (doc) {
   var ctx;
+  // Images are linked, not embedded: they need a lasting home before anything is built.
+  var assets = LazyLord._ae_assetContext(doc);
+  LazyLord._ae_requireImageHome(doc, assets);
   app.beginUndoGroup("LazyLord Import");
   try {
     LazyLord.applyOrigin(doc);
@@ -53,7 +56,7 @@ LazyLord.build = function (doc) {
     ctx = {
       doc: doc,
       comp: LazyLord._ae_comp(doc),
-      assets: LazyLord._ae_assetContext(doc),
+      assets: assets,
       groups: opts.hierarchy === "groups",
       precomps: opts.hierarchy === "precomps",
       precompCount: 0,
@@ -2421,6 +2424,35 @@ LazyLord._ae_assetContext = function (doc) {
     if (f) ctx.dir = LazyLord.join(f.parent.fsName, LazyLord._ae_ASSET_FOLDER);
   } catch (e) {}
   return ctx;
+};
+
+/** True when the document brings in images LazyLord generated: exported layers, masks, frames. */
+LazyLord._ae_bringsImages = function (doc) {
+  var found = false;
+  LazyLord.eachLayer((doc && doc.layers) || [], function (layer) {
+    if (found || !layer) return;
+    if (layer.type === "image" && layer.isOriginalFile !== true && LazyLord.imagePath(layer)) found = true;
+    else if (layer.mask && layer.mask.filePath) found = true;
+  });
+  return found;
+};
+
+/**
+ * After Effects links the images a transfer brings in, so they are kept in a
+ * 'LazyLord Assets' folder beside the saved project (or the folder chosen in
+ * the panel). With the project never saved there is nowhere lasting to put
+ * them, and linking them from the temporary folder would leave missing
+ * footage once it is cleared: so nothing is built, and the transfer fails
+ * saying to save the project first. Transfers without generated images, and
+ * the user's own linked files, need no home and go ahead.
+ */
+LazyLord._ae_requireImageHome = function (doc, assets) {
+  if (assets.dir || !LazyLord._ae_bringsImages(doc)) return;
+  var e = new Error("Save the After Effects project first (File > Save), then send again. This transfer brings in images, " +
+    "and LazyLord keeps them in a '" + LazyLord._ae_ASSET_FOLDER + "' folder beside the saved project. Nothing was added. " +
+    "To keep them somewhere else instead, choose a folder under Images in the LazyLord panel.");
+  e.nothingBuilt = true;
+  throw e;
 };
 
 /** A readable file name for a copied asset: the layer name, the source extension. */

@@ -56,7 +56,7 @@ function File(path) {
 }
 File.prototype.copy = function (target) {
     var to = norm(typeof target === "string" ? target : target.fsName);
-    if (!mockFiles[this.fsName] || !mockDirs[dirOf(to)]) return false;
+    if ((!mockFiles[this.fsName] && !mock.copyAny) || !mockDirs[dirOf(to)]) return false;
     mockFiles[to] = true;
     copies.push({ from: this.fsName, to: to });
     return true;
@@ -729,7 +729,22 @@ function build(doc, opts) {
     // find what the first one left behind.
     var comp = opts.comp || (opts.newComp ? null : makeComp("Active", 1920, 1080));
     app.project.activeItem = comp;
-    var res = LazyLord.build(doc);
+    // Generated images need a saved project (or a chosen folder). A test that is
+    // not about where images are kept gets a stand-in saved project for this
+    // build; opts.saved = false keeps the project unsaved.
+    var standIn = opts.saved !== false && !app.project.file && LazyLord._ae_bringsImages(doc) &&
+                  !(doc.options && doc.options.imageFolder);
+    if (standIn) {
+        mockDirs["D:/Harness"] = true;
+        app.project.file = new File("D:/Harness/Test.aep");
+        mock.copyAny = true;
+    }
+    var res;
+    try {
+        res = LazyLord.build(doc);
+    } finally {
+        if (standIn) { app.project.file = null; mock.copyAny = false; }
+    }
     return { res: res, comp: comp, diags: LazyLord.diagnostics };
 }
 
@@ -1148,28 +1163,43 @@ WScript.Echo("");
        nearPt(tval(t, "ADBE Position"), [5, 6 + 16]) && tval(t, "ADBE Rotate Z") === 0, xy(tval(t, "ADBE Position")));
 })();
 
-// 13) Unsaved project: generated images stay in temp, reported once.
+// 13) Unsaved project: generated images have nowhere lasting to go, so nothing is built.
 (function () {
     mockFiles["C:/Temp/lazylord/t1/a.png"] = true;
     mockFiles["C:/Temp/lazylord/t1/b.png"] = true;
     mockFiles["C:/art/logo.png"] = true;
     app.project.file = null;
     copies = [];
-    var r = build(irDoc([
-        imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t1/a.png", false),
-        imageLayer("Badge", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t1/b.png"),
-        imageLayer("Logo", { x: 0, y: 0, width: 100, height: 50 }, "C:/art/logo.png", true)
-    ]));
-    var proj = [];
-    for (var i = 0; i < r.diags.length; i++) if (r.diags[i].object === "Project") proj.push(r.diags[i]);
+    var comp = makeComp("Active", 1920, 1080), threw = null;
+    try {
+        build(irDoc([
+            vector("Shape", { x: 0, y: 0, width: 10, height: 10 }),
+            imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t1/a.png", false),
+            imageLayer("Logo", { x: 0, y: 0, width: 100, height: 50 }, "C:/art/logo.png", true)
+        ]), { saved: false, comp: comp });
+    } catch (e) {
+        threw = e.message;
+    }
+    ok("unsaved: the transfer stops, saying to save the project first", threw !== null &&
+       /Save the After Effects project first/.test(threw) && /LazyLord Assets/.test(threw), threw);
+    ok("unsaved: nothing imported, copied or built", app.imports.length === 0 && copies.length === 0 && comp.list.length === 0,
+       app.imports.join(",") + " / " + comp.list.length);
+    ok("unsaved: nothing left in an undo group", app.undo.length === 0, app.undo.join(","));
 
-    ok("unsaved: all three imported", r.res.layersCreated === 3 && app.imports.length === 3, app.imports.join(","));
-    ok("unsaved: generated images imported from temp",
-       app.imports[0] === "C:/Temp/lazylord/t1/a.png" && app.imports[1] === "C:/Temp/lazylord/t1/b.png");
-    ok("unsaved: nothing copied", copies.length === 0);
-    ok("unsaved: exactly one 'Project' diagnostic, approximated",
-       proj.length === 1 && proj[0].resolution === "approximated" && /not been saved/.test(proj[0].reason), dump(r.diags));
-    ok("unsaved: no other diagnostics", r.diags.length === 1, dump(r.diags));
+    // A generated mask needs a home too.
+    threw = null;
+    var masked = vector("Masked", { x: 0, y: 0, width: 10, height: 10 });
+    masked.mask = { frame: { x: 0, y: 0, width: 10, height: 10 }, filePath: "C:/Temp/lazylord/t1/m.png" };
+    try { build(irDoc([masked]), { saved: false }); } catch (e2) { threw = e2.message; }
+    ok("unsaved: a layer mask counts as an image", threw !== null && /save the After Effects project first/i.test(threw), threw);
+
+    // No generated images: nothing needs a home, and it builds as before.
+    var r = build(irDoc([
+        vector("Shape", { x: 0, y: 0, width: 10, height: 10 }),
+        imageLayer("Logo", { x: 0, y: 0, width: 100, height: 50 }, "C:/art/logo.png", true)
+    ]), { saved: false });
+    ok("unsaved: shapes and the user's own files still go ahead", r.res.layersCreated === 2 && app.imports[0] === "C:/art/logo.png" &&
+       r.diags.length === 0, dump(r.diags));
 })();
 
 // 14) Saved project: generated images copied beside the .aep, never overwriting.
@@ -2776,7 +2806,8 @@ function clippedDoc() {
     t.mask = { frame: { x: 40, y: 30, width: 200, height: 50 }, filePath: "C:/tmp/Headline-mask-0.png" };
     var r = build(irDoc([t]), { newMattes: true });
     var text = layerNamed(r.comp, "Headline"), mask = layerNamed(r.comp, "Headline mask");
-    ok("layer mask: brought in as footage", !!mask && app.imports.join("|").indexOf("Headline-mask-0.png") >= 0, app.imports.join("|"));
+    ok("layer mask: brought in as footage, kept beside the project", !!mask && app.imports.length === 1 &&
+       /LazyLord Assets\/Headline mask\.png$/.test(app.imports[0]), app.imports.join("|"));
     ok("layer mask: a Luma matte for the text", text && text.matteLayer === mask && text.trackMatteType === TrackMatteType.LUMA);
     ok("layer mask: the mask does not draw", mask && mask.enabled === false);
     ok("layer mask: tidied in directly above the text", orderOf(r.comp) === "Headline mask,Headline", orderOf(r.comp));
@@ -3130,17 +3161,21 @@ function override(pl, name) {
        JSON.stringify(copies) + " " + foldersCreated.join());
     ok("image folder: no word about an unsaved project", r.diags.length === 0, dump(r.diags));
 
-    // A folder that cannot be made: said, and the usual place is used.
-    var make = Folder.prototype.create;
+    // A folder that cannot be made: said, and the usual place is used — which,
+    // with the project unsaved, means saving it first.
+    var make = Folder.prototype.create, threw = null;
     Folder.prototype.create = function () { return false; };
     try {
-        r = build(irDoc([imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t9/5_6.png", false)],
-                        { options: { imageFolder: "Q:\\Gone" } }));
+        build(irDoc([imageLayer("Hero", { x: 0, y: 0, width: 100, height: 50 }, "C:/Temp/lazylord/t9/5_6.png", false)],
+                    { options: { imageFolder: "Q:\\Gone" } }));
+    } catch (e) {
+        threw = e.message;
     } finally {
         Folder.prototype.create = make;
     }
-    ok("image folder: unusable, reported, and the temporary file linked as before",
-       diagsMatching(r.diags, /could not be used/).length === 1 && app.imports[0] === "C:/Temp/lazylord/t9/5_6.png", dump(r.diags));
+    ok("image folder: unusable, reported, and with no saved project nothing is built",
+       diagsMatching(LazyLord.diagnostics, /could not be used/).length === 1 && threw !== null &&
+       /Save the After Effects project first/.test(threw) && app.imports.length === 0, threw + " " + dump(LazyLord.diagnostics));
 })();
 
 // An image sequence: imported as one footage item at the comp's frame rate.
@@ -3162,7 +3197,7 @@ function override(pl, name) {
         app.project.file = null;
         var r = build(irDoc([seq]));
         ok("sequence: imported as a sequence, at the comp's frame rate", imported.length === 1 && imported[0].io.sequence === true &&
-           imported[0].footage.mainSource.conformFrameRate === (r.comp.frameRate || 30) && app.imports[0] === frames[0],
+           imported[0].footage.mainSource.conformFrameRate === (r.comp.frameRate || 30),
            dump(imported[0] && imported[0].footage.mainSource));
 
         mockDirs["D:/Anim"] = true;

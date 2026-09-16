@@ -7,10 +7,11 @@
  *   node tools/package-zxp.mjs --skip-build
  *
  * Adobe's own ZXPSignCmd does the signing; tools/get-zxpsigncmd.mjs fetches it.
- * Nothing is written inside the repository: the finished zip and the key that
- * signs it go to a release folder of their own, outside it (see `release`
- * below), and the half-built pieces go to the system temp folder and are swept
- * up at the end. One zip comes out — that is the whole release.
+ * Nothing is written inside the repository: the key that signs it stays in a
+ * release folder of its own and the finished zip goes to a downloads folder,
+ * both outside it (see `release` and `downloads` below); the half-built pieces
+ * go to the system temp folder and are swept up at the end. One zip comes
+ * out — that is the whole release.
  */
 import { execFileSync, execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -28,13 +29,15 @@ const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const VERSION = pkg.version;
 
 /*
- * Where a release lands. Not in the repository and not beside it: what comes
- * out of here is the finished thing plus the key that signs it, and neither
- * belongs in a folder full of source. Two levels up from the repo, so
- * D:\GitHub\LazyLord writes to D:\LazyLord Release. LAZYLORD_RELEASE_DIR
- * overrides it.
+ * The signing key lives outside the repository, two levels up: D:\GitHub\LazyLord
+ * keeps it in D:\LazyLord Release. LAZYLORD_RELEASE_DIR overrides it.
+ *
+ * The finished zip goes beside the repository instead, in "00 Install from
+ * here" (D:\GitHub\00 Install from here), which holds only the newest
+ * LazyLord zip. LAZYLORD_DOWNLOAD_DIR overrides it.
  */
 const release = process.env.LAZYLORD_RELEASE_DIR || resolve(root, "..", "..", "LazyLord Release");
+const downloads = process.env.LAZYLORD_DOWNLOAD_DIR || resolve(root, "..", "00 Install from here");
 const certDir = join(release, "Signing key (do not share)");
 const p12 = join(certDir, "lazylord.p12");
 const pwFile = join(certDir, "password.txt");
@@ -317,8 +320,13 @@ function assemble() {
 }
 
 function zip() {
-  const out = join(release, `LazyLord-${VERSION}.zip`);
-  rmSync(out, { force: true });
+  mkdirSync(downloads, { recursive: true });
+  const name = `LazyLord-${VERSION}.zip`;
+  const out = join(downloads, name);
+  // One LazyLord zip there at a time; older versions stay on GitHub's releases page.
+  for (const old of readdirSync(downloads)) {
+    if (/^LazyLord-\d+\.\d+\.\d+\.zip$/.test(old)) rmSync(join(downloads, old), { force: true });
+  }
   /* Built here rather than with Compress-Archive, which writes nested paths
      with backslashes — see tools/zip.mjs. */
   const bytes = writeZip(out, walk(payload));

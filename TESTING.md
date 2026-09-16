@@ -317,6 +317,11 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] একই জিনিস Photoshop-এ। ⚠ লেয়ারটা smart object হয়ে **Gaussian Blur** smart filter পায়, আর Layer Style-এ Drop Shadow ও Inner Shadow ঠিক কোণ/দূরত্ব/মাপে আসে?
 - [ ] রঙিন (লাল) shadow Illustrator-এ কালো হয়ে আসে আর সেটা রিপোর্ট হয়?
 
+**After Effects: সেভ না করা প্রজেক্ট**
+- [ ] নতুন, **সেভ না করা** AE প্রজেক্টে Photoshop থেকে একটা pixel layer (ছবি) পাঠান। কিছুই যোগ না হয়ে বার্তা আসে **"Save the After Effects project first…"**?
+- [ ] প্রজেক্ট সেভ করে আবার পাঠান — ছবি প্রজেক্টের পাশে **LazyLord Assets** ফোল্ডারে যায়, আর AE-তে সেখান থেকেই link হয়?
+- [ ] সেভ না করা প্রজেক্টে শুধু shape বা লেখা পাঠান — আগের মতোই চলে যায়?
+
 **After Effects: ছবির ফোল্ডার আর frame sequence**
 - [ ] AE প্যানেলে Images → Choose… দিয়ে একটা ফোল্ডার বাছুন (⚠ ফোল্ডার বাছার উইন্ডো খোলে?), তারপর ছবিসহ কিছু পাঠান — ছবি সেই ফোল্ডারে যায়? Default চাপলে আবার প্রজেক্টের পাশে?
 - [ ] Photoshop-এ ৮টা লেয়ারের একটা গ্রুপ (বেশিরভাগ hidden), Options-এ **Layers as frames** টিক দিয়ে AE-তে পাঠান। ⚠ AE-তে একটাই footage হয়ে ৮ ফ্রেমের sequence চলে, comp-এর frame rate-এ? সেভ করা প্রজেক্টে "… frames" ফোল্ডারে ফ্রেমগুলো কপি হয়?

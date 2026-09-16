@@ -321,7 +321,7 @@ Illustrator and After Effects also carry **letter pairs kerned by hand** both wa
 
 ### Assets
 
-- **After Effects:** images LazyLord generated are copied next to your saved project in `LazyLord Assets/` (never overwriting; `-1`, `-2`… appended) and imported from there. In an unsaved project they stay in the temp folder, and the panel says so. Your own linked files are never copied.
+- **After Effects:** images LazyLord generated are copied next to your saved project in `LazyLord Assets/` (never overwriting; `-1`, `-2`… appended) and imported from there. **A project that has never been saved gets nothing:** a transfer that brings in images stops before building and asks you to save the project first, so no footage is ever linked from a temporary folder. Shapes, text and your own linked files need no folder and go ahead. Your own linked files are never copied.
 - **Choose the folder yourself:** the After Effects panel's **Images → Choose…** keeps them in a folder you pick instead, saved project or not. **Default** goes back.
 - **Image sequences** are copied into a folder of their own (`Walk frames/`), names kept, so After Effects reads them as one sequence.
 - **Illustrator:** generated images are embedded; your own files stay linked.
@@ -371,7 +371,7 @@ Worth knowing:
 
   Anything that cannot be identified is left alone, and the error says so. Per-layer fallbacks still give a partial build with diagnostics, as before. Layers an *Update* had already edited stay edited (use Undo). Figma builds are not rolled back yet.
 - **Large transfers** (JSON over 4 MB, usually because of images) travel in 1 MB chunks that the receiver joins back together, staying well under the bridge's 100 MB message limit.
-- **Temporary files.** Transfer folders in `<temp>/lazylord` older than 7 days are removed when a panel starts. Until then, an After Effects project that was never saved still links its generated images from there.
+- **Temporary files.** Transfer folders in `<temp>/lazylord` older than 7 days are removed when a panel starts. Nothing depends on them by then: After Effects has its own copies beside the project, and Illustrator and Photoshop embed theirs.
 - **History.** The Adobe panels and the Figma plugin keep the last 25 transfers sent and received: when, where to or from, what, how many layers, and any fallbacks or failure. It is kept per app, and can be cleared.
 - **Presets.** The Options section can save the Destination, Image scale and options under a name and bring them back in one step.
 

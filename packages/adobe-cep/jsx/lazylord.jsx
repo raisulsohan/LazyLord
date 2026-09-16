@@ -73,7 +73,8 @@ LazyLord.run = function (irPath) {
   } catch (e) {
     result = { ok: false, layersCreated: 0, message: (e && e.message) ? e.message : String(e) };
     // All or nothing: a build that stops part-way takes back what it made.
-    if (snap) result.message += " " + LazyLord.undoBuild(snap);
+    // One that refused before starting (nothingBuilt) has nothing to take back.
+    if (snap && !(e && e.nothingBuilt)) result.message += " " + LazyLord.undoBuild(snap);
   }
   result.diagnostics = LazyLord.diagnostics;
   return JSON.stringify(result);

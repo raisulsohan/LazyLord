@@ -2216,5 +2216,31 @@ WScript.Echo("");
 })();
 
 WScript.Echo("");
+// Kerning: the method (24.0) and the kerned pairs (characterRange, 24.3).
+(function () {
+    AutoKernType = { NO_AUTO_KERN: 10, METRIC_KERN: 11, OPTICAL_KERN: 12 };
+    var kerned = { 2: 45 };
+    var tl = makeLayer(TextLayer, "Kerned", {
+        "ADBE Transform Group": transform([50, 80]),
+        "ADBE Text Properties": node("ADBE Text Properties", { children: [
+            node("ADBE Text Document", { value: {
+                text: "WAVE", fontSize: 30, fillColor: [0, 0, 0], applyFill: true,
+                fontFamily: "Futura", fontStyle: "Bold", tracking: 0,
+                autoLeading: true, justification: ParagraphJustification.LEFT_JUSTIFY,
+                boxText: false, autoKernType: 12,
+                characterRange: function (s, e) { return { kerning: kerned[s] || 0 }; }
+            }})
+        ]})
+    });
+    tl.sourceRectAtTime = function () { return { left: 0, top: -24, width: 80, height: 30 }; };
+    selectComp([tl]);
+    var l = LazyLord.readSelection("C:\\temp").layers[0];
+    AutoKernType = undefined;
+    ok("kerning: the method", l.autoKern === "optical", String(l.autoKern));
+    ok("kerning: the kerned pair", l.kerns && l.kerns.length === 1 && l.kerns[0].index === 2 && l.kerns[0].amount === 45,
+       JSON.stringify(l.kerns));
+})();
+
+WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

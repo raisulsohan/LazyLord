@@ -3086,6 +3086,38 @@ function override(pl, name) {
     ok("component: groups mode keeps nulls", app.compsAdded.length === 0 && nullsIn(r.comp) === 2, names(r.comp.list));
 })();
 
+// Kerning: the method (24.0), the pairs through characterRange (24.3).
+(function () {
+    var t = textLayer("AVA", { x: 0, y: 0, width: 100, height: 20 });
+    t.characters = "AVA";
+    t.autoKern = "optical";
+    t.kerns = [{ index: 1, amount: -80 }, { index: 7, amount: 10 }];
+    var r = build(irDoc([t]));
+    ok("kerning, older AE: what is lost is reported once",
+       diagsMatching(r.diags, /optical kerning and kerned letter pairs could not be set/).length === 1, dump(r.diags));
+
+    AutoKernType = { NO_AUTO_KERN: 10, METRIC_KERN: 11, OPTICAL_KERN: 12 };
+    TextDocument.prototype.characterRange = function (s, e) {
+        var o = { start: s, end: e };
+        (this.ranges = this.ranges || []).push(o);
+        return o;
+    };
+    try {
+        r = build(irDoc([t]));
+        var td = r.comp.list[0].property("ADBE Text Properties").property("ADBE Text Document").value;
+        ok("kerning: the method", td.autoKernType === 12, String(td.autoKernType));
+        var kerned = [];
+        for (var i = 0; td.ranges && i < td.ranges.length; i++) {
+            if (td.ranges[i].kerning !== undefined) kerned.push(td.ranges[i].start + "-" + td.ranges[i].end + ":" + td.ranges[i].kerning);
+        }
+        ok("kerning: the pair on the character after its gap; one past the text left out", kerned.join() === "1-2:-80", kerned.join());
+        ok("kerning: nothing reported", diagsMatching(r.diags, /kern/).length === 0, dump(r.diags));
+    } finally {
+        delete TextDocument.prototype.characterRange;
+        AutoKernType = undefined;
+    }
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

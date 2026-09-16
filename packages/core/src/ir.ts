@@ -263,6 +263,18 @@ export type TextLayer = BaseLayer & {
   textCase?: "original" | "upper" | "lower" | "title";
   decoration?: "none" | "underline" | "strikethrough";
   /**
+   * How the font's own spacing between letter pairs is used: "metrics" (the
+   * font's kerning table, every app's default), "optical" (Adobe's spacing
+   * from the letter shapes) or "none". Unset means "metrics".
+   */
+  autoKern?: "metrics" | "optical" | "none";
+  /**
+   * Manual kerning, as Adobe apps keep it: the space between character
+   * `index - 1` and character `index`, in thousandths of an em, used for
+   * that pair instead of automatic kerning. Non-zero pairs only, in order.
+   */
+  kerns?: { index: number; amount: number }[];
+  /**
    * Y of the first baseline in the same space as `frame.y`. Sources that know
    * the true baseline (Illustrator) set it; hosts that receive it place text
    * exactly instead of approximating from the font size.

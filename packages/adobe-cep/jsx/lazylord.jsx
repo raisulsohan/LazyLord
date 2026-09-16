@@ -312,6 +312,27 @@ LazyLord.fullTextRuns = function (layer) {
   return out.length > 1 ? out : [];
 };
 
+/**
+ * A text layer's manual kerning, checked: pairs inside the text, with a
+ * finite non-zero amount, one per index, in order. [] when there are none.
+ */
+LazyLord.kernsOf = function (layer) {
+  var list = layer && layer.kerns;
+  var n = String((layer && layer.characters) || "").length;
+  if (!list || typeof list.length !== "number") return [];
+  var seen = {}, out = [];
+  for (var i = 0; i < list.length; i++) {
+    var k = list[i];
+    if (!k || typeof k.index !== "number" || typeof k.amount !== "number") continue;
+    if (k.index < 1 || k.index >= n || k.index !== Math.floor(k.index) || !isFinite(k.amount) || k.amount === 0) continue;
+    if (seen[k.index]) continue;
+    seen[k.index] = true;
+    out.push({ index: k.index, amount: k.amount });
+  }
+  out.sort(function (a, b) { return a.index - b.index; });
+  return out;
+};
+
 /** Absolute path of a layer's image file, whichever field carries it. */
 LazyLord.imagePath = function (layer) {
   return layer.filePath || layer.pngPath || null;

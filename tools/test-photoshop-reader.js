@@ -950,5 +950,30 @@ function adjustRead(kind, descMap, docOpts) {
 })();
 
 WScript.Echo("");
+// Kerning: Photoshop's setting travels; Metrics, the default, says nothing.
+(function () {
+    AutoKernType = { MANUAL: 0, METRICS: 1, OPTICAL: 2 };
+    reset();
+    var t = layer("Kerned", LayerKind.TEXT, [10, 20, 200, 40], {
+        textItem: {
+            contents: "AVA", size: 30, kind: TextType.POINTTEXT,
+            color: { rgb: { red: 0, green: 0, blue: 0 } }, font: "Futura-Bold", justification: Justification.LEFT,
+            tracking: 0, useAutoLeading: true, position: [12, 55], autoKerning: AutoKernType.OPTICAL
+        }
+    });
+    var doc = setUp(makeDoc({ resolution: 72, layers: [t] }));
+    select(doc, [t]);
+    var l = readIt().layers[0];
+    ok("kerning: optical", l.autoKern === "optical", String(l.autoKern));
+    t.textItem.autoKerning = AutoKernType.MANUAL;
+    l = readIt().layers[0];
+    ok("kerning: manual is no automatic kerning", l.autoKern === "none", String(l.autoKern));
+    t.textItem.autoKerning = AutoKernType.METRICS;
+    l = readIt().layers[0];
+    ok("kerning: metrics is left unset", l.autoKern === undefined, String(l.autoKern));
+    AutoKernType = undefined;
+})();
+
+WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

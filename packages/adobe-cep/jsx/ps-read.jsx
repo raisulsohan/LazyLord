@@ -750,9 +750,21 @@ LazyLord._psr_text = function (ctx, lyr) {
     letterSpacing: tracking,
     lineHeight: leading,
     textAlignHorizontal: align,
+    autoKern: LazyLord._psr_autoKern(ti),
     baseline: baseline,
     anchorX: anchorX
   };
+};
+
+/** Photoshop's kerning setting: Optical, or Manual (no automatic kerning); Metrics is the default and left unset. */
+LazyLord._psr_autoKern = function (ti) {
+  try {
+    if (typeof AutoKernType === "undefined") return undefined;
+    var k = ti.autoKerning;
+    if (k === AutoKernType.OPTICAL) return "optical";
+    if (k === AutoKernType.MANUAL) return "none";
+  } catch (e) {}
+  return undefined;
 };
 
 /**

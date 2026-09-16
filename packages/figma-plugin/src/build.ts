@@ -666,6 +666,35 @@ function applyRuns(node: TextNode, layer: TextLayer, ctx: Ctx) {
   if (missing) warn(ctx, layer.name, "A font used in part of the text could not be loaded; that part keeps the text's font", "approximated");
 }
 
+/**
+ * Figma has no manual kerning, but letter spacing after a character moves
+ * what follows just as a kern before the next one does: each kerned pair's
+ * amount joins the letter spacing of the character before its gap. Figma's
+ * automatic kerning is always the font's own.
+ */
+function applyKerning(node: TextNode, layer: TextLayer, ctx: Ctx) {
+  if (layer.autoKern === "optical" || layer.autoKern === "none") {
+    warn(ctx, layer.name, layer.autoKern === "optical"
+      ? "Figma has no optical kerning, so the text uses the font's own kerning"
+      : "Kerning was switched off in the source; Figma uses the font's own kerning", "approximated");
+  }
+  const length = node.characters.length;
+  const runs = layer.runs || [];
+  for (const k of layer.kerns || []) {
+    if (!k || typeof k.index !== "number" || typeof k.amount !== "number" || !isFinite(k.amount) || !k.amount) continue;
+    if (k.index < 1 || k.index >= length) continue;
+    const i = k.index - 1;
+    const run = runs.find((r) => r.start <= i && i < r.end);
+    const size = (run && typeof run.fontSize === "number" && run.fontSize > 0 ? run.fontSize : layer.fontSize) || 24;
+    const base = run && typeof run.letterSpacing === "number" ? run.letterSpacing : layer.letterSpacing || 0;
+    try {
+      node.setRangeLetterSpacing(i, i + 1, { unit: "PIXELS", value: base + (k.amount / 1000) * size });
+    } catch {
+      warn(ctx, layer.name, "A kerned letter pair could not be spaced", "approximated");
+    }
+  }
+}
+
 function buildText(layer: TextLayer, ctx: Ctx, parent: BaseNode & ChildrenMixin): SceneNode | null {
   const wanted: FontName = {
     family: layer.fontFamily || FALLBACK_FONT.family,
@@ -690,6 +719,7 @@ function buildText(layer: TextLayer, ctx: Ctx, parent: BaseNode & ChildrenMixin)
   if (layer.letterSpacing) node.letterSpacing = { unit: "PIXELS", value: layer.letterSpacing };
   if (layer.lineHeight) node.lineHeight = { unit: "PIXELS", value: layer.lineHeight };
   applyRuns(node, layer, ctx);
+  applyKerning(node, layer, ctx);
 
   // The whole text's own decoration and case; runs override them where they differ.
   if (layer.decoration === "underline") node.textDecoration = "UNDERLINE";

@@ -1832,5 +1832,23 @@ WScript.Echo("");
     ok("masks: reported, once each", mask === 1 && clip === 1, JSON.stringify(d));
 })();
 
+// Kerning: the setting is applied; pairs kerned by hand are reported.
+(function () {
+    reset();
+    AutoKernType = { MANUAL: 0, METRICS: 1, OPTICAL: 2 };
+    try {
+        LazyLord.build(irDoc([{ type: "text", id: "k", name: "AVA", characters: "AVA", fontFamily: "Inter", fontStyle: "Regular",
+                                fontSize: 20, color: { r: 0, g: 0, b: 0, a: 1 }, frame: { x: 10, y: 10, width: 80, height: 24 },
+                                autoKern: "optical", kerns: [{ index: 1, amount: -50 }] }]));
+    } finally {
+        var kinds = AutoKernType;
+        AutoKernType = undefined;
+    }
+    var lyr = app.activeDocument.children[1];
+    ok("kerning: the setting", lyr && lyr.textItem.autoKerning === kinds.OPTICAL, lyr && String(lyr.textItem.autoKerning));
+    ok("kerning: pairs kerned by hand are reported", /Manually kerned letter pairs are not rebuilt/.test(JSON.stringify(LazyLord.diagnostics)),
+       JSON.stringify(LazyLord.diagnostics));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

@@ -514,6 +514,8 @@ LazyLord._aer_normalise = function (ctx, raw) {
     layer.letterSpacing = raw.letterSpacing;
     layer.lineHeight = raw.lineHeight;
     layer.textAlignHorizontal = raw.textAlignHorizontal;
+    if (raw.autoKern) layer.autoKern = raw.autoKern;
+    if (raw.kerns) layer.kerns = raw.kerns;
     layer.anchorX = raw.anchor[0] - ctx.minX;
     layer.baseline = raw.anchor[1] - ctx.minY;
   } else if (raw.type === "image") {
@@ -1575,7 +1577,10 @@ LazyLord._aer_text = function (ctx, layer) {
   // The unrotated box and its turn; the baseline anchor is stored unturned.
   var tb = LazyLord._aer_turnedBox(layer.name, matrix, rect, true);
 
+  var kerning = LazyLord._aer_kerning(td);
   return {
+    autoKern: kerning.autoKern,
+    kerns: kerning.kerns,
     type: "text",
     id: LazyLord._aer_id(ctx, layer),
     name: layer.name,
@@ -1593,6 +1598,31 @@ LazyLord._aer_text = function (ctx, layer) {
     lineHeight: td.autoLeading === false ? (td.leading || 0) * scale : 0,
     textAlignHorizontal: align
   };
+};
+
+/**
+ * The text's kerning method (After Effects 24.0 and newer) and its manually
+ * kerned pairs (characterRange, 24.3 and newer): a character's kerning is the
+ * space before it. Older versions have neither, and the text reads unkerned.
+ */
+LazyLord._aer_kerning = function (td) {
+  var out = {};
+  try {
+    if (typeof AutoKernType !== "undefined" && td.autoKernType !== undefined) {
+      if (td.autoKernType === AutoKernType.OPTICAL_KERN) out.autoKern = "optical";
+      else if (td.autoKernType === AutoKernType.NO_AUTO_KERN) out.autoKern = "none";
+    }
+  } catch (e) {}
+  var n = String(td.text || "").length;
+  if (typeof td.characterRange !== "function" || n < 2 || n > 2000) return out;
+  var kerns = [];
+  for (var i = 1; i < n; i++) {
+    var k = 0;
+    try { k = td.characterRange(i, i + 1).kerning; } catch (e1) { return out; }
+    if (typeof k === "number" && isFinite(k) && k !== 0) kerns.push({ index: i, amount: k });
+  }
+  if (kerns.length) out.kerns = kerns;
+  return out;
 };
 
 /* -------------------------------------------------------------------------

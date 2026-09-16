@@ -57,6 +57,8 @@ LazyLord.build = function (doc) {
       groups: opts.hierarchy === "groups",
       precomps: opts.hierarchy === "precomps",
       precompCount: 0,
+      sharedCount: 0,   // component copies placing a precomp made for an earlier copy
+      components: {},   // component id -> the precomps made for it
       combo: null,
       created: 0, // AE layers actually made: nulls and split stroke layers included
       nulls: 0,
@@ -100,6 +102,10 @@ LazyLord.build = function (doc) {
   var notes = [];
   if (ctx.precompCount) {
     notes.push("Includes " + LazyLord._ae_plural(ctx.precompCount, "precomp") + " made from the source frames.");
+  }
+  if (ctx.sharedCount) {
+    notes.push(ctx.sharedCount + (ctx.sharedCount === 1 ? " component copy reuses" : " component copies reuse") +
+      " a precomp; what differs is set in Essential Properties.");
   }
   if (ctx.nulls) {
     notes.push("Includes " + LazyLord._ae_plural(ctx.nulls, "null layer") + " standing in for the source groups.");
@@ -247,23 +253,31 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
  * frame's opacity goes on the precomp layer, which is exact.
  */
 LazyLord._ae_precomp = function (ctx, group, fade, outer) {
-  var name = group.name || "Frame";
+  if (group.component) return LazyLord._ae_component(ctx, group, fade, outer);
   var p = group.page;
-  var parent = ctx.comp;
   var w = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.width)));
   var h = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.height)));
+  // The contents, in the precomp's own space: a copy, moved to the frame's corner.
+  var kids = JSON.parse(JSON.stringify(group.children || []));
+  LazyLord.shiftLayers(kids, -p.x, -p.y);
+  var made = LazyLord._ae_makePrecomp(ctx, group, kids, group.name || "Frame", w, h);
+  if (!made) return LazyLord._ae_dissolve(ctx, group, fade, outer);
+  var pl = LazyLord._ae_placePrecomp(ctx, made.sub, group, w, h, fade);
+  outer.separate++;
+  return [pl];
+};
+
+/** A comp holding `kids` (already measured from its corner); null when none could be added, which is reported. */
+LazyLord._ae_makePrecomp = function (ctx, group, kids, name, w, h) {
+  var parent = ctx.comp;
   var sub;
   try {
     sub = app.project.items.addComp(name, w, h, parent.pixelAspect || 1, parent.duration || 10, parent.frameRate || 30);
   } catch (e) {
-    LazyLord.warn(name, "The frame could not become a precomp (" + ((e && e.message) || String(e)) +
+    LazyLord.warn(group.name || name, "The frame could not become a precomp (" + ((e && e.message) || String(e)) +
       "), so its layers are placed in the comp directly", "approximated");
-    return LazyLord._ae_dissolve(ctx, group, fade, outer);
+    return null;
   }
-
-  // The contents, in the precomp's own space: a copy, moved to the frame's corner.
-  var kids = JSON.parse(JSON.stringify(group.children || []));
-  LazyLord.shiftLayers(kids, -p.x, -p.y);
   var tally = { separate: 0, combined: false };
   ctx.comp = sub;
   try {
@@ -271,15 +285,224 @@ LazyLord._ae_precomp = function (ctx, group, fade, outer) {
   } finally {
     ctx.comp = parent;
   }
+  ctx.precompCount++;
+  return { sub: sub };
+};
 
-  var pl = parent.layers.add(sub);
-  pl.name = name;
+/** `sub` placed in the current comp where the group's page sat, with the group's opacity. */
+LazyLord._ae_placePrecomp = function (ctx, sub, group, w, h, fade) {
+  var p = group.page;
+  var pl = ctx.comp.layers.add(sub);
+  pl.name = group.name || sub.name || "Frame";
   LazyLord._ae_setTransform(pl, { anchor: [w / 2, h / 2], position: [p.x + w / 2, p.y + h / 2], scale: [100, 100], rotation: 0 },
     LazyLord._ae_opacityOf(group) * fade);
   ctx.created++;
-  ctx.precompCount++;
+  return pl;
+};
+
+/* -------------------------------------------------------------------------
+ * Components: one precomp per component, shared by its instances
+ *
+ * With hierarchy "precomps", a Figma component or instance (an IR group with
+ * `component`) is built once as a precomp and every other copy of it places
+ * the same precomp. Each text layer in it is an Essential Graphics property
+ * (Source Text), so a copy says what it says through its own Essential
+ * Properties; a shape whose solid fill differs between copies gets a colour
+ * property the same way. Copies that differ in anything else — size, layout,
+ * images, styled text — get a precomp of their own (named "<component> 2"...),
+ * shared in turn by the copies that match it.
+ *
+ * Essential Graphics properties need After Effects 16.1 (CC 2019) or newer.
+ * Where one cannot be added or overridden, the copy gets its own precomp and
+ * that is reported: it looks the same, it just is not shared.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * What a component's contents draw, apart from what a copy may override: a
+ * print that matches between copies drawing the same thing, and the slots
+ * (text, solid fills) whose values may differ. `kids` are measured from the
+ * page's corner. A slot is `direct` when its layer lands in this precomp
+ * rather than in a frame nested inside it, which has a precomp of its own.
+ */
+LazyLord._ae_componentShape = function (kids) {
+  var slots = [];
+  function strip(list, direct) {
+    var out = [];
+    for (var i = 0; list && i < list.length; i++) {
+      var l = list[i];
+      if (!l) continue;
+      var c = JSON.parse(JSON.stringify(l));
+      LazyLord._ae_dropIds(c);
+      if (l.type === "group") {
+        c.children = strip(l.children || [], direct && !l.page);
+      } else if (l.type === "text" && !(l.runs && l.runs.length)) {
+        var col = l.color || { r: 0, g: 0, b: 0, a: 1 };
+        slots.push({ kind: "text", id: l.id, name: l.name || "Text", direct: direct,
+                     value: { text: l.characters || "", color: [col.r || 0, col.g || 0, col.b || 0] } });
+        // Where the text hangs from, not how wide it came out: a copy's
+        // longer label grows from the same point.
+        c.anchor = LazyLord.rotatedTextAnchor(l);
+        delete c.characters;
+        delete c.frame.x;
+        delete c.frame.width;
+        c.color = { a: LazyLord._ae_alpha(col) };
+      } else if (l.type === "vector" && l.fills && l.fills.length === 1 && l.fills[0] && l.fills[0].type === "solid") {
+        var fc = l.fills[0].color || { r: 0, g: 0, b: 0, a: 1 };
+        slots.push({ kind: "fill", id: l.id, name: l.name || "Shape", direct: direct,
+                     value: { color: [fc.r || 0, fc.g || 0, fc.b || 0] } });
+        c.fills[0].color = { a: LazyLord._ae_alpha(fc) };
+      }
+      out.push(c);
+    }
+    return out;
+  }
+  var print = JSON.stringify(strip(kids, true));
+  return { print: print, slots: slots };
+};
+
+/** A layer copy without the ids that differ between copies of one component. */
+LazyLord._ae_dropIds = function (c) {
+  delete c.id;
+  delete c.clipTo;
+  if (c.clip) delete c.clip.id;
+  delete c.component;
+  delete c._ae_drawn;
+};
+
+LazyLord._ae_sameSlot = function (a, b) {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "text" && a.value.text !== b.value.text) return false;
+  var ca = a.value.color, cb = b.value.color;
+  for (var i = 0; i < 3; i++) if (Math.abs(ca[i] - cb[i]) > 0.5 / 255) return false;
+  return true;
+};
+
+/** A component or instance with hierarchy "precomps": a shared precomp where it can be. */
+LazyLord._ae_component = function (ctx, group, fade, outer) {
+  var p = group.page;
+  var w = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.width)));
+  var h = Math.max(LazyLord._ae_COMP_MIN, Math.min(LazyLord._ae_COMP_MAX, Math.round(p.height)));
+  var kids = JSON.parse(JSON.stringify(group.children || []));
+  LazyLord.shiftLayers(kids, -p.x, -p.y);
+  var shape = LazyLord._ae_componentShape(kids);
+
+  if (!ctx.components) ctx.components = {};
+  var key = "#" + group.component.id;
+  var variants = ctx.components[key] || (ctx.components[key] = []);
+
+  for (var v = 0; v < variants.length; v++) {
+    var entry = variants[v];
+    if (entry.w !== w || entry.h !== h || entry.print !== shape.print) continue;
+    // Null: it differs where nothing can carry it; false: After Effects refused. Either way, look on.
+    var placed = LazyLord._ae_placeShared(ctx, entry, group, shape.slots, fade);
+    if (!placed) continue;
+    ctx.sharedCount++;
+    outer.separate++;
+    return [placed];
+  }
+
+  var base = group.component.name || group.name || "Component";
+  var name = variants.length ? base + " " + (variants.length + 1) : base;
+  var made = LazyLord._ae_makePrecomp(ctx, group, kids, name, w, h);
+  if (!made) return LazyLord._ae_dissolve(ctx, group, fade, outer);
+  try { made.sub.motionGraphicsTemplateName = name; } catch (eN) {}
+
+  var added = { sub: made.sub, w: w, h: h, print: shape.print, slots: shape.slots, layers: [], eg: [] };
+  for (var s = 0; s < shape.slots.length; s++) {
+    var slot = shape.slots[s];
+    var lyr = slot.direct ? ctx.built[slot.id] : null;
+    added.layers.push(lyr && lyr.containingComp === made.sub ? lyr : null);
+    added.eg.push(null);
+    // Every label is editable from the start; colours are added when a copy needs one.
+    if (slot.kind === "text" && added.layers[s]) LazyLord._ae_egProperty(added, s);
+  }
+  variants.push(added);
+
+  var pl = LazyLord._ae_placePrecomp(ctx, made.sub, group, w, h, fade);
   outer.separate++;
   return [pl];
+};
+
+/**
+ * Place `entry`'s precomp for `group`, overriding what differs. The layer
+ * placed; null when a difference has no property to carry it; false when
+ * After Effects refused one, and nothing is left behind.
+ */
+LazyLord._ae_placeShared = function (ctx, entry, group, slots, fade) {
+  var diffs = [];
+  for (var i = 0; i < slots.length; i++) {
+    if (LazyLord._ae_sameSlot(entry.slots[i], slots[i])) continue;
+    if (!entry.layers[i]) return null;
+    diffs.push(i);
+  }
+
+  var pl = null;
+  try {
+    for (var d = 0; d < diffs.length; d++) {
+      if (!LazyLord._ae_egProperty(entry, diffs[d])) throw new Error("an Essential Graphics property could not be added");
+    }
+    pl = LazyLord._ae_placePrecomp(ctx, entry.sub, group, entry.w, entry.h, fade);
+    for (var k = 0; k < diffs.length; k++) LazyLord._ae_override(pl, entry, diffs[k], slots[diffs[k]]);
+    return pl;
+  } catch (e) {
+    if (pl) { LazyLord._ae_discard([pl]); ctx.created--; }
+    if (!ctx.egNoted) {
+      ctx.egNoted = true;
+      LazyLord.warn(group.name || "Component", "Copies of a component could not share one precomp (" +
+        ((e && e.message) || String(e)) + "; Essential Graphics needs After Effects 2019 or newer), " +
+        "so each copy that differs has a precomp of its own", "approximated");
+    }
+    return false;
+  }
+};
+
+/** The Essential Graphics name of slot `i` in `entry`, adding the property on first use; null when it cannot be. */
+LazyLord._ae_egProperty = function (entry, i) {
+  if (entry.eg[i]) return entry.eg[i];
+  var slot = entry.slots[i], lyr = entry.layers[i];
+  var prop = null;
+  try {
+    if (slot.kind === "text") prop = lyr.property("ADBE Text Properties").property("ADBE Text Document");
+    else {
+      var fill = LazyLord._ae_findParts(lyr).fill;
+      prop = fill ? fill.property("ADBE Vector Fill Color") : null;
+    }
+  } catch (e) {
+    prop = null;
+  }
+  if (!prop || typeof prop.addToMotionGraphicsTemplateAs !== "function") return null;
+
+  var taken = {};
+  for (var t = 0; t < entry.eg.length; t++) if (entry.eg[t]) taken[entry.eg[t]] = true;
+  var base = slot.kind === "text" ? slot.name : slot.name + " Color";
+  var name = base;
+  for (var n = 2; taken[name]; n++) name = base + " " + n;
+
+  var ok = false;
+  try { ok = prop.addToMotionGraphicsTemplateAs(entry.sub, name) !== false; } catch (e2) { ok = false; }
+  if (!ok) return null;
+  entry.eg[i] = name;
+  return name;
+};
+
+/** Set a placed copy's Essential Property for slot `i` to this copy's value. */
+LazyLord._ae_override = function (pl, entry, i, slot) {
+  var group = null;
+  try { group = pl.property("ADBE Layer Overrides"); } catch (e) {}
+  if (!group) { try { group = pl.property("Essential Properties"); } catch (e2) {} }
+  var prop = null;
+  try { prop = group ? group.property(entry.eg[i]) : null; } catch (e3) {}
+  if (!prop) throw new Error("the copy has no Essential Property '" + entry.eg[i] + "'");
+
+  if (slot.kind === "text") {
+    var td = entry.layers[i].property("ADBE Text Properties").property("ADBE Text Document").value;
+    td.text = slot.value.text;
+    td.fillColor = slot.value.color;
+    prop.setValue(td);
+  } else {
+    var c = slot.value.color;
+    prop.setValue([c[0], c[1], c[2], 1]);
+  }
 };
 
 /** A plain group inside precomps mode: its layers go straight into the current comp. */

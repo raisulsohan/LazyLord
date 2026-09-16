@@ -317,6 +317,11 @@ LazyLord._ae_leaf = function (ctx, layer) {
     LazyLord._ae_tag(ctx, il, layer);
     return [il];
   }
+  if (layer.type === "adjustment") {
+    var al = LazyLord._ae_adjustmentLayer(ctx.comp, layer);
+    LazyLord._ae_tag(ctx, al, layer);
+    return [al];
+  }
   LazyLord.warn(layer.name, "Layers of type '" + layer.type + "' are not rebuilt in After Effects", "skipped");
   return [];
 };
@@ -2218,6 +2223,108 @@ LazyLord._ae_image = function (comp, layer, assets) {
     throw e;
   }
   return il;
+};
+
+/* -------------------------------------------------------------------------
+ * Adjustment layers
+ *
+ * A Photoshop adjustment layer becomes an After Effects adjustment layer: a
+ * comp-sized solid switched to Adjustment Layer, carrying the stock effect that
+ * does the same job — Brightness & Contrast, Levels, Hue/Saturation, Exposure,
+ * Vibrance, Invert, Threshold, Posterize, Black & White, Photo Filter or Color
+ * Balance — set from Photoshop's values. Its opacity, blend mode and layer mask
+ * travel like any layer's.
+ *
+ * Effect controls are looked up by match name ("<effect>-0003") and, failing
+ * that, by position; a control that refuses a value leaves the rest of the
+ * effect standing. Levels takes 0..1 where Photoshop counts 0..255.
+ * ---------------------------------------------------------------------- */
+
+/** For each adjustment: the effect, and its controls in order as [index, value-from-adjustment]. */
+LazyLord._ae_ADJUSTMENTS = {
+  "brightness-contrast": { effect: "ADBE Brightness & Contrast 2", controls: function (a) {
+    return [[1, a.brightness || 0], [2, a.contrast || 0], [3, a.legacy ? 1 : 0]];
+  } },
+  "levels": { effect: "ADBE Easy Levels2", controls: function (a) {
+    return [[3, (a.inputBlack || 0) / 255], [4, (typeof a.inputWhite === "number" ? a.inputWhite : 255) / 255],
+            [5, typeof a.gamma === "number" ? a.gamma : 1], [6, (a.outputBlack || 0) / 255],
+            [7, (typeof a.outputWhite === "number" ? a.outputWhite : 255) / 255]];
+  } },
+  "hue-saturation": { effect: "ADBE HUE SATURATION", controls: function (a) {
+    if (a.colorize) return [[6, 1], [7, a.hue || 0], [8, a.saturation || 0], [9, a.lightness || 0]];
+    return [[3, a.hue || 0], [4, a.saturation || 0], [5, a.lightness || 0]];
+  } },
+  "exposure": { effect: "ADBE Exposure2", controls: function (a) {
+    return [[2, a.exposure || 0], [3, a.offset || 0], [4, typeof a.gamma === "number" ? a.gamma : 1]];
+  } },
+  "vibrance": { effect: "ADBE Vibrance", controls: function (a) {
+    return [[1, a.vibrance || 0], [2, a.saturation || 0]];
+  } },
+  "invert": { effect: "ADBE Invert", controls: function () { return []; } },
+  "threshold": { effect: "ADBE Threshold2", controls: function (a) {
+    return [[1, typeof a.level === "number" ? a.level : 128]];
+  } },
+  "posterize": { effect: "ADBE Posterize", controls: function (a) {
+    return [[1, typeof a.levels === "number" ? a.levels : 4]];
+  } },
+  "black-white": { effect: "ADBE Black&White", controls: function () { return []; } },
+  "photo-filter": { effect: "ADBE Photo Filter", controls: function (a) {
+    var c = a.color || { r: 1, g: 0.5, b: 0 };
+    return [[2, [c.r || 0, c.g || 0, c.b || 0, 1]], [3, typeof a.density === "number" ? a.density : 25],
+            [4, a.preserveLuminosity === false ? 0 : 1]];
+  } },
+  "color-balance": { effect: "ADBE Color Balance 2", controls: function (a) {
+    var s = a.shadows || [0, 0, 0], m = a.midtones || [0, 0, 0], h = a.highlights || [0, 0, 0];
+    return [[1, s[0]], [2, s[1]], [3, s[2]], [4, m[0]], [5, m[1]], [6, m[2]], [7, h[0]], [8, h[1]], [9, h[2]],
+            [10, a.preserveLuminosity === false ? 0 : 1]];
+  } }
+};
+
+/** An IR adjustment layer as an AE adjustment layer over the whole comp. */
+LazyLord._ae_adjustmentLayer = function (comp, layer) {
+  var name = layer.name || "Adjustment";
+  var a = layer.adjustment || {};
+  var spec = LazyLord._ae_ADJUSTMENTS[a.kind];
+  if (!spec) throw new Error("After Effects has no counterpart for a '" + a.kind + "' adjustment");
+
+  var sl = comp.layers.addSolid([1, 1, 1], name, comp.width, comp.height, comp.pixelAspect || 1);
+  try {
+    sl.adjustmentLayer = true;
+    var fx = sl.property("ADBE Effect Parade").addProperty(spec.effect);
+    var controls = spec.controls(a);
+    var refused = 0;
+    for (var i = 0; i < controls.length; i++) {
+      if (!LazyLord._ae_setControl(fx, spec.effect, controls[i][0], controls[i][1])) refused++;
+    }
+    if (refused) {
+      LazyLord.warn(name, refused + " of its " + LazyLord._ae_fxLabel(a.kind) + " settings could not be set, so " +
+        (refused === 1 ? "that one keeps" : "those keep") + " After Effects' default", "approximated");
+    }
+    if (typeof layer.frame.opacity === "number") {
+      sl.property("ADBE Transform Group").property("ADBE Opacity").setValue(LazyLord.pct(layer.frame.opacity));
+    }
+    LazyLord._ae_applyBlend(sl, layer);
+  } catch (e) {
+    LazyLord._ae_discard([sl]);
+    throw e;
+  }
+  return sl;
+};
+
+/** Set an effect control by match name, then by position. True when it took. */
+LazyLord._ae_setControl = function (fx, effect, index, value) {
+  var suffix = String(index);
+  while (suffix.length < 4) suffix = "0" + suffix;
+  var p = null;
+  try { p = fx.property(effect + "-" + suffix); } catch (e) {}
+  if (!p) { try { p = fx.property(index); } catch (e2) {} }
+  if (!p) return false;
+  try {
+    p.setValue(value);
+    return true;
+  } catch (e3) {
+    return false;
+  }
 };
 
 /* -------------------------------------------------------------------------

@@ -234,6 +234,17 @@ var MOCK_FONTS = {
 // Groups and the children AE creates inside them. Only names listed here can
 // be passed to addProperty, as in AE; anything else is a leaf property.
 var SCHEMA = {
+    "ADBE Brightness & Contrast 2": ["ADBE Brightness & Contrast 2-0001", "ADBE Brightness & Contrast 2-0002", "ADBE Brightness & Contrast 2-0003"],
+    "ADBE Easy Levels2": ["ADBE Easy Levels2-0001", "ADBE Easy Levels2-0002", "ADBE Easy Levels2-0003", "ADBE Easy Levels2-0004", "ADBE Easy Levels2-0005", "ADBE Easy Levels2-0006", "ADBE Easy Levels2-0007", "ADBE Easy Levels2-0008", "ADBE Easy Levels2-0009"],
+    "ADBE HUE SATURATION": ["ADBE HUE SATURATION-0001", "ADBE HUE SATURATION-0002", "ADBE HUE SATURATION-0003", "ADBE HUE SATURATION-0004", "ADBE HUE SATURATION-0005", "ADBE HUE SATURATION-0006", "ADBE HUE SATURATION-0007", "ADBE HUE SATURATION-0008", "ADBE HUE SATURATION-0009"],
+    "ADBE Exposure2": ["ADBE Exposure2-0001", "ADBE Exposure2-0002", "ADBE Exposure2-0003", "ADBE Exposure2-0004", "ADBE Exposure2-0005"],
+    "ADBE Vibrance": ["ADBE Vibrance-0001", "ADBE Vibrance-0002"],
+    "ADBE Invert": ["ADBE Invert-0001", "ADBE Invert-0002"],
+    "ADBE Threshold2": ["ADBE Threshold2-0001"],
+    "ADBE Posterize": ["ADBE Posterize-0001"],
+    "ADBE Black&White": ["ADBE Black&White-0001", "ADBE Black&White-0002", "ADBE Black&White-0003", "ADBE Black&White-0004", "ADBE Black&White-0005", "ADBE Black&White-0006", "ADBE Black&White-0007"],
+    "ADBE Photo Filter": ["ADBE Photo Filter-0001", "ADBE Photo Filter-0002", "ADBE Photo Filter-0003", "ADBE Photo Filter-0004"],
+    "ADBE Color Balance 2": ["ADBE Color Balance 2-0001", "ADBE Color Balance 2-0002", "ADBE Color Balance 2-0003", "ADBE Color Balance 2-0004", "ADBE Color Balance 2-0005", "ADBE Color Balance 2-0006", "ADBE Color Balance 2-0007", "ADBE Color Balance 2-0008", "ADBE Color Balance 2-0009", "ADBE Color Balance 2-0010"],
     "ADBE Layer Styles": [],
     "dropShadow/enabled": ["dropShadow/mode2", "dropShadow/color", "dropShadow/opacity", "dropShadow/useGlobalAngle", "dropShadow/localLightingAngle", "dropShadow/distance", "dropShadow/chokeMatte", "dropShadow/blur", "dropShadow/noise", "dropShadow/layerConceals"],
     "innerShadow/enabled": ["innerShadow/mode2", "innerShadow/color", "innerShadow/opacity", "innerShadow/useGlobalAngle", "innerShadow/localLightingAngle", "innerShadow/distance", "innerShadow/chokeMatte", "innerShadow/blur", "innerShadow/noise"],
@@ -519,6 +530,13 @@ function makeComp(name, w, h) {
             var l = makeLayer(AVLayer, c, {});
             l.nullLayer = true;
             c.nullDurations.push(duration);
+            return l;
+        },
+        addSolid: function (color, name, w, h, pa) {
+            var l = makeLayer(AVLayer, c, {});
+            l.name = name;
+            l.solid = { color: color, width: w, height: h };
+            l.adjustmentLayer = false;
             return l;
         },
         addShape: function () {
@@ -2884,6 +2902,70 @@ function styledDoc(effects, source) {
     var r = build(styledDoc([{ kind: "stroke", color: rgba(1, 0, 0, 1), width: 2, position: "outside" }]), { rejectStyles: true });
     ok("style refused: the layer is still built", r.comp.list.length === 1);
     ok("style refused: reported", diagsMatching(r.diags, /stroke could not be rebuilt/).length === 1, dump(r.diags));
+})();
+
+// ---------------------------------------------------------------------------
+// AD) Photoshop adjustment layers as After Effects adjustment layers
+// ---------------------------------------------------------------------------
+
+function adjustDoc(adjustment, extra) {
+    var l = { id: "adj", name: "Grade", type: "adjustment", frame: { x: 0, y: 0, width: 1920, height: 1080, rotation: 0, opacity: 0.8 },
+              adjustment: adjustment };
+    if (extra) for (var k in extra) l[k] = extra[k];
+    return irDoc([l], { source: "photoshop" });
+}
+function ctrl(l, effect, i) {
+    var fx = l ? l.property("ADBE Effect Parade").property(effect) : null;
+    var p = fx ? fx.property(effect + "-" + ("000" + i).slice(-4)) : null;
+    return p ? p.value : undefined;
+}
+
+(function () {
+    var r = build(adjustDoc({ kind: "brightness-contrast", brightness: 30, contrast: -20, legacy: true }, { blendMode: "multiply" }));
+    var l = r.comp.list[0];
+    ok("adjust: a comp-sized solid, switched to an adjustment layer",
+       l && l.adjustmentLayer === true && l.solid && l.solid.width === 1920 && l.solid.height === 1080, dump(l && l.solid));
+    ok("adjust: Brightness & Contrast with Photoshop's values",
+       ctrl(l, "ADBE Brightness & Contrast 2", 1) === 30 && ctrl(l, "ADBE Brightness & Contrast 2", 2) === -20 &&
+       ctrl(l, "ADBE Brightness & Contrast 2", 3) === 1);
+    ok("adjust: the layer's opacity and blend mode", tval(l, "ADBE Opacity") === 80 && l.blendingMode === BlendingMode.MULTIPLY);
+    ok("adjust: tagged, for a later update", /\[\[LazyLord /.test(l.comment), l.comment);
+    ok("adjust: nothing to report", r.diags.length === 0, dump(r.diags));
+})();
+
+(function () {
+    var lv = build(adjustDoc({ kind: "levels", inputBlack: 51, inputWhite: 204, gamma: 1.2, outputBlack: 0, outputWhite: 255 })).comp.list[0];
+    ok("adjust: Levels in 0..1", near(ctrl(lv, "ADBE Easy Levels2", 3), 0.2) && near(ctrl(lv, "ADBE Easy Levels2", 4), 0.8) &&
+       near(ctrl(lv, "ADBE Easy Levels2", 5), 1.2) && near(ctrl(lv, "ADBE Easy Levels2", 7), 1));
+
+    var hs = build(adjustDoc({ kind: "hue-saturation", hue: 25, saturation: -40, lightness: 10 })).comp.list[0];
+    ok("adjust: Hue/Saturation master", ctrl(hs, "ADBE HUE SATURATION", 3) === 25 && ctrl(hs, "ADBE HUE SATURATION", 4) === -40 &&
+       ctrl(hs, "ADBE HUE SATURATION", 5) === 10);
+    var cz = build(adjustDoc({ kind: "hue-saturation", hue: 200, saturation: 50, lightness: 0, colorize: true })).comp.list[0];
+    ok("adjust: Hue/Saturation colorize", ctrl(cz, "ADBE HUE SATURATION", 6) === 1 && ctrl(cz, "ADBE HUE SATURATION", 7) === 200);
+
+    var cb = build(adjustDoc({ kind: "color-balance", shadows: [10, 0, -5], midtones: [0, 20, 0], highlights: [-3, 0, 0],
+                               preserveLuminosity: false })).comp.list[0];
+    ok("adjust: Color Balance, all nine and preserve luminosity", ctrl(cb, "ADBE Color Balance 2", 1) === 10 &&
+       ctrl(cb, "ADBE Color Balance 2", 5) === 20 && ctrl(cb, "ADBE Color Balance 2", 7) === -3 && ctrl(cb, "ADBE Color Balance 2", 10) === 0);
+
+    var inv = build(adjustDoc({ kind: "invert" }));
+    ok("adjust: Invert, defaults", !!inv.comp.list[0].property("ADBE Effect Parade").property("ADBE Invert") && inv.diags.length === 0);
+})();
+
+(function () {
+    // A layer mask limits it, as in Photoshop.
+    var r = build(adjustDoc({ kind: "posterize", levels: 6 }, { mask: { frame: { x: 0, y: 0, width: 1920, height: 1080 }, filePath: "C:/tmp/Grade-mask.png" } }),
+                  { newMattes: true });
+    var grade = null;
+    for (var i = 0; i < r.comp.list.length; i++) if (r.comp.list[i].name === "Grade") grade = r.comp.list[i];
+    ok("adjust: masked by its layer mask", grade && grade.matteLayer && grade.trackMatteType === TrackMatteType.LUMA &&
+       ctrl(grade, "ADBE Posterize", 1) === 6, dump(r.diags));
+
+    // A kind After Effects has no counterpart for: reported, nothing left half-made.
+    var odd = build(adjustDoc({ kind: "curves" }));
+    ok("adjust: an unknown kind is reported, no layer left", odd.comp.list.length === 0 &&
+       diagsMatching(odd.diags, /no counterpart for a 'curves' adjustment/).length === 1, dump(odd.diags));
 })();
 
 WScript.Echo("");

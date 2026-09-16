@@ -596,7 +596,10 @@ async function buildLayer(
     else if (layer.type === "text") node = buildText(layer, ctx, parent);
     else if (layer.type === "image") node = buildImage(layer, ctx, parent);
     else if (layer.type === "group") node = await buildGroup(layer, ctx, parent);
-    else {
+    else if ((layer as Layer).type === "adjustment") {
+      warn(ctx, (layer as Layer).name, "Figma has no adjustment layers, so this adjustment was left out", "skipped");
+      return null;
+    } else {
       warn(ctx, (layer as Layer).name, `Layers of type "${(layer as any).type}" are not rebuilt in Figma`, "skipped");
       return null;
     }

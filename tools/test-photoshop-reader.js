@@ -34,7 +34,9 @@ function load(name) { return read(JSX + name).replace(/^\s*#[a-zA-Z].*$/gm, "");
 var LayerKind = {
     NORMAL: "normal", TEXT: "text", SOLIDFILL: "solid", GRADIENTFILL: "grad",
     PATTERNFILL: "pattern", SMARTOBJECT: "smart", VIDEO: "video", LAYER3D: "3d",
-    BRIGHTNESSCONTRAST: "adjust"
+    BRIGHTNESSCONTRAST: "adjust", LEVELS: "levels", HUESATURATION: "huesat", EXPOSURE: "exposure", VIBRANCE: "vibrance",
+    INVERSION: "invert", THRESHOLD: "threshold", POSTERIZE: "posterize", BLACKANDWHITE: "bw", PHOTOFILTER: "photofilter",
+    COLORBALANCE: "colorbalance", CURVES: "curves", GRADIENTMAP: "gradmap"
 };
 var PathKind = { NORMALPATH: "normal", VECTORMASK: "vectormask", WORKPATH: "work" };
 var TextType = { POINTTEXT: "point", PARAGRAPHTEXT: "para" };
@@ -54,7 +56,7 @@ var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, 
              failMaskSelection: false };
 
 /** Photoshop's ActionManager, reduced to the two things the reader asks it. */
-var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120 };
+var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120, adjustDescs: {} };
 function ActionReference() { this.parts = []; }
 ActionReference.prototype.putProperty = function (c, p) { this.parts.push(["prop", p]); };
 ActionReference.prototype.putEnumerated = function (a, b, c) { this.parts.push(["enum", c]); };
@@ -69,6 +71,8 @@ Desc.prototype.getDouble = function (k) { return this.map[k]; };
 Desc.prototype.getObjectValue = function (k) { return this.map[k]; };
 Desc.prototype.getBoolean = function (k) { return this.map[k]; };
 Desc.prototype.getUnitDoubleValue = function (k) { return this.map[k]; };
+Desc.prototype.getReference = function (k) { var v = this.map[k]; return { getEnumeratedValue: function () { return v; } }; };
+List.prototype.getInteger = function (i) { return this.items[i]; };
 Desc.prototype.getEnumerationValue = function (k) { return this.map[k]; };
 function typeIDToCharID(id) { return String(id).replace(/^c:/, ""); }
 function typeIDToStringID(id) { return String(id); }
@@ -116,6 +120,7 @@ function executeActionGet(ref) {
         var adj = AM.adjustments["#" + lid];
         if (adj && !MOCK.noSolidColour) map.adjustment = new List([new Desc({ color: new Desc(adj) })]);
         if (AM.gradients["#" + lid]) map.adjustment = new List([AM.gradients["#" + lid]]);
+        if (AM.adjustDescs["#" + lid]) map.adjustment = new List([AM.adjustDescs["#" + lid]]);
         if (AM.styles["#" + lid]) map.layerEffects = AM.styles["#" + lid];
         return new Desc(map);
     }
@@ -261,7 +266,7 @@ function readIt(opts) {
 function reset() {
     MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
              failMaskSelection: false };
-    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120 };
+    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120, adjustDescs: {} };
 }
 /** Select `list` (bottom-most first, as Photoshop indexes them). */
 function select(doc, list) {
@@ -426,12 +431,16 @@ WScript.Echo("");
     ok("smart object: reported in its own words", !!diagWith(/Smart objects are sent as a flattened image/),
        dump(LazyLord.diagnostics));
 
+    // An adjustment layer is no longer a picture of nothing; one whose
+    // settings cannot be read is left out, and says so.
     reset();
     var adj = layer("Curves", LayerKind.BRIGHTNESSCONTRAST, [0, 0, 50, 50]);
     var doc2 = setUp(makeDoc({ layers: [adj] }));
     select(doc2, [adj]);
-    readIt();
-    ok("adjustment: reported in its own words", !!diagWith(/Adjustment layers/), dump(LazyLord.diagnostics));
+    var threw = false;
+    try { readIt(); } catch (eNothing) { threw = true; }
+    ok("adjustment: unreadable settings are reported, not rasterised",
+       threw && !!diagWith(/adjustment settings could not be read/) && MOCK.exports.length === 0, dump(LazyLord.diagnostics));
 })();
 
 // 8) A shape whose outline or colour cannot be read falls back to a raster
@@ -885,6 +894,59 @@ function fxOfKind(l, kind) {
     select(doc, [pix]);
     var l = readIt().layers[0];
     ok("styles: an image layer does not also send its style", l && l.type === "image" && !l.effects, dump(l));
+})();
+
+// AD) Adjustment layers are read as IR adjustment layers, not empty pictures.
+function adjustRead(kind, descMap, docOpts) {
+    reset();
+    var a = layer("Grade", kind, [0, 0, 800, 600]);
+    AM.adjustDescs["#" + a.id] = new Desc(descMap);
+    var o = docOpts || {};
+    o.layers = [a];
+    var doc = setUp(makeDoc(o));
+    select(doc, [a]);
+    try { return readIt().layers[0]; } catch (e) { return { error: e.message }; }
+}
+
+(function () {
+    var bc = adjustRead(LayerKind.BRIGHTNESSCONTRAST, { "c:Brgh": 30, "c:Cntr": -20, useLegacy: true });
+    ok("adjust: brightness/contrast as an adjustment layer over the canvas",
+       bc && bc.type === "adjustment" && near(bc.frame.width, 800) && bc.adjustment.kind === "brightness-contrast" &&
+       bc.adjustment.brightness === 30 && bc.adjustment.contrast === -20 && bc.adjustment.legacy === true, dump(bc));
+    ok("adjust: nothing rasterised", MOCK.exports.length === 0 && diagWith(/flattened image/) === null, dump(LazyLord.diagnostics));
+
+    var lv = adjustRead(LayerKind.LEVELS, { "c:Adjs": new List([
+        new Desc({ "c:Chnl": "c:Cmps", "c:Inpt": new List([10, 240]), "c:Gmm ": 1.2, "c:Otpt": new List([5, 250]) }),
+        new Desc({ "c:Chnl": "c:Rd  ", "c:Inpt": new List([0, 200]) })
+    ]) });
+    ok("adjust: levels from the composite channel", lv && lv.adjustment.inputBlack === 10 && lv.adjustment.inputWhite === 240 &&
+       near(lv.adjustment.gamma, 1.2) && lv.adjustment.outputWhite === 250, dump(lv && lv.adjustment));
+    ok("adjust: single-channel levels reported", diagWith(/single colour channels/) !== null, dump(LazyLord.diagnostics));
+
+    var hs = adjustRead(LayerKind.HUESATURATION, { "c:Clrz": false, "c:Adjs": new List([
+        new Desc({ "c:H   ": 25, "c:Strt": -40, "c:Lght": 10 }),
+        new Desc({ "c:LclR": 1, "c:H   ": 90 })
+    ]) });
+    ok("adjust: hue/saturation master", hs && hs.adjustment.hue === 25 && hs.adjustment.saturation === -40 &&
+       hs.adjustment.lightness === 10 && hs.adjustment.colorize === false, dump(hs && hs.adjustment));
+    ok("adjust: single colour ranges reported", diagWith(/single colour ranges/) !== null);
+
+    var ex = adjustRead(LayerKind.EXPOSURE, { exposure: 1.5, "c:Ofst": -0.02, gammaCorrection: 0.9 });
+    ok("adjust: exposure", ex && near(ex.adjustment.exposure, 1.5) && near(ex.adjustment.offset, -0.02) && near(ex.adjustment.gamma, 0.9),
+       dump(ex && ex.adjustment));
+
+    var pf = adjustRead(LayerKind.PHOTOFILTER, { "c:Clr ": new Desc({ "c:Lmnc": 100, "c:A   ": 0, "c:B   ": 0 }), "c:Dnst": 40, "c:PrsL": false });
+    ok("adjust: photo filter, its Lab colour turned into RGB", pf && near(pf.adjustment.color.r, 1, 0.01) && near(pf.adjustment.color.g, 1, 0.01) &&
+       pf.adjustment.density === 40 && pf.adjustment.preserveLuminosity === false, dump(pf && pf.adjustment));
+
+    var cb = adjustRead(LayerKind.COLORBALANCE, { "c:ShdL": new List([10, 0, -5]), "c:MdtL": new List([0, 20, 0]),
+                                                   "c:HghL": new List([-3, 0, 0]), "c:PrsL": true });
+    ok("adjust: colour balance, three ranges", cb && cb.adjustment.shadows.join() === "10,0,-5" && cb.adjustment.midtones[1] === 20 &&
+       cb.adjustment.highlights[0] === -3, dump(cb && cb.adjustment));
+
+    var cv = adjustRead(LayerKind.CURVES, {});
+    ok("adjust: curves are reported and not sent", cv && cv.error !== undefined && diagWith(/Curves adjustment has no counterpart/) !== null,
+       dump(LazyLord.diagnostics));
 })();
 
 WScript.Echo("");

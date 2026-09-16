@@ -158,6 +158,7 @@ LazyLord._ps_make = function (st, layer) {
     if (layer.type === "vector") made = LazyLord._ps_vector(st.psDoc, layer);
     else if (layer.type === "text") made = LazyLord._ps_text(st.psDoc, layer);
     else if (layer.type === "image") made = LazyLord._ps_image(st.psDoc, layer);
+    else if (layer.type === "adjustment") LazyLord.warn(layer.name, "Adjustment layers are only rebuilt in After Effects, so this one was left out", "skipped");
     else LazyLord.warn(layer.name, "Layers of type \"" + layer.type + "\" are not supported in Photoshop yet", "skipped");
   } catch (e) {
     LazyLord.warn(layer.name, LazyLord._ps_msg(e), "skipped");

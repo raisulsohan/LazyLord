@@ -165,6 +165,10 @@ LazyLord._ai_layer = function (ctx, layer) {
   if (layer.type === "vector") { LazyLord._ai_vector(ctx, layer); return true; }
   if (layer.type === "text") { LazyLord._ai_text(ctx, layer); return true; }
   if (layer.type === "image") { LazyLord._ai_image(ctx, layer); return true; }
+  if (layer.type === "adjustment") {
+    LazyLord.warn(layer.name, "Illustrator has no adjustment layers, so this adjustment was left out", "skipped");
+    return false;
+  }
   LazyLord.warn(layer.name, "Layers of type \"" + layer.type + "\" are not rebuilt in Illustrator", "skipped");
   return false;
 };

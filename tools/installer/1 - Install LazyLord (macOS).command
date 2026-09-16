@@ -54,7 +54,8 @@ echo
 echo "  The dot turns green when the panel is ready. Keep one LazyLord"
 echo "  panel open and Figma can reach it - there is no separate bridge."
 echo
-echo "  Figma: see 'Read me first.txt' - it takes one import, once."
+echo "  Figma: run '2 - Add the Figma plugin (macOS).command' next. Skip it if"
+echo "  you only move things between the Adobe apps."
 echo
 echo "  If a panel opens blank, run this in Terminal and restart the app:"
 echo "    defaults write com.adobe.CSXS.11 PlayerDebugMode 1"

@@ -21,6 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { walk, writeZip } from "./zip.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -306,16 +307,10 @@ function assemble() {
 function zip() {
   const out = join(release, `LazyLord-${VERSION}.zip`);
   rmSync(out, { force: true });
-  if (process.platform === "win32") {
-    execFileSync("powershell", [
-      "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-      `Compress-Archive -Path "${payload}\\*" -DestinationPath "${out}" -Force`,
-    ], { stdio: "inherit" });
-  } else {
-    execFileSync("zip", ["-r", "-q", out, `LazyLord-${VERSION}`], { cwd: work });
-  }
-  const mb = (statSync(out).size / 1024 / 1024).toFixed(2);
-  log("[6/6]", `${out} (${mb} MB)`);
+  /* Built here rather than with Compress-Archive, which writes nested paths
+     with backslashes — see tools/zip.mjs. */
+  const bytes = writeZip(out, walk(payload));
+  log("[6/6]", `${out} (${(bytes / 1024 / 1024).toFixed(2)} MB)`);
   return out;
 }
 

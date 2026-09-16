@@ -13,7 +13,7 @@
     "dev": "ts-node src/server.ts"
   },
   "dependencies": {
-    "@lazylord/core": "1.0.0",
+    "@lazylord/core": "1.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {

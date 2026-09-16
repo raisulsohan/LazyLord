@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@lazylord/core": "1.0.0"
+    "@lazylord/core": "1.1.0"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.100.2",

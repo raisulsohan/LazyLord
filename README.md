@@ -7,7 +7,7 @@
 Select something. Press **Send**. It arrives in the other app as *real* artwork —
 editable paths, live text, proper layers — not a flattened screenshot.
 
-[![Download LazyLord](https://img.shields.io/badge/Download-v1.0.0-6c4cff?style=for-the-badge&labelColor=1a1a1a)](../../releases/latest)
+[![Download LazyLord](https://img.shields.io/github/v/release/raisulsohan/LazyLord?label=Download&style=for-the-badge&color=6c4cff&labelColor=1a1a1a)](../../releases/latest)
 [![Licence: MIT](https://img.shields.io/badge/Licence-MIT-2ea043?style=for-the-badge&labelColor=1a1a1a)](LICENSE)
 [![Windows and macOS](https://img.shields.io/badge/Windows-%C2%B7%20macOS-444?style=for-the-badge&labelColor=1a1a1a)](#what-you-need)
 
@@ -63,7 +63,7 @@ uploaded, no account is needed, and it keeps working offline.
 
 ### 1. The Adobe panel
 
-1. **[Download `LazyLord-1.0.0.zip`](../../releases/latest)** from the releases page.
+1. **[Download `LazyLord-1.1.0.zip`](../../releases/latest)** from the releases page.
 2. **Unzip it** — right-click → *Extract All* on Windows, double-click on macOS.
    Do not run anything from inside the zip itself.
 3. **Close** Photoshop, Illustrator and After Effects.

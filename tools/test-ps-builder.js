@@ -1850,5 +1850,15 @@ WScript.Echo("");
        JSON.stringify(LazyLord.diagnostics));
 })();
 
+// An image sequence has one frame here.
+(function () {
+    reset();
+    LazyLord.build(irDoc([{ type: "image", id: "s", name: "Walk", frame: { x: 0, y: 0, width: 60, height: 50 },
+                            filePath: "C:/tmp/Walk_0000.png", isOriginalFile: false, pixelWidth: 60, pixelHeight: 50,
+                            sequence: { frames: ["C:/tmp/Walk_0000.png", "C:/tmp/Walk_0001.png"] } }]));
+    ok("sequence: only the first frame, and said", /only the first of its 2 frames/.test(JSON.stringify(LazyLord.diagnostics)),
+       JSON.stringify(LazyLord.diagnostics));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

@@ -76,6 +76,8 @@
   var onlyChangedEl = document.getElementById("push-only-changed");
   var onlyChangedRow = document.getElementById("push-only-changed-row");
   var guidesEl = document.getElementById("push-guides");
+  var sequenceEl = document.getElementById("push-sequence");
+  var sequenceRow = document.getElementById("push-sequence-row");
   var swatchesEl = document.getElementById("push-swatches");
   var optsHint = document.getElementById("push-opts-hint");
   var destinationSel = document.getElementById("push-destination");
@@ -275,6 +277,8 @@
     if (keyframesSel && contains(KEYFRAMES, prefs.keyframes)) keyframesSel.value = prefs.keyframes;
     if (conflictSel && contains(CONFLICTS, prefs.conflict)) conflictSel.value = prefs.conflict;
     if (guidesEl && typeof prefs.guides === "boolean") guidesEl.checked = prefs.guides;
+    if (sequenceRow) sequenceRow.hidden = role !== "photoshop";
+    if (sequenceEl && role === "photoshop" && typeof prefs.sequence === "boolean") sequenceEl.checked = prefs.sequence;
     if (onlyChangedEl && typeof prefs.onlyChanged === "boolean") onlyChangedEl.checked = prefs.onlyChanged;
     if (swatchesEl && typeof prefs.swatches === "boolean") swatchesEl.checked = prefs.swatches;
     if (destinationSel && contains(DESTINATIONS, prefs.destination)) destinationSel.value = prefs.destination;
@@ -512,6 +516,7 @@
     if (o.existing === "update" && o.conflict === "keep") parts.push("Keep edits");
     if (o.guides) parts.push("Guides");
     if (o.swatches) parts.push("Swatches");
+    if (sequenceWanted()) parts.push("Frames");
     var sc = activeChip(scalesEl, "scale");
     if (sc && sc !== "2") parts.push(sc + "x");
     return parts.join(", ");
@@ -914,6 +919,10 @@
       copy[k] = layer[k];
     }
     return hashText(salt + JSON.stringify(copy));
+  }
+
+  function sequenceWanted() {
+    return role === "photoshop" && !!(sequenceEl && sequenceEl.checked);
   }
 
   function onlyChangedWanted() {
@@ -1460,6 +1469,8 @@
     var prune = live ? mode === "live" : (options.existing === "update" && onlyChangedWanted());
     // Guides and swatches cost a walk of the whole document, so the reader skips what was not asked for.
     var reading = { scale: currentScale(), guides: options.guides, swatches: options.swatches };
+    // Frames are a one-off export: Live keeps layers in step, not sequences.
+    if (sequenceWanted() && !live) reading.sequence = true;
     var id = newId();
     var dir;
     try {
@@ -2033,6 +2044,7 @@
       updateOptionsNote();
     });
     if (guidesEl) guidesEl.addEventListener("change", function () { savePref("guides", !!guidesEl.checked); updateOptionsNote(); });
+    if (sequenceEl) sequenceEl.addEventListener("change", function () { savePref("sequence", !!sequenceEl.checked); updateOptionsNote(); });
     if (onlyChangedEl) onlyChangedEl.addEventListener("change", function () { savePref("onlyChanged", !!onlyChangedEl.checked); });
     if (swatchesEl) swatchesEl.addEventListener("change", function () { savePref("swatches", !!swatchesEl.checked); updateOptionsNote(); });
     if (destinationSel) destinationSel.addEventListener("change", function () {

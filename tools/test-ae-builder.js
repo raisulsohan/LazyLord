@@ -3143,6 +3143,46 @@ function override(pl, name) {
        diagsMatching(r.diags, /could not be used/).length === 1 && app.imports[0] === "C:/Temp/lazylord/t9/5_6.png", dump(r.diags));
 })();
 
+// An image sequence: imported as one footage item at the comp's frame rate.
+(function () {
+    var frames = ["C:/Temp/lazylord/s1/Walk-frames-0/Walk_0000.png", "C:/Temp/lazylord/s1/Walk-frames-0/Walk_0001.png",
+                  "C:/Temp/lazylord/s1/Walk-frames-0/Walk_0002.png"];
+    for (var i = 0; i < frames.length; i++) mockFiles[frames[i]] = true;
+    var seq = imageLayer("Walk", { x: 0, y: 0, width: 60, height: 50 }, frames[0], false);
+    seq.sequence = { frames: frames };
+
+    var imported = [], importFile = app.project.importFile;
+    app.project.importFile = function (io) {
+        var f = importFile(io);
+        f.mainSource = {};
+        imported.push({ io: io, footage: f });
+        return f;
+    };
+    try {
+        app.project.file = null;
+        var r = build(irDoc([seq]));
+        ok("sequence: imported as a sequence, at the comp's frame rate", imported.length === 1 && imported[0].io.sequence === true &&
+           imported[0].footage.mainSource.conformFrameRate === (r.comp.frameRate || 30) && app.imports[0] === frames[0],
+           dump(imported[0] && imported[0].footage.mainSource));
+
+        mockDirs["D:/Anim"] = true;
+        mockFiles["D:/Anim/Walk.aep"] = true;
+        app.project.file = new File("D:\\Anim\\Walk.aep");
+        copies = []; foldersCreated = [];
+        seq.sequence.fps = 12;
+        imported = [];
+        build(irDoc([seq]));
+        ok("sequence: saved project, frames copied into a folder of their own, names kept",
+           copies.length === 3 && copies[0].to === "D:/Anim/LazyLord Assets/Walk frames/Walk_0000.png" &&
+           copies[2].to === "D:/Anim/LazyLord Assets/Walk frames/Walk_0002.png" &&
+           app.imports[0] === "D:/Anim/LazyLord Assets/Walk frames/Walk_0000.png", JSON.stringify(copies));
+        ok("sequence: its own frame rate when it has one", imported[0].footage.mainSource.conformFrameRate === 12);
+    } finally {
+        app.project.importFile = importFile;
+        app.project.file = null;
+    }
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

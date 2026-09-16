@@ -594,7 +594,12 @@ async function buildLayer(
     let node: SceneNode | null = null;
     if (layer.type === "vector") node = buildVector(layer, ctx, parent);
     else if (layer.type === "text") node = buildText(layer, ctx, parent);
-    else if (layer.type === "image") node = buildImage(layer, ctx, parent);
+    else if (layer.type === "image") {
+      if (layer.sequence && layer.sequence.frames && layer.sequence.frames.length > 1) {
+        warn(ctx, layer.name, `Figma has no image sequences, so only the first of its ${layer.sequence.frames.length} frames was placed`, "approximated");
+      }
+      node = buildImage(layer, ctx, parent);
+    }
     else if (layer.type === "group") node = await buildGroup(layer, ctx, parent);
     else if ((layer as Layer).type === "adjustment") {
       warn(ctx, (layer as Layer).name, "Figma has no adjustment layers, so this adjustment was left out", "skipped");

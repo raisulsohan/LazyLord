@@ -63,7 +63,7 @@ uploaded, no account is needed, and it keeps working offline.
 
 ### 1. The Adobe panel
 
-1. **[Download `LazyLord-1.1.2.zip`](../../releases/latest)** from the releases page.
+1. **[Download `LazyLord-1.1.3.zip`](../../releases/latest)** from the releases page.
 2. **Unzip it** — right-click → *Extract All* on Windows, double-click on macOS.
    Do not run anything from inside the zip itself.
 3. **Close** Photoshop, Illustrator and After Effects.

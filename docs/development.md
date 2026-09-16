@@ -295,6 +295,17 @@ The rest:
 - the AE effect match names and control indices for Drop Shadow and Gaussian Blur, and that its shadow dial is measured clockwise from straight up;
 - that a Figma plugin can create the nodes the builder asks for — `createVector` with `vectorPaths`, `createImage`, `figma.group` — and that `isMask` on the first child of a group clips the rest.
 
+New in 1.1, and not yet run in the real apps:
+- **Real AE gradients:** that `layer.applyPreset` with only a G-Fill's or G-Stroke's Colors property selected writes that property alone, from a preset whose head is taken from AEUX and whose sizes are patched; the byte offsets live in `_ae_presetBytes`.
+- **Track mattes:** `AVLayer.setTrackMatte` (AE 23) and the older layer-above `trackMatteType`, including that a duplicated base keeps its place.
+- **AE layer styles:** that `app.executeCommand` with 9000–9008 adds Drop Shadow … Stroke to the selected layer of the comp in the viewer, and the `dropShadow/color`-style match names inside them.
+- **AE adjustment effects:** the match names and control indices in `_ae_ADJUSTMENTS` (Brightness & Contrast 2, Easy Levels2, Hue/Saturation, Exposure2, Vibrance, Invert, Threshold2, Posterize, Black & White, Photo Filter, Color Balance 2), and Levels taking 0..1.
+- **Photoshop ActionManager:** the `layerEffects` keys, the adjustment descriptors (`c:Brgh`, `c:Adjs` lists, Lab colours in Photo Filter), `hasUserMask`/`userMaskEnabled` and loading a mask as a selection.
+- **Essential Graphics:** `Property.addToMotionGraphicsTemplateAs` (16.1) for Source Text and a shape Fill Color, and that a precomp layer's overrides are reached as `layer.property("ADBE Layer Overrides").property(name)` and take `setValue` — a TextDocument for text.
+- **Kerning:** that a character's kerning in Illustrator (`TextRange.kerning`) and After Effects (`CharacterRange.kerning`, 24.3) is the space *before* it, that `TextDocument.autoKernType` (24.0) and `AutoKernType` exist under those names, and Photoshop's `TextItem.autoKerning`. If Adobe stores a kern on the character before the gap, only Figma is affected: its letter spacing lands one pair early.
+- **Figma:** `getMainComponentAsync` under dynamic-page access, `getStyledTextSegments(["openTypeFeatures"])`, `setPluginData` on a selected instance, and that Chrome's local-network permission lets the plugin iframe reach `ws://localhost`.
+- **Image sequences:** that `ImportOptions.sequence` with `forceAlphabetical` imports numbered PNGs as one item, and `FootageSource.conformFrameRate`; that `Folder.selectDlg` / `Folder.selectDialog` opens a folder picker from a CEP `evalScript`.
+
 ---
 
 Packaging a release of your own is described in [PUBLISHING.md](../PUBLISHING.md).

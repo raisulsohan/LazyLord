@@ -138,6 +138,11 @@ reported on the transfer rather than left to be discovered. The tables under
 
 If everything you selected sits inside one top-level frame, it lands where it sits in that frame, and a new document or comp is created at the frame's size.
 
+**Send a layer as a picture.** Tick **Send the selected layers as images** under Image scale and
+each selected layer — a busy illustration, a group with effects Adobe apps do not have — goes as
+one image, exactly as it looks, instead of editable layers. The choice is saved in the Figma file,
+so it holds for every later send; untick it to send those layers as layers again.
+
 ### Sending from an Adobe app
 
 Every panel has a **Send selection** card. It lists every other app that is connected, and the button says where the transfer is going — **Send to After Effects**, **Send to Figma**, and so on.
@@ -179,6 +184,7 @@ Transfers pushed from Illustrator or pulled from After Effects always go into th
 | | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. Text, images, gradient-filled shapes and shapes with a different clip stay separate layers (reported). Illustrator and Photoshop ignore it. |
 | **Hierarchy** | **Flatten** (default) | Groups dissolve into their layers; a group's opacity is multiplied into its layers (reported when they could overlap) |
 | | **Groups** | Illustrator groups, Photoshop layer groups, After Effects parent **nulls** — or nested shape groups when combining |
+| | **Precomps** | After Effects: each frame becomes a precomp its size. A component and all its instances share **one** precomp; each copy's own text and colours are set in its **Essential Properties** |
 | **Existing** | **Add** (default) | Every transfer creates new layers |
 | | **Update** | A layer an earlier transfer built from the same object is edited where it stands, instead of a duplicate being added |
 | **Keyframes** | **Auto** (default) | While updating: a property that is already animated gets a new key at the playhead; a still one is just set |
@@ -186,6 +192,7 @@ Transfers pushed from Illustrator or pulled from After Effects always go into th
 | **On conflict** | **Overwrite** (default) | While updating: a layer that was edited in the receiving app since it was last sent is updated anyway, and reported |
 | | **Keep my edits** | That layer is left as it was edited, and reported |
 | **Only what changed** | on (default) | While updating: only the layers whose source changed since the last successful send to that app go out; nothing at all when nothing changed |
+| **Layers as frames** | Photoshop only, off by default | The selected layers — or the layers in one selected group, bottom first — become the frames of **one image sequence** in After Effects, all the same size. Hidden layers count, so a frame animation sends as it is |
 
 Split + Flatten + Add is what earlier versions produced, with two intentional fixes (see [docs/history.md](docs/history.md)).
 
@@ -247,12 +254,15 @@ After every transfer the panel prints a one-line summary (layers, images — ori
 | Vector shapes (bezier) | Shape layer | Path / compound path | **Editable shape layer** (raster fill as fallback) |
 | Rectangle / ellipse | **Live Rect / Ellipse shape** | Path | Shape layer |
 | Solid fill & stroke | ✅ (weight/cap/join) | ✅ | ✅ stroke on the shape layer where possible |
-| Linear / radial gradient | Gradient Ramp effect (2 stops) | **Native gradient**, direction and length | **Gradient fill layer** |
+| Linear / radial gradient | **Real shape gradient, every stop** (Gradient Ramp if that fails) | **Native gradient**, direction and length | **Gradient fill layer** |
 | Clipping frames & masks | Layer masks | Clipping group | Layer group with a vector mask |
-| Frames & groups | Parent nulls / shape groups (*Groups*) | Groups (*Groups*) | Layer groups (*Groups*) |
+| Frames & groups | Parent nulls / shape groups (*Groups*), precomps (*Precomps*) | Groups (*Groups*) | Layer groups (*Groups*) |
+| Components & instances | **One shared precomp** (*Precomps*): texts, and colours that differ, are Essential Graphics properties | Groups | Layer groups |
+| Layers ticked *Send the selected layers as images* | Footage | Placed image | Smart object |
 | Frame backgrounds | Shape layer | Path | Shape layer |
 | Live, editable text | ✅ | ✅ | ✅ |
 | Font family + style | best-effort | best-effort | best-effort |
+| Kerning switched off | ✅ (24.0+) | ✅ | ✅ |
 | Images / rasters | Footage | Placed image, embedded | Smart object |
 | Rotation | ✅ about the centre | ✅ | ✅ |
 | Opacity, position & size | ✅ | ✅ | ✅ |
@@ -293,9 +303,27 @@ Figma rotation used to pivot on the layer's top-left; vectors now have their tra
 | Track matte | — | Reported, not transferred |
 | Camera, light, precomp, null | — | Skipped and reported |
 
+### Photoshop → After Effects / Figma
+
+| Photoshop | After Effects | Figma |
+| --- | --- | --- |
+| Clipping mask | Alpha track matte on the base layer | Mask group |
+| Layer mask | Luma track matte from the mask | Luminance mask |
+| Gradient fill layer | Real shape gradient, every stop | Native gradient |
+| Layer style: drop / inner shadow, outer / inner glow, stroke, colour overlay | The same **After Effects layer styles** | Shadows, glows, stroke and overlay where Figma has them |
+| Layer style: gradient overlay, satin, bevel & emboss | Layer styles | Reported |
+| Adjustment layer: Brightness/Contrast, Levels, Hue/Saturation, Exposure, Vibrance, Invert, Threshold, Posterize, Black & White, Photo Filter, Color Balance | **Adjustment layer** with the matching effect, opacity, blend mode and mask | Reported (Figma has none) |
+| Adjustment layer: Curves, Gradient Map and the rest | Reported | Reported |
+| *Layers as frames* (Options) | **One image sequence**: each selected layer, or each layer in a selected group, bottom first, is a frame | First frame |
+| Kerning: Optical or none | ✅ (24.0+) | Reported |
+
+Illustrator and After Effects also carry **letter pairs kerned by hand** both ways (After Effects 24.3 or newer); Figma folds them into letter spacing, which looks the same.
+
 ### Assets
 
 - **After Effects:** images LazyLord generated are copied next to your saved project in `LazyLord Assets/` (never overwriting; `-1`, `-2`… appended) and imported from there. In an unsaved project they stay in the temp folder, and the panel says so. Your own linked files are never copied.
+- **Choose the folder yourself:** the After Effects panel's **Images → Choose…** keeps them in a folder you pick instead, saved project or not. **Default** goes back.
+- **Image sequences** are copied into a folder of their own (`Walk frames/`), names kept, so After Effects reads them as one sequence.
 - **Illustrator:** generated images are embedded; your own files stay linked.
 
 ### Blend modes and effects
@@ -312,6 +340,7 @@ naming the layer and what was lost — it is never dropped quietly.
 | **Inner shadow** | ✅ native | reported | reported | reported |
 | **Layer blur** | ✅ native | ✅ Gaussian Blur | reported | reported |
 | **Background blur** | ✅ native | reported | reported | reported |
+| **Photoshop layer styles** (from Photoshop) | shadows, glows, stroke, colour overlay | ✅ **as layer styles** | reported | — |
 
 Worth knowing:
 
@@ -320,9 +349,9 @@ Worth knowing:
   spread, so a shadow that uses one is rebuilt without it and says so.
 - **A blur radius is not the same number everywhere.** Figma's radius is a standard deviation;
   AE's Blurriness is roughly twice it for the same look, and is converted.
-- **Illustrator live effects and Photoshop layer styles are not rebuilt.** Both live in
-  ActionManager with parameters that do not line up with anyone else's, so approximating them
-  would be guesswork. They are reported instead.
+- **Photoshop layer styles** are read and rebuilt as After Effects layer styles, which take the
+  same settings. Illustrator live effects are not rebuilt: their parameters do not line up with
+  anyone else's, so they are reported instead.
 - **A rasterised layer keeps its effects in its pixels**, so its effects are deliberately *not*
   sent as well — otherwise every shadow would be drawn twice. Its blend mode still travels,
   because an export renders the layer, not how it composites with what is under it.
@@ -343,23 +372,27 @@ Worth knowing:
 
 ## Known limitations
 
-- **After Effects gradients** come from the Gradient Ramp effect because scripts cannot set shape-layer gradient colours. A Ramp has two colours and no per-stop transparency: extra stops are dropped and uneven alpha is averaged, both reported. Gradient **strokes** become their first colour.
-- **After Effects gradient fills cannot be read** from shape layers (only LazyLord's Gradient Ramps can); those shapes arrive unfilled, and the panel says so.
+- **After Effects gradients** are real shape gradients with every stop. Scripts cannot set their colours directly, so LazyLord writes them through a small animation preset it makes on the fly; if After Effects refuses that, the shape falls back to a two-colour Gradient Ramp, reported.
+- **After Effects gradient fills you made yourself cannot be read** from shape layers (LazyLord's own can); those shapes arrive unfilled, and the panel says so.
 - **Photoshop gradients** longer than Photoshop's 150% scale limit are clamped (reported). Diagonal gradients on long, thin Figma shapes hit this.
 - **Font mapping** relies on family/style name matching; unusual fonts may fall back to the host default.
 - **Mixed-style text** travels as runs (font, size, colour, tracking per range) and is rebuilt as live text; After Effects needs 24.3 or newer for it (`TextDocument.characterRange`), and older versions take the first run's style, reported.
-- **Effects:** blend modes travel everywhere, and After Effects rebuilds drop shadows and layer blurs; other effects, layer styles and AE path operators (Merge, Trim, Repeater…) are not transferred, and are reported.
+- **Effects:** blend modes travel everywhere, After Effects rebuilds drop shadows, layer blurs and Photoshop's layer styles; Illustrator live effects and AE path operators (Merge, Trim, Repeater…) are not transferred, and are reported.
+- **Components share a precomp only with Precomps.** Copies that differ in size, layout, images or styled text get a precomp each ("Button 2"…). Essential Graphics needs After Effects 2019 or newer; without it, differing copies simply get their own precomp.
+- **Adjustment layers only rebuild in After Effects**, and only the kinds in the table above; Curves, Gradient Map, Channel Mixer and the like are reported, as are Levels and Hue/Saturation set per colour channel.
+- **Kerning** needs After Effects 24.0 (method) or 24.3 (kerned pairs). Photoshop's kerned pairs are not read, and Photoshop does not rebuild kerned pairs. Figma always uses the font's own kerning.
+- **Layers as frames** is a one-off send: Live and Update keep layers in step, not sequences.
+- **Figma in the browser** works in Chrome, Edge and Firefox once the plugin comes from Figma Community; Safari does not let a web page reach the panel.
 - A clip on a group (rather than on its layers) is not rebuilt by After Effects. No source produces one today.
 - Combining shapes in After Effects may pull a shape above its neighbours when only some shapes in a Figma clipping frame carry the clip (reported).
 - **Updating into Photoshop rests on layer XMP.** Photoshop layers have no comment or note, so the tag is written to each layer's XMP metadata (through AdobeXMPScript when it loads, else as a small XMP packet of its own). A pixel edit that changes neither bounds, opacity, blend, text nor fill colour is not seen as a conflict.
 - **Updating does not restructure.** Layout and Hierarchy are ignored while updating, and an Illustrator update replaces the item rather than editing it, so an appearance added to that item in Illustrator goes with it.
-- **An After Effects gradient is not updated.** Its colours are written to the underlying solid fill, but the Gradient Ramp effect is left as it was (reported). Re-send with Add for a gradient that changed.
 - **Figma cannot read a file**, so anything sent there travels as bytes rather than as a path — the panel reads the file and embeds it. A transfer that reaches Figma with only a path (from a host that could not read it) reports the image rather than dropping it silently.
 - **Photoshop can only read its selection through ActionManager.** If that call fails, only the active layer is sent, reported. Its shape layers also need both a vector mask and a readable fill colour; without either, the layer is rasterised instead.
-- **Not yet implemented:** Illustrator live effects and Photoshop layer styles.
+- **Not yet implemented:** Illustrator live effects.
 - **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
-- **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. Adobe scripting still differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](../../issues) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
+- **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. The features new in 1.1 — real gradients, components as precomps, Photoshop masks, layer styles, adjustment layers and frame sequences, kerning, the image folder and browser Figma — pass the automated checks but have not yet been run by hand in the real apps. Adobe scripting also differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](../../issues) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
 
 ---
 

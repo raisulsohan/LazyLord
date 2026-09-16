@@ -279,6 +279,42 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] `Uninstall LazyLord.bat` চালালে প্যানেল সরে যায়।
 - [ ] শেষে `install.bat` চালিয়ে ডেভেলপার ইনস্টল ফিরিয়ে আনুন।
 
+## Overlord-এর সমান করার ফিচার (v1.1) — আসল অ্যাপে এখনো চালানো হয়নি
+
+সব mock টেস্টে পাস করেছে, কিন্তু নিচের ⚠ চিহ্নগুলো Adobe/Figma-র এমন আচরণের ওপর
+দাঁড়িয়ে আছে যা স্ক্রিপ্টিং গাইডে নিশ্চিত করে লেখা নেই। প্রতিটা আলাদা করে দেখুন।
+
+**After Effects-এ আসল গ্র্যাডিয়েন্ট**
+- [ ] Figma থেকে তিন-চার stop-এর linear আর radial গ্র্যাডিয়েন্ট পাঠান। ⚠ Gradient Ramp নয়, shape-এর নিজের **Gradient Fill** হয় আর সব stop ঠিক রঙে থাকে? (preset লিখে প্রয়োগ করা হয়)
+- [ ] আধা-স্বচ্ছ stop-এর গ্র্যাডিয়েন্ট — স্বচ্ছতা ঠিক থাকে?
+- [ ] গ্র্যাডিয়েন্ট stroke — stroke-এও গ্র্যাডিয়েন্ট আসে?
+- [ ] সেই shape আবার Update দিয়ে পাঠান (রং বদলে) — গ্র্যাডিয়েন্ট বদলায়?
+- [ ] AE → Illustrator: LazyLord-এর বানানো গ্র্যাডিয়েন্ট shape ফেরত পাঠালে রং আসে?
+
+**Photoshop → After Effects / Figma**
+- [ ] Clipping mask (একটা ছবির ওপর দুটো লেয়ার clip করা)। ⚠ AE-তে base-এর ওপর alpha track matte হয়, base নিজে দেখা যায়? AE 2023+ আর পুরোনো ভার্সনে দুটোতেই।
+- [ ] Layer mask (নরম কিনারা সহ)। AE-তে luma matte, Figma-তে mask — কিনারা ঠিক?
+- [ ] Gradient fill layer (৩ stop, কোণ ৩০°)। কোণ আর রং মেলে?
+- [ ] Layer style: drop shadow, outer glow, stroke, colour overlay, bevel। ⚠ AE-তে Layer Styles-এ ঠিক মানসহ আসে? (Layer ▸ Layer Styles কমান্ড দিয়ে যোগ করা হয়)
+- [ ] Adjustment layer: Brightness/Contrast, Levels, Hue/Saturation, Photo Filter, Color Balance। ⚠ AE-তে adjustment layer-এ ঠিক effect আর মান? নিচের লেয়ারগুলো একই রকম দেখায়?
+- [ ] Curves adjustment — রিপোর্ট হয়, কিছু বানায় না?
+
+**Figma component → After Effects precomp**
+- [ ] একটা Button component আর তার তিনটে instance (লেখা আলাদা, একটায় রং আলাদা) — Hierarchy: **Precomps**।
+- [ ] ⚠ Project-এ একটাই "Button" comp হয়, চারটে precomp লেয়ার সেটাকেই দেখায়?
+- [ ] ⚠ প্রতিটা লেয়ারের **Essential Properties**-এ নিজের লেখা আর রং বসানো থাকে, আর comp-এর ভেতরে গিয়ে দেখলে Essential Graphics প্যানেলে "Label" আর রঙের প্রপার্টি দেখা যায়?
+- [ ] আলাদা মাপের instance — "Button 2" নামে আলাদা precomp হয়?
+
+**Figma: ছবি হিসেবে পাঠানো, ব্রাউজার, kerning**
+- [ ] একটা গ্রুপ সিলেক্ট করে "Send the selected layers as images" টিক দিন, পাঠান — একটা ছবি হয়ে যায়? ফাইল সেভ করে আবার খুললেও টিকটা থাকে?
+- [ ] Figma Community-র প্লাগিন (রিভিউ পাস হলে) Chrome-এ চালান। ⚠ ব্রাউজার "অন্য অ্যাপে যাওয়ার অনুমতি" চাইলে Allow দিলে সংযোগ সবুজ হয়? Safari-তে না হলে সেটাই প্রত্যাশিত।
+- [ ] Illustrator-এ "AVATAR" লিখে Optical kerning আর A-V জোড়ায় হাতে -80 kern দিন, AE-তে পাঠান। ⚠ AE 24.3+-এ Character panel-এ Optical আর সেই জোড়ায় -80 দেখায়? (ধরে নিয়েছি একটা অক্ষরের kerning মানে তার আগের ফাঁক — উল্টো হলে পাশের জোড়ায় বসবে)
+- [ ] একই লেখা Figma-তে পাঠান — জোড়ার ফাঁক Illustrator-এর মতো দেখায়?
+
+**After Effects: ছবির ফোল্ডার আর frame sequence**
+- [ ] AE প্যানেলে Images → Choose… দিয়ে একটা ফোল্ডার বাছুন (⚠ ফোল্ডার বাছার উইন্ডো খোলে?), তারপর ছবিসহ কিছু পাঠান — ছবি সেই ফোল্ডারে যায়? Default চাপলে আবার প্রজেক্টের পাশে?
+- [ ] Photoshop-এ ৮টা লেয়ারের একটা গ্রুপ (বেশিরভাগ hidden), Options-এ **Layers as frames** টিক দিয়ে AE-তে পাঠান। ⚠ AE-তে একটাই footage হয়ে ৮ ফ্রেমের sequence চলে, comp-এর frame rate-এ? সেভ করা প্রজেক্টে "… frames" ফোল্ডারে ফ্রেমগুলো কপি হয়?
+
 ## কিছু ভুল হলে যা পাঠাবেন
 
 1. উৎস অ্যাপ আর গন্তব্য অ্যাপের পাশাপাশি **স্ক্রিনশট**।

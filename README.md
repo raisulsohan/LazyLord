@@ -335,10 +335,10 @@ naming the layer and what was lost — it is never dropped quietly.
 | | Figma | After Effects | Illustrator | Photoshop |
 | --- | --- | --- | --- | --- |
 | **Blend modes** (all 16) | ✅ native | ✅ native | ✅ native | ✅ native |
-| **Drop shadow** | ✅ native | ✅ Drop Shadow effect | reported | reported |
-| **Shadow spread** | ✅ native | reported | reported | reported |
-| **Inner shadow** | ✅ native | reported | reported | reported |
-| **Layer blur** | ✅ native | ✅ Gaussian Blur | reported | reported |
+| **Drop shadow** | ✅ native | ✅ Drop Shadow effect | ✅ Drop Shadow live effect (black) | ✅ Drop Shadow layer style |
+| **Shadow spread** | ✅ native | reported | reported | ✅ the style's Spread |
+| **Inner shadow** | ✅ native | reported | reported | ✅ Inner Shadow layer style |
+| **Layer blur** | ✅ native | ✅ Gaussian Blur | ✅ Gaussian Blur live effect | ✅ Gaussian Blur smart filter |
 | **Background blur** | ✅ native | reported | reported | reported |
 | **Photoshop layer styles** (from Photoshop) | shadows, glows, stroke, colour overlay | ✅ **as layer styles** | reported | — |
 
@@ -350,8 +350,13 @@ Worth knowing:
 - **A blur radius is not the same number everywhere.** Figma's radius is a standard deviation;
   AE's Blurriness is roughly twice it for the same look, and is converted.
 - **Photoshop layer styles** are read and rebuilt as After Effects layer styles, which take the
-  same settings. Illustrator live effects are not rebuilt: their parameters do not line up with
-  anyone else's, so they are reported instead.
+  same settings.
+- **In Illustrator**, effects arrive as live effects you can edit in the Appearance panel. Its
+  scripted drop shadow is always black (a coloured one is drawn black and reported), and it has
+  no inner shadow or spread.
+- **In Photoshop**, shadows arrive as layer styles. A layer blur needs a smart filter, so a
+  blurred layer becomes a smart object: the blur stays editable, and so does the shape or text,
+  inside it.
 - **A rasterised layer keeps its effects in its pixels**, so its effects are deliberately *not*
   sent as well — otherwise every shadow would be drawn twice. Its blend mode still travels,
   because an export renders the layer, not how it composites with what is under it.
@@ -377,7 +382,7 @@ Worth knowing:
 - **Photoshop gradients** longer than Photoshop's 150% scale limit are clamped (reported). Diagonal gradients on long, thin Figma shapes hit this.
 - **Font mapping** relies on family/style name matching; unusual fonts may fall back to the host default.
 - **Mixed-style text** travels as runs (font, size, colour, tracking per range) and is rebuilt as live text; After Effects needs 24.3 or newer for it (`TextDocument.characterRange`), and older versions take the first run's style, reported.
-- **Effects:** blend modes travel everywhere, After Effects rebuilds drop shadows, layer blurs and Photoshop's layer styles; Illustrator live effects and AE path operators (Merge, Trim, Repeater…) are not transferred, and are reported.
+- **Effects:** blend modes travel everywhere; drop shadows and layer blurs are rebuilt in After Effects, Illustrator and Photoshop, and inner shadows in Photoshop. A background blur is Figma's alone. Illustrator's own live effects are not read when sending from Illustrator, and AE path operators (Merge, Trim, Repeater…) are not transferred; both are reported.
 - **Components share a precomp only with Precomps.** Copies that differ in size, layout, images or styled text get a precomp each ("Button 2"…). Essential Graphics needs After Effects 2019 or newer; without it, differing copies simply get their own precomp.
 - **Adjustment layers only rebuild in After Effects**, and only the kinds in the table above; Curves, Gradient Map, Channel Mixer and the like are reported, as are Levels and Hue/Saturation set per colour channel.
 - **Kerning** needs After Effects 24.0 (method) or 24.3 (kerned pairs). Photoshop's kerned pairs are not read, and Photoshop does not rebuild kerned pairs. Figma always uses the font's own kerning.
@@ -389,7 +394,7 @@ Worth knowing:
 - **Updating does not restructure.** Layout and Hierarchy are ignored while updating, and an Illustrator update replaces the item rather than editing it, so an appearance added to that item in Illustrator goes with it.
 - **Figma cannot read a file**, so anything sent there travels as bytes rather than as a path — the panel reads the file and embeds it. A transfer that reaches Figma with only a path (from a host that could not read it) reports the image rather than dropping it silently.
 - **Photoshop can only read its selection through ActionManager.** If that call fails, only the active layer is sent, reported. Its shape layers also need both a vector mask and a readable fill colour; without either, the layer is rasterised instead.
-- **Not yet implemented:** Illustrator live effects.
+- **Not yet implemented:** sending Illustrator's own live effects out of Illustrator.
 - **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
 - **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. The features new in 1.1 — real gradients, components as precomps, Photoshop masks, layer styles, adjustment layers and frame sequences, kerning, the image folder and browser Figma — pass the automated checks but have not yet been run by hand in the real apps. Adobe scripting also differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](../../issues) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).

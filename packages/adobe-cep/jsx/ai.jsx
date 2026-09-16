@@ -1405,8 +1405,9 @@ LazyLord._ai_tagNew = function (ctx, container, before, layer) {
     return;
   }
   LazyLord._ai_tagItems(ctx, made, layer);
-  // Blend mode and effects belong to every item the layer produced.
-  for (var f = 0; f < made.length; f++) LazyLord._ai_finish(made[f], layer);
+  // Blend mode and effects belong to every item the layer produced; the list
+  // runs top first, so its last item is the lowest.
+  for (var f = 0; f < made.length; f++) LazyLord._ai_finish(made[f], layer, f === made.length - 1);
 };
 
 /**
@@ -1609,7 +1610,7 @@ LazyLord._ai_update = function (ctx, layer) {
 
   // Tag the items themselves, not by index: moving them shuffled the indices.
   LazyLord._ai_tagItems(ctx, fresh, layer);
-  for (var q = 0; q < fresh.length; q++) LazyLord._ai_finish(fresh[q], layer);
+  for (var q = 0; q < fresh.length; q++) LazyLord._ai_finish(fresh[q], layer, q === fresh.length - 1);
 
   var removed = 0;
   for (var r = 0; r < old.length; r++) {
@@ -1627,8 +1628,14 @@ LazyLord._ai_update = function (ctx, layer) {
  * Blend modes and effects
  *
  * Illustrator has a blend mode for each of the IR's, under its own spelling
- * ("color" is COLORBLEND). It has no stock live effect matching the IR's
- * shadows and blurs that can be scripted safely, so those are reported.
+ * ("color" is COLORBLEND). Effects become live effects, added with
+ * PageItem.applyEffect and the XML Illustrator keeps them as: a layer blur is
+ * Effect > Blur > Gaussian Blur, a drop shadow Effect > Stylize > Drop Shadow,
+ * both still editable in the Appearance panel. Illustrator has no inner
+ * shadow, background blur or shadow spread, so those are reported.
+ *
+ * Blur sizes: Figma's blur radius is twice a Gaussian radius (its CSS is
+ * blur(radius / 2)), and Illustrator's blurs take the Gaussian radius.
  * ---------------------------------------------------------------------- */
 
 LazyLord._ai_BLEND = {
@@ -1649,10 +1656,84 @@ LazyLord._ai_BLEND = {
   "luminosity": "LUMINOSITY"
 };
 
-/** Apply the IR's blend mode and report any effects, on one Illustrator item. */
-LazyLord._ai_finish = function (item, layer) {
+/**
+ * Apply the IR's blend mode and effects to one Illustrator item. `bottom` is
+ * the lowest of the items a layer made: shadows go on it alone, so a shape
+ * drawn as a fill and a separate stroke casts one shadow, not two; reports
+ * are made there too, once per layer.
+ */
+LazyLord._ai_finish = function (item, layer, bottom) {
   if (!item) return;
   LazyLord.applyBlend(function (v) { item.blendingMode = v; }, layer,
     typeof BlendModes !== "undefined" ? BlendModes : null, LazyLord._ai_BLEND);
-  LazyLord.noteEffects(layer, "Illustrator live effects cannot be scripted, so these were left off");
+  LazyLord._ai_effects(item, layer, bottom !== false);
+};
+
+/** A number for a live effect's parameters. */
+LazyLord._ai_fxNum = function (n) {
+  var v = Math.round((Number(n) || 0) * 1000) / 1000;
+  return String(isFinite(v) ? v : 0);
+};
+
+/** Effect > Blur > Gaussian Blur. */
+LazyLord._ai_blurXml = function (fx) {
+  return '<LiveEffect name="Adobe PSL Gaussian Blur"><Dict data="R blur ' +
+    LazyLord._ai_fxNum(Math.max(0, fx.radius || 0) / 2) + ' "/></LiveEffect>';
+};
+
+/**
+ * Effect > Stylize > Drop Shadow, Multiply, drawn at full darkness: black
+ * whichever colour mode Illustrator reads, since a script cannot hand it a
+ * colour reliably. Opacity is the shadow colour's alpha.
+ */
+LazyLord._ai_shadowXml = function (fx) {
+  var dx = (fx.offset && fx.offset.x) || 0, dy = (fx.offset && fx.offset.y) || 0;
+  var c = fx.color || { r: 0, g: 0, b: 0, a: 1 };
+  var alpha = typeof c.a === "number" ? Math.max(0, Math.min(1, c.a)) : 1;
+  var f = LazyLord._ai_fxNum;
+  return '<LiveEffect name="Adobe Drop Shadow"><Dict data="R horz ' + f(dx) + ' R vert ' + f(dy) +
+    ' I blnd 1 R opac ' + f(alpha) + ' R dist ' + f(Math.sqrt(dx * dx + dy * dy)) +
+    ' I dark 100 B usePSLBlur 1 R blur ' + f(Math.max(0, fx.radius || 0) / 2) + ' I csrc 1 "/></LiveEffect>';
+};
+
+LazyLord._ai_effects = function (item, layer, bottom) {
+  var list = layer.effects;
+  if (!list || !list.length) return;
+  var name = layer.name || "Layer";
+  var left = [], notes = [];
+  for (var i = 0; i < list.length; i++) {
+    var fx = list[i];
+    if (!fx) continue;
+    var xml = null;
+    if (fx.kind === "layer-blur") {
+      if (!(fx.radius > 0)) continue;
+      xml = LazyLord._ai_blurXml(fx);
+    } else if (fx.kind === "drop-shadow") {
+      if (!bottom) continue;
+      xml = LazyLord._ai_shadowXml(fx);
+      var c = fx.color || { r: 0, g: 0, b: 0 };
+      if ((c.r || 0) > 0.1 || (c.g || 0) > 0.1 || (c.b || 0) > 0.1) {
+        notes.push("its drop shadow is black, since Illustrator's scripted shadow cannot take another colour");
+      }
+      if (fx.spread) notes.push("Illustrator's drop shadow has no spread, so the shadow is drawn without it");
+    } else {
+      if (bottom) left.push(LazyLord.effectLabel(fx.kind));
+      continue;
+    }
+    if (typeof item.applyEffect !== "function") {
+      if (bottom) left.push(LazyLord.effectLabel(fx.kind) + " (this Illustrator cannot add live effects from a script)");
+      continue;
+    }
+    try {
+      item.applyEffect(xml);
+    } catch (e) {
+      if (bottom) LazyLord.warn(name, "Its " + LazyLord.effectLabel(fx.kind) + " could not be added (" +
+        ((e && e.message) || String(e)) + "), so it was left off", "skipped");
+    }
+  }
+  for (var n = 0; n < notes.length; n++) LazyLord.warn(name, notes[n].charAt(0).toUpperCase() + notes[n].substring(1), "approximated");
+  if (left.length) {
+    LazyLord.warn(name, "Illustrator has no live effect for " + left.join(", ") + ", so " +
+      (left.length === 1 ? "it was" : "they were") + " left off", "skipped");
+  }
 };

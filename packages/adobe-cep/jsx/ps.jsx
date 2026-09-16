@@ -164,8 +164,9 @@ LazyLord._ps_make = function (st, layer) {
     LazyLord.warn(layer.name, LazyLord._ps_msg(e), "skipped");
   }
   if (!made || !made.length) return [];
-  // Blend mode and effects belong to every layer the leaf produced.
-  for (var f = 0; f < made.length; f++) LazyLord._ps_finish(made[f], layer);
+  // Blend mode and effects belong to every layer the leaf produced (bottom to
+  // top); one that became a smart object for its blur takes its place.
+  for (var f = 0; f < made.length; f++) made[f] = LazyLord._ps_finish(made[f], layer, f === 0) || made[f];
   LazyLord._ps_tag(st, made, layer);
   return made;
 };
@@ -1605,9 +1606,14 @@ LazyLord._ps_place = function (path) {
  * Blend modes and effects
  *
  * Photoshop has a blend mode for each of the IR's, under its own spelling
- * ("color" is COLORBLEND). Layer styles are close cousins of the IR's
- * shadows, but they live in ActionManager and their parameters do not line up
- * with anyone else's, so they are reported instead of approximated badly.
+ * ("color" is COLORBLEND). Drop and inner shadows become layer styles, set
+ * through ActionManager with the keys ScriptListener records; they read back
+ * the way ps-read.jsx reads them. A layer blur becomes a Gaussian Blur smart
+ * filter: the layer is made a smart object first, so the blur stays editable
+ * and so do the contents, inside it. A background blur has no counterpart.
+ *
+ * Blur sizes: a shadow's radius is Photoshop's Size; Figma's layer blur
+ * radius is twice a Gaussian radius (its CSS is blur(radius / 2)).
  * ---------------------------------------------------------------------- */
 
 LazyLord._ps_BLEND = {
@@ -1628,10 +1634,138 @@ LazyLord._ps_BLEND = {
   "luminosity": "LUMINOSITY"
 };
 
-/** Apply the IR's blend mode and report any effects, on one Photoshop layer. */
-LazyLord._ps_finish = function (lyr, layer) {
-  if (!lyr) return;
+/**
+ * Apply the IR's blend mode and effects to one Photoshop layer, and return the
+ * layer that now stands for it: a blurred layer becomes a smart object.
+ * `bottom` is the lowest of the layers a leaf made: shadows go on it alone,
+ * and reports are made there, once per leaf.
+ */
+LazyLord._ps_finish = function (lyr, layer, bottom) {
+  if (!lyr) return lyr;
   LazyLord.applyBlend(function (v) { lyr.blendMode = v; }, layer,
     typeof BlendMode !== "undefined" ? BlendMode : null, LazyLord._ps_BLEND);
-  LazyLord.noteEffects(layer, "Photoshop layer styles are not rebuilt, so these were left off");
+  return LazyLord._ps_effects(lyr, layer, bottom !== false);
+};
+
+/** IR blend mode -> the BlnM enumeration a layer style takes. */
+LazyLord._ps_STYLE_BLEND = {
+  "normal": "Nrml", "multiply": "Mltp", "screen": "Scrn", "overlay": "Ovrl", "darken": "Drkn", "lighten": "Lghn",
+  "color-dodge": "CDdg", "color-burn": "CBrn", "hard-light": "HrdL", "soft-light": "SftL", "difference": "Dfrn",
+  "exclusion": "Xclu", "hue": "H   ", "saturation": "Strt", "color": "Clr ", "luminosity": "Lmns"
+};
+
+LazyLord._ps_effects = function (lyr, layer, bottom) {
+  var list = layer.effects;
+  if (!list || !list.length) return lyr;
+  var name = layer.name || "Layer";
+  var shadows = [], blur = null, left = [];
+  for (var i = 0; i < list.length; i++) {
+    var fx = list[i];
+    if (!fx) continue;
+    if (fx.kind === "drop-shadow" || fx.kind === "inner-shadow") {
+      if (bottom) shadows.push(fx);
+    } else if (fx.kind === "layer-blur") {
+      if (!blur) blur = fx;
+      else if (bottom) LazyLord.warn(name, "Only its first layer blur was added", "approximated");
+    } else if (bottom) {
+      left.push(LazyLord.effectLabel(fx.kind));
+    }
+  }
+  if (blur && blur.radius > 0) lyr = LazyLord._ps_smartBlur(lyr, blur, name, bottom);
+  if (shadows.length) LazyLord._ps_shadowStyles(lyr, shadows, name);
+  if (left.length) {
+    LazyLord.warn(name, "Photoshop has no counterpart here for " + left.join(", ") + ", so " +
+      (left.length === 1 ? "it was" : "they were") + " left off", "skipped");
+  }
+  return lyr;
+};
+
+/** The layer as a smart object with a Gaussian Blur smart filter; the layer itself when that fails. */
+LazyLord._ps_smartBlur = function (lyr, fx, name, report) {
+  var c = LazyLord._ps_cid, s = LazyLord._ps_sid;
+  var doc = app.activeDocument;
+  var opacity = null, blend = null;
+  try { opacity = lyr.opacity; blend = lyr.blendMode; } catch (e0) {}
+  var smart;
+  try {
+    doc.activeLayer = lyr;
+    executeAction(s("newPlacedLayer"), undefined, DialogModes.NO);
+    smart = doc.activeLayer;
+  } catch (e) {
+    if (report) LazyLord.warn(name, "Its layer blur needs the layer to be a smart object, which Photoshop refused (" +
+      LazyLord._ps_msg(e) + "), so the blur was left off", "skipped");
+    return lyr;
+  }
+  // Converting keeps these on the smart object; set them again in case it did not.
+  try { if (opacity !== null) smart.opacity = opacity; } catch (e1) {}
+  try { if (blend !== null) smart.blendMode = blend; } catch (e2) {}
+  try {
+    var d = new ActionDescriptor();
+    d.putUnitDouble(c("Rds "), c("#Pxl"), Math.max(0.1, (fx.radius || 0) / 2));
+    executeAction(c("GsnB"), d, DialogModes.NO);
+  } catch (e3) {
+    if (report) LazyLord.warn(name, "The Gaussian Blur smart filter could not be added (" + LazyLord._ps_msg(e3) +
+      "), so the layer is a smart object without its blur", "skipped");
+  }
+  return smart;
+};
+
+/** A Drop Shadow or Inner Shadow style descriptor from an IR shadow. */
+LazyLord._ps_shadowDesc = function (fx, drop) {
+  var c = LazyLord._ps_cid, s = LazyLord._ps_sid;
+  var col = fx.color || { r: 0, g: 0, b: 0, a: 1 };
+  var dx = (fx.offset && fx.offset.x) || 0, dy = (fx.offset && fx.offset.y) || 0;
+  var size = Math.max(0, fx.radius || 0);
+  var d = new ActionDescriptor();
+  d.putBoolean(c("enab"), true);
+  // A shadow composites Normal unless the source said otherwise (Figma's do).
+  d.putEnumerated(c("Md  "), c("BlnM"), c(LazyLord._ps_STYLE_BLEND[fx.blendMode] || "Nrml"));
+  var rgb = new ActionDescriptor();
+  rgb.putDouble(c("Rd  "), Math.round((col.r || 0) * 255));
+  rgb.putDouble(c("Grn "), Math.round((col.g || 0) * 255));
+  rgb.putDouble(c("Bl  "), Math.round((col.b || 0) * 255));
+  d.putObject(c("Clr "), c("RGBC"), rgb);
+  d.putUnitDouble(c("Opct"), c("#Prc"), LazyLord.pct(typeof col.a === "number" ? col.a : 1));
+  d.putBoolean(c("uglg"), false);
+  // Photoshop's angle names where the light comes from; the shadow falls opposite, y down.
+  d.putUnitDouble(c("lagl"), c("#Ang"), Math.atan2(dy, -dx) * 180 / Math.PI);
+  d.putUnitDouble(c("Dstn"), c("#Pxl"), Math.sqrt(dx * dx + dy * dy));
+  // Spread (Choke for an inner shadow) is a percentage of the size.
+  d.putUnitDouble(c("Ckmt"), c("#Pxl"), size > 0 ? Math.max(0, Math.min(100, (fx.spread || 0) / size * 100)) : 0);
+  d.putUnitDouble(c("blur"), c("#Pxl"), size);
+  d.putUnitDouble(c("Nose"), c("#Prc"), 0);
+  d.putBoolean(c("AntA"), false);
+  if (drop) d.putBoolean(s("layerConceals"), true);
+  return d;
+};
+
+/** Set the layer's shadows as its layer style: one drop shadow and one inner shadow. */
+LazyLord._ps_shadowStyles = function (lyr, shadows, name) {
+  var c = LazyLord._ps_cid;
+  var styles = new ActionDescriptor();
+  styles.putUnitDouble(c("Scl "), c("#Prc"), 100);
+  var taken = {}, extra = 0;
+  for (var i = 0; i < shadows.length; i++) {
+    var key = shadows[i].kind === "drop-shadow" ? "DrSh" : "IrSh";
+    if (taken[key]) { extra++; continue; }
+    taken[key] = true;
+    styles.putObject(c(key), c(key), LazyLord._ps_shadowDesc(shadows[i], key === "DrSh"));
+  }
+  try {
+    app.activeDocument.activeLayer = lyr;
+    var ref = new ActionReference();
+    ref.putProperty(c("Prpr"), c("Lefx"));
+    ref.putEnumerated(c("Lyr "), c("Ordn"), c("Trgt"));
+    var desc = new ActionDescriptor();
+    desc.putReference(c("null"), ref);
+    desc.putObject(c("T   "), c("Lefx"), styles);
+    executeAction(c("setd"), desc, DialogModes.NO);
+  } catch (e) {
+    LazyLord.warn(name, "Its shadows could not be added as layer styles (" + LazyLord._ps_msg(e) + "), so they were left off", "skipped");
+    return;
+  }
+  if (extra) {
+    LazyLord.warn(name, "Photoshop gets one drop shadow and one inner shadow per layer from here, so " +
+      (extra === 1 ? "one more shadow was" : extra + " more shadows were") + " left off", "approximated");
+  }
 };

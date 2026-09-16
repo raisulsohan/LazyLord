@@ -747,23 +747,9 @@ LazyLord.applyBlend = function (setter, layer, enumObj, map) {
   }
 };
 
-/**
- * Report the effects a host cannot rebuild. Only After Effects has stock
- * effects that match the IR's, so the others say what was lost rather than
- * dropping it in silence.
- */
-LazyLord.noteEffects = function (layer, why) {
-  var list = layer.effects;
-  if (!list || !list.length) return;
-
-  var names = [];
-  for (var i = 0; i < list.length; i++) {
-    var label = String(list[i] && list[i].kind ? list[i].kind : "effect").replace(/-/g, " ");
-    var seen = false;
-    for (var j = 0; j < names.length; j++) if (names[j] === label) seen = true;
-    if (!seen) names.push(label);
-  }
-  LazyLord.warn(layer.name || "Layer", (why || "Effects are not rebuilt here") + ": " + names.join(", "), "skipped");
+/** An effect kind as the diagnostics name it ("drop-shadow" -> "drop shadow"). */
+LazyLord.effectLabel = function (kind) {
+  return String(kind || "effect").replace(/-/g, " ");
 };
 
 /**

@@ -276,14 +276,18 @@ Everything here was checked against Adobe and Figma documentation and developer
 forums rather than by instrumenting the host, so each is a place a bug could
 hide.
 
-The main ones:
+What is no longer on this list, because it has been run in the real apps: that
+a layer tag survives a save and reopen — `AVLayer.comment`, `PageItem.note` and
+a Photoshop layer's `xmpMetadata.rawData` — that the values the conflict
+fingerprint reads back are unchanged by that round trip, and that
+`PageNode.on("nodechange")` fires for the edits Live watches. The whole mapping
+engine rested on the first of those.
+
+The rest:
 - the Gradient Ramp property names and the space its points use on shape layers;
 - Photoshop's ActionManager descriptors for shape, gradient and vector-mask layers;
 - whether setting `Layer.parent` in AE keeps the child's visual position;
 - the mapping of Illustrator's `GradientColor.matrix`;
-- that `AVLayer.comment` and `PageItem.note` persist in a saved project/document and survive a round trip (the whole mapping engine rests on this), and that the values the conflict fingerprint reads back are unchanged by a save and reopen;
-- that `PageNode.on("nodechange")` fires for the edits Live watches, with the node's parents readable;
-- that a Photoshop layer's `xmpMetadata.rawData` can be written by a script and is kept in the saved PSD;
 - that `Property.setValueAtTime` on a shape path and a Text Document behaves as the scripting guide describes, and that `numKeys` reads back as expected;
 - that Illustrator's `document.pageItems` really does reach nested items (the mocked tests only cover top-level artwork), and that `PageItem.move(..., ElementPlacement.PLACEBEFORE)` puts an item directly in front of the reference;
 - that `FootageSource.replace` relinks a layer without disturbing its transform;

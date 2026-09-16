@@ -355,7 +355,7 @@ Worth knowing:
 - **Not yet implemented:** Illustrator live effects and Photoshop layer styles.
 - **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
-- **Version 1.0 is new.** Sending and receiving has been used by hand in all four apps. The newer parts — updating in place in Photoshop and Figma, conflict detection and Live — pass a large automated test suite against mocked hosts, but have had far less real-world use, and Adobe scripting differs between app versions. When something arrives wrong the panel's **Log** usually says why; [tell me about it](../../issues) and it gets fixed. The host-API assumptions still to be confirmed are listed in [docs/development.md](docs/development.md).
+- **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. Adobe scripting still differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](../../issues) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
 
 ---
 

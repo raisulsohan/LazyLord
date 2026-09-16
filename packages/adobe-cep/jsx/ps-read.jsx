@@ -329,6 +329,11 @@ LazyLord._psr_convert = function (ctx, lyr) {
 
   if (kind === LayerKind.TEXT) return LazyLord._psr_withMask(ctx, lyr, LazyLord._psr_text(ctx, lyr));
 
+  if (kind === LayerKind.GRADIENTFILL) {
+    var grad = LazyLord._psr_gradientShape(ctx, lyr);
+    if (grad) return LazyLord._psr_withMask(ctx, lyr, grad);
+  }
+
   // A Photoshop shape layer is a fill layer wearing a vector mask.
   if (kind === LayerKind.SOLIDFILL) {
     var vec = LazyLord._psr_shape(ctx, lyr);
@@ -341,7 +346,7 @@ LazyLord._psr_convert = function (ctx, lyr) {
 /** Why this layer had to be rasterised, in the user's own vocabulary. */
 LazyLord._psr_reasonFor = function (kind) {
   if (kind === LayerKind.SMARTOBJECT) return "Smart objects are sent as a flattened image";
-  if (kind === LayerKind.GRADIENTFILL) return "Gradient fill layers are sent as a flattened image";
+  if (kind === LayerKind.GRADIENTFILL) return "This gradient fill could not be rebuilt as a gradient, so it is sent as a flattened image";
   if (kind === LayerKind.PATTERNFILL) return "Pattern fill layers are sent as a flattened image";
   if (kind === LayerKind.SOLIDFILL) return "This fill layer has no outline to read, so it is sent as an image";
   if (kind === LayerKind.VIDEO || kind === LayerKind.LAYER3D) return "3D and video layers are sent as a flattened image";
@@ -857,6 +862,255 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath) {
     try { tmp.close(SaveOptions.DONOTSAVECHANGES); } catch (e1) {}
     try { app.activeDocument = src; } catch (e2) {}
   }
+};
+
+/* -------------------------------------------------------------------------
+ * Gradient fill layers
+ *
+ * A Photoshop gradient fill layer is read as a vector with a gradient paint:
+ * its outline from its vector mask, or its box when it has none (a fill layer
+ * without a mask covers the canvas). The gradient is read through
+ * ActionManager, the inverse of what ps.jsx writes (_ps_gradientDesc and
+ * _ps_gradientGeometry, which document how Photoshop sizes a gradient against
+ * the box): centre = box centre + offset; the handle runs along the angle to
+ * the box's edge, scaled; a linear gradient runs from centre - R to centre + R,
+ * a radial one from the centre out to R.
+ *
+ * Colour and transparency stops can sit at different places; the IR keeps
+ * both on one list, so every place either has a stop gets one, its colour and
+ * alpha each read off its own ramp there. Photoshop's other styles (angle,
+ * reflected, diamond) and noise gradients have nothing to become, and fall
+ * back to an image.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._psr_gradientShape = function (ctx, lyr) {
+  var box = LazyLord._psr_box(lyr);
+  if (!box || !(box.width > 0 && box.height > 0)) return null;
+  var name = lyr.name || "Gradient";
+
+  var g = LazyLord._psr_gradientFill(ctx, lyr, box, name);
+  if (!g) return null;
+
+  var ops = [];
+  var subpaths = LazyLord._psr_maskPaths(ctx, lyr, box.x, box.y, ops);
+  var boxed = !subpaths || !subpaths.length;
+  if (boxed) subpaths = [LazyLord._psr_rectPath(box.width, box.height)];
+
+  var frame = LazyLord._psr_frame(lyr, box);
+  var w = box.width, h = box.height;
+  function norm(pt) { return { x: (pt[0] - box.x) / w, y: (pt[1] - box.y) / h }; }
+
+  if (LazyLord._psr_hasStyles(lyr)) {
+    LazyLord.warn(name, "Its layer style (shadows, glows, Layer Style strokes) is not transferred", "skipped");
+  }
+  var out = {
+    id: LazyLord._psr_id(ctx, lyr),
+    name: name,
+    type: "vector",
+    frame: frame,
+    subpaths: subpaths,
+    fills: [{ type: g.type, stops: g.stops, from: norm(g.from), to: norm(g.to) }],
+    strokes: [],
+    windingRule: boxed ? "nonzero" : LazyLord._psr_winding(subpaths, ops, name)
+  };
+  if (boxed) out.primitive = { kind: "rect", x: 0, y: 0, width: w, height: h };
+  return out;
+};
+
+/** A closed rectangle w x h at the local origin. */
+LazyLord._psr_rectPath = function (w, h) {
+  return {
+    closed: true,
+    vertices: [[0, 0], [w, 0], [w, h], [0, h]],
+    inTangents: [[0, 0], [0, 0], [0, 0], [0, 0]],
+    outTangents: [[0, 0], [0, 0], [0, 0], [0, 0]]
+  };
+};
+
+/**
+ * The gradient of a gradient fill layer, in document space:
+ *   { type, stops, from: [x, y], to: [x, y] }
+ * or null when it cannot be read or rebuilt (the caller rasterises).
+ */
+LazyLord._psr_gradientFill = function (ctx, lyr, box, name) {
+  var cid = LazyLord._ps_cid, sid = LazyLord._ps_sid;
+  var adj, grad;
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(cid("Lyr "), lyr.id);
+    var desc = executeActionGet(ref);
+    if (!desc.hasKey(sid("adjustment"))) return null;
+    adj = desc.getList(sid("adjustment")).getObjectValue(0);
+    if (!adj.hasKey(cid("Grad"))) return null;
+    grad = adj.getObjectValue(cid("Grad"));
+  } catch (e) {
+    return null;
+  }
+
+  var style = "Lnr ";
+  try { if (adj.hasKey(cid("Type"))) style = typeIDToCharID(adj.getEnumerationValue(cid("Type"))); } catch (eT) {}
+  if (style !== "Lnr " && style !== "Rdl ") {
+    LazyLord.warn(name, "Angle, reflected and diamond gradients have no equivalent elsewhere", "rasterized");
+    return null;
+  }
+  if (!grad.hasKey(cid("Clrs")) || !grad.hasKey(cid("Trns"))) {
+    LazyLord.warn(name, "A noise gradient has no colour stops to send", "rasterized");
+    return null;
+  }
+
+  var colours = LazyLord._psr_colourStops(grad.getList(cid("Clrs")), name);
+  var alphas = LazyLord._psr_alphaStops(grad.getList(cid("Trns")));
+  if (!colours || !colours.length || !alphas || !alphas.length) return null;
+  if (colours.oddMidpoint || alphas.oddMidpoint) {
+    LazyLord.warn(name, "Its gradient's midpoints are moved off centre, which the transfer does not carry; each blend is sent evenly", "approximated");
+  }
+  var radial = style === "Rdl ";
+  var stops = LazyLord._psr_mergeStops(colours, alphas);
+
+  function num(key, fallback) {
+    try { return adj.hasKey(cid(key)) ? adj.getUnitDoubleValue(cid(key)) : fallback; } catch (e) { return fallback; }
+  }
+  var angle = num("Angl", 90);
+  var scale = num("Scl ", 100);
+  var reverse = false, align = true;
+  try { if (adj.hasKey(cid("Rvrs"))) reverse = adj.getBoolean(cid("Rvrs")) === true; } catch (eR) {}
+  try { if (adj.hasKey(cid("Algn"))) align = adj.getBoolean(cid("Algn")) !== false; } catch (eA) {}
+  var ox = 0, oy = 0;
+  try {
+    if (adj.hasKey(cid("Ofst"))) {
+      var of = adj.getObjectValue(cid("Ofst"));
+      ox = of.getUnitDoubleValue(cid("Hrzn"));
+      oy = of.getUnitDoubleValue(cid("Vrtc"));
+    }
+  } catch (eO) {}
+
+  // Not aligned with the layer: measured against the whole canvas instead.
+  var ref2 = align ? box : { x: 0, y: 0, width: LazyLord._pv(ctx.doc.width), height: LazyLord._pv(ctx.doc.height) };
+  var w = ref2.width, h = ref2.height;
+  var cx = ref2.x + w / 2 + ox / 100 * w;
+  var cy = ref2.y + h / 2 + oy / 100 * h;
+  var a = angle * Math.PI / 180;
+  // Photoshop angles turn counter-clockwise on screen; the IR is y-down.
+  var ux = Math.cos(a), uy = -Math.sin(a);
+  var r = LazyLord._ps_edgeReach(w / 2, h / 2, ux, uy) * scale / 100;
+
+  var from, to;
+  if (radial) {
+    from = [cx, cy];
+    to = [cx + ux * r, cy + uy * r];
+    if (reverse) {
+      for (var i = 0; i < stops.length; i++) stops[i].position = 1 - stops[i].position;
+      stops.reverse();
+    }
+  } else {
+    from = [cx - ux * r, cy - uy * r];
+    to = [cx + ux * r, cy + uy * r];
+    if (reverse) { var t = from; from = to; to = t; }
+  }
+  return { type: radial ? "radial-gradient" : "linear-gradient", stops: stops, from: from, to: to };
+};
+
+/** Colour stops as [{ at 0..1, color }], sorted; null when a colour cannot be read. */
+LazyLord._psr_colourStops = function (list, name) {
+  var cid = LazyLord._ps_cid;
+  var out = [];
+  for (var i = 0; i < list.count; i++) {
+    var s = list.getObjectValue(i);
+    var at = Math.max(0, Math.min(1, s.getInteger(cid("Lctn")) / 4096));
+    var mid = s.hasKey(cid("Mdpn")) ? s.getInteger(cid("Mdpn")) : 50;
+    if (mid !== 50) out.oddMidpoint = true;
+
+    var kind = "UsrS";
+    try { if (s.hasKey(cid("Type"))) kind = typeIDToCharID(s.getEnumerationValue(cid("Type"))); } catch (eK) {}
+    var c = null;
+    if (kind === "FrgC" || kind === "BckC") {
+      try {
+        var sc = kind === "FrgC" ? app.foregroundColor : app.backgroundColor;
+        c = { r: sc.rgb.red / 255, g: sc.rgb.green / 255, b: sc.rgb.blue / 255 };
+        LazyLord.warn(name, "A gradient stop follows the " + (kind === "FrgC" ? "foreground" : "background") +
+          " colour, which is sent as it is set now", "approximated");
+      } catch (eFB) { c = null; }
+    } else if (s.hasKey(cid("Clr "))) {
+      c = LazyLord._psr_readColour(s.getObjectValue(cid("Clr ")));
+    }
+    if (!c) {
+      LazyLord.warn(name, "A gradient stop's colour is not RGB or grey, so the layer is sent as an image", "rasterized");
+      return null;
+    }
+    out.push({ at: at, color: c });
+  }
+  out.sort(function (x, y) { return x.at - y.at; });
+  return out;
+};
+
+/** Transparency stops as [{ at 0..1, alpha 0..1 }], sorted. */
+LazyLord._psr_alphaStops = function (list) {
+  var cid = LazyLord._ps_cid;
+  var out = [];
+  for (var i = 0; i < list.count; i++) {
+    var s = list.getObjectValue(i);
+    var mid = s.hasKey(cid("Mdpn")) ? s.getInteger(cid("Mdpn")) : 50;
+    if (mid !== 50) out.oddMidpoint = true;
+    out.push({
+      at: Math.max(0, Math.min(1, s.getInteger(cid("Lctn")) / 4096)),
+      alpha: Math.max(0, Math.min(1, s.getUnitDoubleValue(cid("Opct")) / 100))
+    });
+  }
+  out.sort(function (x, y) { return x.at - y.at; });
+  return out;
+};
+
+/** An RGB or greyscale colour descriptor as 0..1 { r, g, b }, else null. */
+LazyLord._psr_readColour = function (d) {
+  var cid = LazyLord._ps_cid;
+  try {
+    if (d.hasKey(cid("Rd  "))) {
+      return { r: d.getDouble(cid("Rd  ")) / 255, g: d.getDouble(cid("Grn ")) / 255, b: d.getDouble(cid("Bl  ")) / 255 };
+    }
+    if (d.hasKey(cid("Gry "))) {
+      var v = 1 - d.getDouble(cid("Gry ")) / 100; // grey is ink, 0% white
+      return { r: v, g: v, b: v };
+    }
+  } catch (e) {}
+  return null;
+};
+
+/** A ramp's value at `at`, linear between its neighbours, held flat beyond its ends. */
+LazyLord._psr_rampAt = function (ramp, at, get) {
+  if (at <= ramp[0].at) return get(ramp[0]);
+  var last = ramp[ramp.length - 1];
+  if (at >= last.at) return get(last);
+  for (var i = 1; i < ramp.length; i++) {
+    if (at <= ramp[i].at) {
+      var a = ramp[i - 1], b = ramp[i];
+      var t = b.at > a.at ? (at - a.at) / (b.at - a.at) : 0;
+      var va = get(a), vb = get(b);
+      if (typeof va === "number") return va + (vb - va) * t;
+      return { r: va.r + (vb.r - va.r) * t, g: va.g + (vb.g - va.g) * t, b: va.b + (vb.b - va.b) * t };
+    }
+  }
+  return get(last);
+};
+
+/** One stop list at every place either ramp has a stop. */
+LazyLord._psr_mergeStops = function (colours, alphas) {
+  var at = [], seen = {};
+  function add(v) {
+    var k = Math.round(v * 4096);
+    if (!seen[k]) { seen[k] = true; at.push(k / 4096); }
+  }
+  var i;
+  for (i = 0; i < colours.length; i++) add(colours[i].at);
+  for (i = 0; i < alphas.length; i++) add(alphas[i].at);
+  at.sort(function (x, y) { return x - y; });
+
+  var stops = [];
+  for (i = 0; i < at.length; i++) {
+    var c = LazyLord._psr_rampAt(colours, at[i], function (s) { return s.color; });
+    var alpha = LazyLord._psr_rampAt(alphas, at[i], function (s) { return s.alpha; });
+    stops.push({ position: at[i], color: { r: c.r, g: c.g, b: c.b, a: alpha } });
+  }
+  return stops;
 };
 
 /* -------------------------------------------------------------------------

@@ -1087,6 +1087,30 @@ ok("startup: default transfer options are Split + Flatten", posted.some((m) => m
   ok("component: the main component names itself", gMain && gMain.component && gMain.component.id === main.id, JSON.stringify(doc2 && doc2.tree));
 }
 
+// Layers the user marked go as one image each.
+{
+  const data = {};
+  const kid = rectNode(40, 40, T(0, 10, 10));
+  const card = mk("FRAME", { name: "Card", width: 100, height: 60, fillGeometry: rectPath(100, 60), cornerRadius: 0, children: [kid],
+    getPluginData: (k) => data[k] || "", setPluginData: (k, v) => { data[k] = v; } });
+  scene([card]);
+  page.selection = [card];
+  posted.length = 0;
+  await figma.ui.onmessage({ type: "raster", on: true });
+  const sel = posted.find((m) => m.type === "selection");
+  ok("raster: the mark is saved on the node, and the UI hears of it", data["lazylord.raster"] === "1" && sel && sel.count === 1 && sel.raster === 1,
+    JSON.stringify(sel));
+  const doc = await docFor([card]);
+  ok("raster: a marked frame goes as one image, and that is no fallback",
+    doc && doc.layers.length === 1 && doc.layers[0].type === "image" && doc.layers[0].id === card.id && !(doc.diagnostics || []).length,
+    JSON.stringify(doc && doc.layers.map((l) => l.type)));
+  page.selection = [card];
+  await figma.ui.onmessage({ type: "raster", on: false });
+  const doc2 = await docFor([card]);
+  ok("raster: cleared, it goes as layers again", data["lazylord.raster"] === "" && doc2 && doc2.layers.every((l) => l.type === "vector"),
+    JSON.stringify(doc2 && doc2.layers.map((l) => l.type)));
+}
+
 // Nested clipping frames.
 {
   const child = rectNode(100, 50, T(0, 150, 10)); // reaches past the intersection's right edge (200)
@@ -2028,6 +2052,20 @@ await block("ui, no panel yet", async () => {
   ws.onclose();
   ok("no bridge: a browser user is told to allow the connection", /In a browser, allow Figma/.test(ui.$("#peers").textContent),
      ui.$("#peers").textContent);
+});
+
+// The "send as images" box follows the selection and marks it.
+await block("ui, send as images", async () => {
+  const ui = await loadUi();
+  const box = ui.$("#raster");
+  ok("raster ui: off with nothing selected", box && box.disabled === true);
+  ui.fromPlugin({ type: "selection", count: 2, raster: 1 });
+  ok("raster ui: half-checked when some of the selection is marked", box.disabled === false && box.checked === false && box.indeterminate === true);
+  box.checked = true;
+  box.fire("change");
+  ok("raster ui: ticking it asks the plugin to mark the selection", ui.toPlugin.some((m) => m.type === "raster" && m.on === true));
+  ui.fromPlugin({ type: "selection", count: 2, raster: 2 });
+  ok("raster ui: checked when all of it is", box.checked === true && box.indeterminate === false);
 });
 
 // Live sync, the UI half: every export sent as an update of only what changed.

@@ -82,9 +82,25 @@ figma.showUI(__html__, { width: DEFAULT_SIZE.width, height: DEFAULT_SIZE.height,
 // Selection tracking
 // ---------------------------------------------------------------------------
 
+/**
+ * Plugin data on a node the user asked to send as one image, "1" when set.
+ * It is saved with the file, so the choice holds for every later send.
+ */
+const RASTER_KEY = "lazylord.raster";
+
+function wantsImage(node: SceneNode): boolean {
+  try {
+    const any = node as any;
+    return typeof any.getPluginData === "function" && any.getPluginData(RASTER_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 function postSelection() {
-  const count = figma.currentPage.selection.length;
-  figma.ui.postMessage({ type: "selection", count });
+  const selection = figma.currentPage.selection;
+  const raster = selection.filter(wantsImage).length;
+  figma.ui.postMessage({ type: "selection", count: selection.length, raster });
 }
 
 figma.on("selectionchange", postSelection);
@@ -313,6 +329,17 @@ function stopLive(why: string) {
 }
 
 figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
+  if (msg.type === "raster") {
+    for (const node of figma.currentPage.selection) {
+      try {
+        node.setPluginData(RASTER_KEY, msg.on ? "1" : "");
+      } catch {
+        // A node in a library instance can refuse; it simply stays as it was.
+      }
+    }
+    postSelection();
+    return;
+  }
   if (msg.type === "export") {
     try {
       const asked = cleanPrefs({ scale: msg.scale, place: msg.place });
@@ -608,6 +635,13 @@ async function collectNode(node: SceneNode, ctx: Ctx, out: Layer[]): Promise<voi
   if (node.visible === false) return;
   if (node.type === "SLICE") return; // an export region, not artwork
   if (ctx.clip && ctx.clip.empty) return; // clipped away entirely
+
+  // Marked to go as a picture: sent exactly as it looks, whatever it holds.
+  if (wantsImage(node)) {
+    const layer = await nodeToImage(node, ctx);
+    if (layer) out.push(layer);
+    return;
+  }
 
 
   if (CONTAINER_TYPES.has(node.type)) {

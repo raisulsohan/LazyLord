@@ -41,6 +41,7 @@ const conflictOpt = $("#conflict-opt");
 const onlyChangedEl = $<HTMLInputElement>("#only-changed");
 const onlyChangedOpt = $("#only-changed-opt");
 const guidesEl = $<HTMLInputElement>("#guides");
+const rasterEl = $<HTMLInputElement>("#raster");
 const swatchesEl = $<HTMLInputElement>("#swatches");
 const optsHint = $("#opts-hint");
 const placeSel = $<HTMLSelectElement>("#place");
@@ -603,6 +604,20 @@ scalesEl.addEventListener("click", (e) => {
   savePrefs();
 });
 
+/** Checked when every selected layer goes as an image, half-checked when some do. */
+function renderRaster(marked: number) {
+  if (!rasterEl) return;
+  rasterEl.disabled = selectionCount === 0;
+  rasterEl.checked = selectionCount > 0 && marked >= selectionCount;
+  rasterEl.indeterminate = marked > 0 && marked < selectionCount;
+}
+
+if (rasterEl) {
+  rasterEl.addEventListener("change", () => {
+    parent.postMessage({ pluginMessage: { type: "raster", on: rasterEl.checked } }, "*");
+  });
+}
+
 for (const box of [guidesEl, swatchesEl, onlyChangedEl]) {
   if (!box) continue;
   box.addEventListener("change", () => {
@@ -640,6 +655,7 @@ window.onmessage = (event: MessageEvent) => {
   if (!msg) return;
   if (msg.type === "selection") {
     selectionCount = msg.count;
+    renderRaster(Number(msg.raster) || 0);
     updateSendButton();
   } else if (msg.type === "presets") {
     presets = (Array.isArray(msg.list) ? msg.list : []).filter((p: any) => p && typeof p.name === "string" && p.values);

@@ -67,8 +67,8 @@ uploaded, no account is needed, and it keeps working offline.
 2. **Unzip it** — right-click → *Extract All* on Windows, double-click on macOS.
    Do not run anything from inside the zip itself.
 3. **Close** Photoshop, Illustrator and After Effects.
-4. Run **`Install LazyLord.bat`** (macOS: **`Install LazyLord (macOS).command`** —
-   if macOS refuses to open it, right-click it and choose *Open*).
+4. Run **`1 - Install LazyLord.bat`** (macOS: **`1 - Install LazyLord (macOS).command`**
+   — if macOS refuses to open it, right-click it and choose *Open*).
 5. Start an Adobe app and open the panel:
 
    | | |
@@ -85,12 +85,15 @@ That is the whole install. The dot in the panel turns green when it is ready.
 
 ### 2. The Figma plugin — only if you use Figma
 
-Figma does not let an installer add a plugin, so this part is by hand, once:
+Figma does not let any installer add a plugin, so the last three clicks are
+yours. **`2 - Add the Figma plugin.bat`** (macOS: the matching `.command`) does
+everything up to them: it copies the plugin somewhere permanent and puts the one
+path you need on the clipboard. Then:
 
-1. Open the Figma **desktop app**.
+1. Open the Figma **desktop app** — a browser tab cannot reach your computer.
 2. **Menu → Plugins → Development → Import plugin from manifest…**
-3. Choose **`Figma plugin/manifest.json`** from the folder you unzipped.
-   Keep that folder where it is — Figma reads it from there each time.
+3. In the file window, paste the copied path (**Ctrl+V**, or **Cmd+Shift+G**
+   then **Cmd+V** on macOS) and press Enter.
 4. Run it from **Plugins → Development → LazyLord**.
 
 Figma asks whether the plugin may talk to `ws://localhost:7878`. That address is
@@ -102,7 +105,7 @@ Download the new zip and run the installer again. It replaces the old panel.
 
 ### Removing it
 
-Run **`Uninstall LazyLord.bat`** (macOS: delete
+Run **`Uninstall LazyLord.bat`** from the download (macOS: delete
 `~/Library/Application Support/Adobe/CEP/extensions/com.lazylord.panel`).
 In Figma: **Plugins → Development → Manage plugins in development → remove**.
 

@@ -174,7 +174,8 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
-           "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last", "author"];
+           "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last", "author",
+           "image-folder-row", "image-folder", "image-folder-choose", "image-folder-reset"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
@@ -183,7 +184,7 @@ var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "diag-list": "ul", "push-options": "details", "log-card": "details",
              "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
-             "push-destination": "select" };
+             "push-destination": "select", "image-folder-choose": "button", "image-folder-reset": "button" };
 
 /** Fill a mock chip row the way index.html does, with one chip active. */
 function addChips(row, key, values, active) {
@@ -256,6 +257,8 @@ function boot(appName, storage) {
     els["auto"].checked = true; // index.html default
     els["push-only-changed"].checked = true; // index.html default
     els["push-card"].hidden = true;
+    els["image-folder-row"].hidden = true; // index.html default
+    els["image-folder-reset"].hidden = true;
     els["diag-card"].hidden = true;
     addOptions(els["push-layout"], LAYOUT_VALUES);
     addOptions(els["push-hierarchy"], HIERARCHY_VALUES);
@@ -1964,6 +1967,44 @@ run("presets", function () {
     els["push-preset-delete"].fire("click");
     ok("presets: deleted", JSON.parse(store.getItem("lazylord.presets.illustrator")).length === 0 &&
        els["push-preset"].children.length === 1 && els["push-preset-delete"].disabled === true);
+});
+
+// Where After Effects keeps received images: the panel's own choice.
+run("image folder", function () {
+    var st = new MemoryStorage();
+    var sock = boot("AEFT", st);
+    ok("image folder: offered in After Effects, beside the project by default",
+       els["image-folder-row"].hidden === false && /beside the project/.test(els["image-folder"].textContent), els["image-folder"].textContent);
+    els["image-folder-choose"].fire("click");
+    var call = lastEval();
+    ok("image folder: After Effects is asked for a folder", has(call.script, "LazyLord.chooseFolder("), call.script);
+    call.cb(JSON.stringify({ path: "D:\\Renders\\Assets" }));
+    var saved = JSON.parse(st.getItem("lazylord.prefs.aftereffects"));
+    ok("image folder: shown and kept", has(els["image-folder"].textContent, "D:\\Renders\\Assets") &&
+       els["image-folder-reset"].hidden === false && saved.imageFolder === "D:\\Renders\\Assets", st.getItem("lazylord.prefs.aftereffects"));
+
+    var d = figmaDoc();
+    d.options = { imageFolder: "C:\\elsewhere" };
+    deliver(sock, { type: "transfer", id: "t-img", document: d });
+    var ir = irFile();
+    var built = ir ? JSON.parse(ir.file.data) : null;
+    ok("image folder: reaches the builder as this panel's choice, not the sender's",
+       built && built.options && built.options.imageFolder === "D:\\Renders\\Assets", ir && ir.file.data.slice(0, 200));
+
+    els["image-folder-reset"].fire("click");
+    ok("image folder: back to the default", /beside the project/.test(els["image-folder"].textContent) &&
+       els["image-folder-reset"].hidden === true && JSON.parse(st.getItem("lazylord.prefs.aftereffects")).imageFolder === "");
+});
+
+run("image folder elsewhere", function () {
+    var sock = boot("ILST", new MemoryStorage());
+    ok("image folder: not offered where images are embedded", els["image-folder-row"].hidden === true);
+    var d = figmaDoc();
+    d.options = { imageFolder: "C:\\elsewhere" };
+    deliver(sock, { type: "transfer", id: "t-img2", document: d });
+    var ir = irFile();
+    var built = ir ? JSON.parse(ir.file.data) : null;
+    ok("image folder: a sender cannot set it", built && (!built.options || built.options.imageFolder === undefined));
 });
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

@@ -53,7 +53,7 @@ LazyLord.build = function (doc) {
     ctx = {
       doc: doc,
       comp: LazyLord._ae_comp(doc),
-      assets: LazyLord._ae_assetContext(),
+      assets: LazyLord._ae_assetContext(doc),
       groups: opts.hierarchy === "groups",
       precomps: opts.hierarchy === "precomps",
       precompCount: 0,
@@ -2397,11 +2397,25 @@ LazyLord._ae_text = function (comp, layer) {
 LazyLord._ae_ASSET_FOLDER = "LazyLord Assets";
 
 /**
- * Where generated images are kept for this transfer: a folder next to the
- * saved project, or null while the project is unsaved.
+ * Where generated images are kept for this transfer: the folder chosen in the
+ * panel (options.imageFolder), else a folder next to the saved project, or
+ * null while the project is unsaved.
  */
-LazyLord._ae_assetContext = function () {
-  var ctx = { dir: null, noted: false };
+LazyLord._ae_assetContext = function (doc) {
+  var ctx = { dir: null, noted: false, chosen: false };
+  var chosen = doc && doc.options && typeof doc.options.imageFolder === "string" ? doc.options.imageFolder : "";
+  if (chosen) {
+    try {
+      var folder = new Folder(chosen);
+      if (folder.exists || folder.create()) {
+        ctx.dir = folder.fsName;
+        ctx.chosen = true;
+        return ctx;
+      }
+    } catch (eC) {}
+    LazyLord.warn("Project", "The image folder chosen in the LazyLord panel (" + chosen + ") could not be used, " +
+      "so images are kept beside the project instead", "approximated");
+  }
   try {
     var f = app.project.file;
     if (f) ctx.dir = LazyLord.join(f.parent.fsName, LazyLord._ae_ASSET_FOLDER);
@@ -2448,7 +2462,7 @@ LazyLord._ae_assetFile = function (assets, layer, path) {
       assets.noted = true;
       LazyLord.warn("Project", "The project has not been saved, so generated images are linked from the temporary folder " +
         "and go missing once LazyLord clears it (after a week). Save the project and later transfers copy them into a '" +
-        LazyLord._ae_ASSET_FOLDER + "' folder beside it.", "approximated");
+        LazyLord._ae_ASSET_FOLDER + "' folder beside it, or choose a folder for images in the LazyLord panel.", "approximated");
     }
     return path;
   }
@@ -2460,8 +2474,9 @@ LazyLord._ae_assetFile = function (assets, layer, path) {
     if (!new File(path).copy(target)) throw new Error("the file could not be copied");
     return new File(target).fsName;
   } catch (e) {
-    LazyLord.warn(layer.name || "Image", "Could not copy the generated image into '" + LazyLord._ae_ASSET_FOLDER +
-      "' (" + ((e && e.message) || String(e)) + "), so it is linked from the temporary folder", "approximated");
+    LazyLord.warn(layer.name || "Image", "Could not copy the generated image into " +
+      (assets.chosen ? "the chosen image folder" : "'" + LazyLord._ae_ASSET_FOLDER + "'") +
+      " (" + ((e && e.message) || String(e)) + "), so it is linked from the temporary folder", "approximated");
     return path;
   }
 };

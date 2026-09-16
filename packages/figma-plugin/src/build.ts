@@ -34,6 +34,7 @@ import { gradientTransformFromHandles, moveLayers, subPathsToSvg, transferOption
 export type BuildResult = {
   ok: boolean;
   layersCreated: number;
+  layersUpdated?: number;
   message: string;
   diagnostics: Diagnostic[];
 };
@@ -44,7 +45,176 @@ type Ctx = {
   /** Every font this transfer could actually load, by "family|style". */
   fonts: Set<string>;
   fallback: FontName;
+  /** The transfer, for the tags each built layer gets. */
+  doc?: Document;
+  /** Nodes tagged by this build, fingerprinted once it is done. */
+  seal: SceneNode[];
+  /** Set while updating (options.existing "update"). */
+  update?: {
+    index: Map<string, SceneNode>;
+    keep: boolean;
+    updated: number;
+    conflicts: number;
+    replaced: SceneNode[];
+  };
 };
+
+/*
+ * Updating what an earlier transfer built (options.existing "update"), the
+ * way After Effects and Illustrator do it. Every node a transfer builds keeps,
+ * in plugin data the user never sees and the file saves, where it came from
+ * (TAG: source app | source document | source layer id) and a fingerprint of
+ * how it was built (FP). An update finds each layer's node by its tag, and
+ * rebuilds it in the old node's place — same parent, same position in the
+ * stack — so a node the user moved into another frame or group stays there.
+ * A node whose fingerprint no longer matches was edited here since: that is a
+ * conflict, overwritten or kept as TransferOptions.conflict says, and reported
+ * either way. Frames a transfer makes are marked (ROOT), so a layer in one is
+ * placed in that frame's space, as it was built.
+ */
+const TAG = "lazylord.tag";
+const FP = "lazylord.fp";
+const ROOT = "lazylord.root";
+
+/** Strip what would end a tag field early (as LazyLord._tagSafe does). */
+function tagSafe(s: unknown): string {
+  return String(s === undefined || s === null ? "" : s).replace(/[\[\]|~]/g, "");
+}
+
+/** The identity of an IR layer: source app, document, id (as LazyLord.tagKey). */
+export function tagKey(doc: Document, layer: Layer, role?: string): string {
+  return `${tagSafe(doc.source || "unknown")}|${tagSafe(doc.sourceKey)}|${tagSafe(layer.id)}${role ? "#" + tagSafe(role) : ""}`;
+}
+
+function hashText(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36) + "." + s.length.toString(36);
+}
+
+/** How a built node stands now: what an update would overwrite. */
+export function nodePrint(node: SceneNode): string {
+  const a = node as any;
+  const r = (v: unknown) => (typeof v === "number" ? Math.round(v * 100) / 100 : v === figma.mixed ? "mixed" : v);
+  const json = (v: unknown) => {
+    try { return v === figma.mixed ? "mixed" : JSON.stringify(v); } catch { return "?"; }
+  };
+  return hashText(JSON.stringify([
+    node.type, r(a.x), r(a.y), r(a.width), r(a.height), r(a.rotation), r(a.opacity), a.blendMode, a.visible,
+    json(a.fills), json(a.strokes), r(a.strokeWeight), json(a.effects),
+    a.vectorPaths ? a.vectorPaths.map((p: { data: string }) => p.data).join("|") : null,
+    typeof a.characters === "string" ? a.characters : null, r(a.fontSize), json(a.fontName),
+  ]));
+}
+
+/** Tagged nodes on the current page, tag -> node; the lower one wins (a duplicate lands above its original). */
+function indexTagged(): Map<string, SceneNode> {
+  const index = new Map<string, SceneNode>();
+  let nodes: SceneNode[] = [];
+  try {
+    nodes = (figma.currentPage as any).findAllWithCriteria({ pluginData: { keys: [TAG] } });
+  } catch {
+    try { nodes = figma.currentPage.findAll((n) => !!n.getPluginData(TAG)); } catch { /* nothing tagged */ }
+  }
+  for (const n of nodes) {
+    const key = n.getPluginData(TAG);
+    if (key && !index.has(key)) index.set(key, n);
+  }
+  return index;
+}
+
+/** The frame a transfer made that holds `node`, or the page. */
+function lazyRoot(node: SceneNode): BaseNode & ChildrenMixin {
+  let p: BaseNode | null = node.parent;
+  while (p && p.type !== "PAGE") {
+    if (p.type === "FRAME" && (p as FrameNode).getPluginData(ROOT)) return p as FrameNode;
+    p = p.parent;
+  }
+  return figma.currentPage;
+}
+
+/** Leaves with each group's opacity multiplied in: an update edits layers where they stand. */
+function flattenLeaves(list: ReadonlyArray<Layer>, fade = 1, out: Layer[] = []): Layer[] {
+  for (const l of list || []) {
+    if (!l) continue;
+    if (l.type === "group") {
+      flattenLeaves(l.children || [], fade * (typeof l.frame.opacity === "number" ? l.frame.opacity : 1), out);
+    } else {
+      const own = typeof l.frame.opacity === "number" ? l.frame.opacity : 1;
+      out.push(fade < 1 ? ({ ...l, frame: { ...l.frame, opacity: own * fade } } as Layer) : l);
+    }
+  }
+  return out;
+}
+
+/** 2x3 affine product and inverse, for keeping a node where it shows when it changes parent. */
+type M = [[number, number, number], [number, number, number]];
+function mul(a: M, b: M): M {
+  return [
+    [a[0][0] * b[0][0] + a[0][1] * b[1][0], a[0][0] * b[0][1] + a[0][1] * b[1][1], a[0][0] * b[0][2] + a[0][1] * b[1][2] + a[0][2]],
+    [a[1][0] * b[0][0] + a[1][1] * b[1][0], a[1][0] * b[0][1] + a[1][1] * b[1][1], a[1][0] * b[0][2] + a[1][1] * b[1][2] + a[1][2]],
+  ];
+}
+function inv(m: M): M | null {
+  const det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  if (!det) return null;
+  const a = m[1][1] / det, b = -m[0][1] / det, c = -m[1][0] / det, d = m[0][0] / det;
+  return [[a, b, -(a * m[0][2] + b * m[1][2])], [c, d, -(c * m[0][2] + d * m[1][2])]];
+}
+
+/**
+ * Update the node an earlier transfer built from `layer`. True when there was
+ * one (updated, kept as the user edited it, or reported), false to add it.
+ */
+async function updateLeaf(layer: Layer, ctx: Ctx): Promise<boolean> {
+  const up = ctx.update!;
+  const old = up.index.get(tagKey(ctx.doc!, layer));
+  if (!old || old.removed) return false;
+  const parent = old.parent as (BaseNode & ChildrenMixin) | null;
+  if (!parent) return false;
+  const name = layer.name || "Layer";
+
+  const fp = old.getPluginData(FP);
+  if (fp && fp !== nodePrint(old)) {
+    up.conflicts++;
+    if (up.keep) {
+      warn(ctx, name, "Was changed in Figma since it was last sent, so it was left as you made it (On conflict: Keep my edits)", "skipped");
+      return true;
+    }
+    warn(ctx, name, "Was changed in Figma since it was last sent; the update replaced it, and those changes with it", "approximated");
+  }
+
+  // Built where the first transfer put it — in its frame's space when that
+  // frame was the transfer's own — then moved into the old node's place.
+  const root = lazyRoot(old);
+  let leaf = layer;
+  if (root.type === "FRAME" && ctx.doc!.originSpace === "document" && ctx.doc!.canvas && ctx.doc!.bounds) {
+    leaf = JSON.parse(JSON.stringify(layer));
+    moveLayers([leaf], ctx.doc!.bounds.x || 0, ctx.doc!.bounds.y || 0);
+  }
+  const created = ctx.created;
+  const node = await buildLayer(leaf, ctx, root);
+  ctx.created = created; // an update, not a new layer
+  if (!node) return true; // reported by buildLayer; the old node stays
+
+  let rel: M | null = null;
+  if (parent !== root) {
+    try {
+      const pInv = inv((parent as any).absoluteTransform as M);
+      if (pInv) rel = mul(pInv, (node as any).absoluteTransform as M);
+    } catch { /* keeps its values relative to the new parent */ }
+  }
+  try {
+    parent.insertChild(Math.max(0, parent.children.indexOf(old)), node);
+    if (rel) (node as any).relativeTransform = rel;
+    old.remove();
+  } catch (e) {
+    warn(ctx, name, `The new version could not take the old one's place (${message(e)}), so both are on the page`, "approximated");
+  }
+  up.updated++;
+  up.replaced.push(node);
+  return true;
+}
 
 const FALLBACK_FONT: FontName = { family: "Inter", style: "Regular" };
 
@@ -57,7 +227,7 @@ function warn(ctx: Ctx, object: string, reason: string, resolution: Diagnostic["
 // ---------------------------------------------------------------------------
 
 export async function buildDocument(doc: Document): Promise<BuildResult> {
-  const ctx: Ctx = { diagnostics: [], created: 0, fonts: new Set(), fallback: FALLBACK_FONT };
+  const ctx: Ctx = { diagnostics: [], created: 0, fonts: new Set(), fallback: FALLBACK_FONT, doc, seal: [] };
 
   try {
     await loadFonts(doc, ctx);
@@ -66,12 +236,18 @@ export async function buildDocument(doc: Document): Promise<BuildResult> {
   }
 
   const opts = transferOptions(doc);
-  const layers = doc.layers || [];
+  let layers = doc.layers || [];
+  // Updating needs somewhere to update, so it never makes a frame.
+  const updating = opts.existing === "update";
+  if (updating) {
+    ctx.update = { index: indexTagged(), keep: opts.conflict === "keep", updated: 0, conflicts: 0, replaced: [] };
+    layers = flattenLeaves(layers);
+  }
 
   // Where the transfer lands: a frame of its own, or straight onto the page.
   let parent: BaseNode & ChildrenMixin = figma.currentPage;
   let frame: FrameNode | null = null;
-  if (opts.destination === "new") {
+  if (opts.destination === "new" && !updating) {
     frame = makeFrame(doc);
     parent = frame;
     // A frame the size of the source page: the artwork goes where it sat on
@@ -79,7 +255,28 @@ export async function buildDocument(doc: Document): Promise<BuildResult> {
     if (doc.originSpace === "document" && doc.canvas && doc.bounds) moveLayers(layers, doc.bounds.x || 0, doc.bounds.y || 0);
   }
 
-  const made = await buildList(layers, ctx, parent);
+  // Updating: each layer an earlier transfer built is rebuilt in its place;
+  // the rest are added as usual.
+  let toAdd: ReadonlyArray<Layer> = layers;
+  if (ctx.update) {
+    const rest: Layer[] = [];
+    for (const leaf of layers) {
+      let done = false;
+      try {
+        done = await updateLeaf(leaf, ctx);
+      } catch (e) {
+        warn(ctx, leaf.name, `Could not be updated (${message(e)}), so it was left as it was`, "skipped");
+        done = true;
+      }
+      if (!done) rest.push(leaf);
+    }
+    toAdd = rest;
+  }
+  const made = await buildList(toAdd, ctx, parent);
+  // Fingerprints last, once every node stands where it will stay.
+  for (const n of ctx.seal) {
+    try { if (!n.removed) n.setPluginData(FP, nodePrint(n)); } catch { /* not tagged, then */ }
+  }
 
   if (frame) {
     placeFrame(frame, doc);
@@ -88,19 +285,33 @@ export async function buildDocument(doc: Document): Promise<BuildResult> {
   addGuides(doc, opts, frame, ctx);
   if (opts.swatches && doc.swatches && doc.swatches.length) await addSwatches(doc.swatches, ctx);
 
-  if (made.length === 0 && !frame) {
+  const up = ctx.update;
+  if (made.length === 0 && !frame && !(up && (up.updated || up.conflicts))) {
     return { ok: false, layersCreated: 0, message: "Nothing in the transfer could be rebuilt.", diagnostics: ctx.diagnostics };
   }
 
   // Select and reveal what arrived, so it is not lost somewhere on the page.
-  const selection = frame ? [frame] : made;
-  figma.currentPage.selection = selection;
-  figma.viewport.scrollAndZoomIntoView(selection);
+  const selection = frame ? [frame] : made.concat(up ? up.replaced : []);
+  if (selection.length) {
+    figma.currentPage.selection = selection;
+    figma.viewport.scrollAndZoomIntoView(selection);
+  }
 
+  const notes: string[] = [];
+  if (frame) notes.push(`Built into a new frame, "${frame.name}".`);
+  if (up) {
+    if (up.conflicts) {
+      notes.push(`${up.conflicts} layer${up.conflicts === 1 ? " was" : "s were"} changed here since the last send: ` +
+        (up.keep ? "left as you made them." : "your changes were replaced."));
+    }
+    if (up.updated) notes.push(`Updated ${up.updated} layer${up.updated === 1 ? "" : "s"} where they stood.`);
+    else if (!(up.conflicts && up.keep)) notes.push("Nothing matched a layer from an earlier transfer, so everything was added.");
+  }
   return {
     ok: true,
     layersCreated: ctx.created,
-    message: frame ? `Built into a new frame, "${frame.name}".` : "",
+    layersUpdated: up ? up.updated : 0,
+    message: notes.join(" "),
     diagnostics: ctx.diagnostics,
   };
 }
@@ -201,6 +412,8 @@ function makeFrame(doc: Document): FrameNode {
   frame.clipsContent = true;
   // A frame is opaque by default; the transfer brings its own background.
   frame.fills = [];
+  // An update places layers found in it in its space (see updateLeaf).
+  try { frame.setPluginData(ROOT, "1"); } catch { /* then they go by the page */ }
   return frame;
 }
 
@@ -290,6 +503,13 @@ async function buildLayer(
     if (node) {
       applyBlendAndEffects(node, layer, ctx);
       if (layer.visible === false) node.visible = false;
+      // Where it came from, for the next update to find it.
+      if (layer.type !== "group" && ctx.doc) {
+        try {
+          node.setPluginData(TAG, tagKey(ctx.doc, layer));
+          ctx.seal.push(node);
+        } catch { /* it simply will not match next time */ }
+      }
     }
     return node;
   } catch (e) {

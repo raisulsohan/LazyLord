@@ -4,16 +4,15 @@
 
 LazyLord is an open, self-hostable alternative to [Battle Axe Overlord](https://battleaxe.co/overlord). Select layers anywhere, press **Send**, and they are rebuilt as **native** shape layers, path items, text layers and images in the app you sent them to — not flattened screenshots.
 
-> Status: **v0.8 — kept in step.** All four hosts both send and receive, with the same options
-> everywhere: where the transfer lands and at what size, how it is laid out, whether it adds
-> layers or updates the ones an earlier transfer built, plus blend modes and effects. v0.8 adds
-> reliability (rollback, chunking, history, presets), per-character text, AE precomps, guides
-> and swatches, PSD import, and on the update path a smart diff, conflict detection and **Live**
-> sync.
+> Status: **v0.9 — the same everywhere.** All four hosts both send and receive, with the same
+> options everywhere: where the transfer lands and at what size, how it is laid out, whether it
+> adds layers or updates the ones an earlier transfer built, plus blend modes and effects.
+> Update, conflict detection and **Live** sync now work in all four, not just After Effects and
+> Illustrator. The bridge runs inside the panel, so there is no window to keep open.
 >
 > Everything is covered by mocked-host test suites. v0.7 has been run in the real apps; **the
-> v0.8 additions have not been yet** — TESTING.md lists what to check, and host-API behaviour
-> marked *unverified* below is the first thing to look at.
+> v0.8–v0.9 additions have not been yet** — TESTING.md lists what to check, and host-API
+> behaviour marked *unverified* below is the first thing to look at.
 
 ---
 
@@ -126,7 +125,7 @@ Every app both sends and receives, so all twelve directions work:
 | **Photoshop** | ✅ | ✅ | ✅ | — |
 
 What each app can *describe* still differs — After Effects has no inner shadow, Illustrator has
-no timeline, Photoshop cannot be scripted to hold a layer tag — and every one of those gaps is
+no timeline, Photoshop's layer styles are not written — and every one of those gaps is
 reported on the transfer rather than left to be discovered. The tables under
 [What transfers](#what-transfers) say which.
 
@@ -209,6 +208,8 @@ With **Existing: Update**, the receiving app reads those tags back and edits the
 | What does not | — | Anything added to the item itself, such as an Illustrator appearance |
 | Keyframes | Animated properties take a key at the playhead rather than a static value, which is what makes re-sending an edited shape animate it | No timeline, so none |
 
+**Photoshop and Figma update the way Illustrator does**: the new version is drawn where the old one stood — same layer group or frame, same place in the stack — and the old one is removed. Their tags live where the user never sees them: in each Photoshop layer's **XMP metadata** (saved in the PSD; not the Background layer), and in each Figma node's **plugin data** (saved in the file). Both keep a fingerprint too, so a layer edited there since the last send is a conflict, as in After Effects and Illustrator. In Figma, a node moved into another frame or group is updated where it now is; only the current page is searched.
+
 Notes worth knowing:
 
 - **The first transfer always adds** — there are no tags to match yet. Send once, then switch to Update.
@@ -222,7 +223,7 @@ Notes worth knowing:
 
 - **Smart diff.** Every leaf sent is fingerprinted from its IR. After a successful send the fingerprints are kept per destination app and source document (the Adobe panels in their local storage, the Figma plugin while it is open), and an update leaves out every leaf whose fingerprint has not changed. The paths of images LazyLord generated are not part of it, since they change on every read. An update never deletes, so after deleting a layer in the destination, untick **Only what changed** once to send everything again.
 - **Conflicts.** When a build or an update finishes, After Effects and Illustrator add a fingerprint of what LazyLord wrote to the tag — `[[LazyLord figma|0:1|1:42~k3f9.2a]]` — and the next update compares it with the layer as it is now. After Effects reads the transform, outline, paint, text and footage (an animated property by its keys, a still one by its value before expressions, so neither the playhead nor an expression counts as an edit); Illustrator the geometry, points, paint, text and linked file of the items made from one layer. **On conflict** decides what happens to a layer that differs. Tags written before fingerprints never conflict and gain one on their next update.
-- **Live needs one destination that can update**: After Effects or Illustrator. Photoshop and Figma only ever add, so Live to them (or to "All apps") would pile up a copy per change, and is refused.
+- **Live needs one destination**: any single app — After Effects, Illustrator, Photoshop or Figma — but not "All apps", whose apps can each hold something different.
 - **Live.** Tick **Live — send changes as you work** under the Send button. In Figma, the objects selected at that moment are watched (the page's `nodechange` event, debounced by 600 ms) and exported again when anything inside them changes. In the Adobe panels, a cheap stamp of the selection (`LazyLord.liveStamp`: AE's selected layers and their fingerprints, Illustrator's selected items, Photoshop's history state and selected layers) is polled every 1.5 s. Each change goes as an update of only what changed, into the open document; a change made while a send is under way waits for it. Live sends are logged but kept out of the history. It stops by itself when what it watches is gone, or the bridge or destination disconnects.
 
 After every transfer the panel prints a one-line summary (layers, images — originals vs. generated — and fallbacks by kind), and lists anything that needed a fallback, naming the object and the reason, sorted skipped → rasterized → approximated.
@@ -359,12 +360,13 @@ Four independent reviews (builders, readers, panel + bridge, Figma + core) turne
 - **Effects:** blend modes travel everywhere, and After Effects rebuilds drop shadows and layer blurs; other effects, layer styles and AE path operators (Merge, Trim, Repeater…) are not transferred, and are reported.
 - A clip on a group (rather than on its layers) is not rebuilt by After Effects. No source produces one today.
 - Combining shapes in After Effects may pull a shape above its neighbours when only some shapes in a Figma clipping frame carry the clip (reported).
-- **Shape updating does not cover Photoshop.** Photoshop's DOM has no per-layer text field to hold a tag (After Effects uses a layer comment, Illustrator an item note), so a transfer *into* Photoshop always adds. Photoshop can send an update to anywhere else.
+- **Updating into Photoshop rests on layer XMP.** Photoshop layers have no comment or note, so the tag is written to each layer's XMP metadata (through AdobeXMPScript when it loads, else as a small XMP packet of its own). A pixel edit that changes neither bounds, opacity, blend, text nor fill colour is not seen as a conflict.
 - **Updating does not restructure.** Layout and Hierarchy are ignored while updating, and an Illustrator update replaces the item rather than editing it, so an appearance added to that item in Illustrator goes with it.
 - **An After Effects gradient is not updated.** Its colours are written to the underlying solid fill, but the Gradient Ramp effect is left as it was (reported). Re-send with Add for a gradient that changed.
 - **Figma cannot read a file**, so anything sent there travels as bytes rather than as a path — the panel reads the file and embeds it. A transfer that reaches Figma with only a path (from a host that could not read it) reports the image rather than dropping it silently.
 - **Photoshop can only read its selection through ActionManager.** If that call fails, only the active layer is sent, reported. Its shape layers also need both a vector mask and a readable fill colour; without either, the layer is rasterised instead.
-- **Not yet implemented:** Illustrator live effects and Photoshop layer styles; updating into Photoshop or Figma (they always add, so they have no conflicts either).
+- **Not yet implemented:** Illustrator live effects and Photoshop layer styles.
+- **Updating into Figma** searches only the current page, and does not roll a failed build back.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
 - **Not verified in real apps.** Every host-API assumption was checked against documentation and forums only. The main ones:
   - the Gradient Ramp property names and the space its points use on shape layers;
@@ -373,6 +375,7 @@ Four independent reviews (builders, readers, panel + bridge, Figma + core) turne
   - the mapping of Illustrator's `GradientColor.matrix`;
   - that `AVLayer.comment` and `PageItem.note` persist in a saved project/document and survive a round trip (the whole mapping engine rests on this), and that the values the conflict fingerprint reads back are unchanged by a save and reopen;
   - that `PageNode.on("nodechange")` fires for the edits Live watches, with the node's parents readable;
+  - that a Photoshop layer's `xmpMetadata.rawData` can be written by a script and is kept in the saved PSD;
   - that `Property.setValueAtTime` on a shape path and a Text Document behaves as the scripting guide describes, and that `numKeys` reads back as expected;
   - that Illustrator's `document.pageItems` really does reach nested items (the mocked tests only cover top-level artwork), and that `PageItem.move(..., ElementPlacement.PLACEBEFORE)` puts an item directly in front of the reference;
   - that `FootageSource.replace` relinks a layer without disturbing its transform;

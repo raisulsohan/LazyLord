@@ -54,6 +54,8 @@ export type AckMessage = {
   message?: string;
   /** Number of layers created on the host, when ok. */
   layersCreated?: number;
+  /** Number of layers an update edited (or rebuilt) in place, when ok. */
+  layersUpdated?: number;
   /** Objects the host could not rebuild natively. */
   diagnostics?: Diagnostic[];
 };

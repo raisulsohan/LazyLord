@@ -26,10 +26,18 @@ LazyLord.build = function (doc) {
   app.preferences.typeUnits = TypeUnits.PIXELS;
 
   // created: IR leaves that drew something (groups are not counted).
-  var st = { psDoc: null, created: 0, clips: { groups: [], current: null } };
+  var st = { psDoc: null, ir: doc, created: 0, clips: { groups: [], current: null }, seal: [], update: null };
   try {
     LazyLord.applyOrigin(doc);
     st.psDoc = LazyLord._ps_doc(doc);
+    if (LazyLord.wantsUpdate(doc)) {
+      var uo = LazyLord.options(doc);
+      if (uo.hierarchy !== "flatten") {
+        LazyLord.warn("Transfer", "Update puts each layer back where the old one stood, so Groups was ignored; " +
+          "send with Add to rebuild the layer groups", "approximated");
+      }
+      st.update = { index: LazyLord._ps_index(st.psDoc), keep: uo.conflict === "keep", updated: 0, conflicts: 0 };
+    }
 
     // One history step for the whole build: Undo takes it back at once, and
     // the state before it — where a failed build is rolled back to — is never
@@ -47,7 +55,21 @@ LazyLord.build = function (doc) {
     app.preferences.rulerUnits = oldRuler;
     app.preferences.typeUnits = oldType;
   }
-  return { ok: true, layersCreated: st.created, message: "" };
+  var message = "";
+  var up = st.update;
+  if (up) {
+    if (up.conflicts) {
+      message = up.conflicts + " layer" + (up.conflicts === 1 ? " was" : "s were") + " changed here since the last send: " +
+        (up.keep ? "left as you made them." : "your changes were replaced.") + " ";
+    }
+    if (up.updated) {
+      message += "Replaced " + up.updated + " layer" + (up.updated === 1 ? "" : "s") + " where they already stood.";
+    } else if (!(up.conflicts && up.keep)) {
+      message += "Nothing matched a layer from an earlier transfer, so everything was added.";
+    }
+    message = message.replace(/\s+$/, "");
+  }
+  return { ok: true, layersCreated: st.created, layersUpdated: up ? up.updated : 0, message: message };
 };
 
 /** The build itself, run by suspendHistory (or directly); errors are kept for build to throw. */
@@ -57,8 +79,14 @@ LazyLord._ps_buildBody = function () {
   job.ran = true;
   var st = job.st, doc = job.doc;
   try {
-    // Precomps are an After Effects idea: here they are plain layer groups.
-    if (LazyLord.options(doc).hierarchy !== "flatten") {
+    if (st.update) {
+      // Each layer an earlier transfer built is rebuilt in its place; the rest are added.
+      var leaves = LazyLord.flattenLayers(doc.layers || []);
+      for (var u = 0; u < leaves.length; u++) {
+        if (!LazyLord._ps_update(st, leaves[u])) LazyLord._ps_leaf(st, leaves[u], null);
+      }
+    } else if (LazyLord.options(doc).hierarchy !== "flatten") {
+      // Precomps are an After Effects idea: here they are plain layer groups.
       LazyLord._ps_buildTree(st, doc.layers || [], { set: null, name: "" });
     } else {
       LazyLord._ps_buildFlat(st, doc.layers || []);
@@ -68,6 +96,7 @@ LazyLord._ps_buildBody = function () {
     // whole run of members at once.
     for (var c = 0; c < st.clips.groups.length; c++) LazyLord._ps_clipGroup(st.psDoc, st.clips.groups[c]);
     LazyLord._ps_extras(st.psDoc, doc);
+    LazyLord._ps_seal(st);
   } catch (e) {
     job.error = e;
   }
@@ -114,6 +143,15 @@ LazyLord._ps_extras = function (psDoc, doc) {
  * for the top level), so its clip group can be made in the same set.
  */
 LazyLord._ps_leaf = function (st, layer, parentSet) {
+  var made = LazyLord._ps_make(st, layer);
+  if (!made.length) return [];
+  st.created++;
+  LazyLord._ps_noteClip(st.clips, layer, made, parentSet);
+  return made;
+};
+
+/** Draw one IR leaf, finished and tagged; the layers made, bottom to top (none when it could not be). */
+LazyLord._ps_make = function (st, layer) {
   var made = null;
   try {
     if (layer.type === "vector") made = LazyLord._ps_vector(st.psDoc, layer);
@@ -124,11 +162,211 @@ LazyLord._ps_leaf = function (st, layer, parentSet) {
     LazyLord.warn(layer.name, LazyLord._ps_msg(e), "skipped");
   }
   if (!made || !made.length) return [];
-  st.created++;
   // Blend mode and effects belong to every layer the leaf produced.
   for (var f = 0; f < made.length; f++) LazyLord._ps_finish(made[f], layer);
-  LazyLord._ps_noteClip(st.clips, layer, made, parentSet);
+  LazyLord._ps_tag(st, made, layer);
   return made;
+};
+
+/* -------------------------------------------------------------------------
+ * Updating what an earlier transfer built (options.existing "update")
+ *
+ * Photoshop's layers have no comment or note, but each one (bar the
+ * Background) carries XMP metadata that the PSD saves and the user never
+ * sees. Every layer a transfer draws keeps its tag there — source app, source
+ * document, source layer id, as After Effects and Illustrator keep it — and,
+ * once the build is done, a fingerprint of how it stands. An update finds a
+ * layer's Photoshop layers by the tag and, as Illustrator does, draws the new
+ * version where the old stood (same set, same place in the stack) and removes
+ * the old. A fingerprint that no longer matches means the layer was edited
+ * here since: a conflict, overwritten or kept as TransferOptions.conflict says.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._PS_NS = "http://lazylord.dev/ns/1.0/";
+
+/** AdobeXMPScript, loaded once; false where it cannot be (the fields are then written by hand). */
+LazyLord._ps_xmpLib = function () {
+  if (LazyLord._ps_xmpReady !== undefined) return LazyLord._ps_xmpReady;
+  try {
+    if (!ExternalObject.AdobeXMPScript) ExternalObject.AdobeXMPScript = new ExternalObject("lib:AdobeXMPScript");
+    XMPMeta.registerNamespace(LazyLord._PS_NS, "lazylord:");
+    LazyLord._ps_xmpReady = true;
+  } catch (e) {
+    LazyLord._ps_xmpReady = false;
+  }
+  return LazyLord._ps_xmpReady;
+};
+
+LazyLord._ps_xmlEsc = function (s) {
+  return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+};
+LazyLord._ps_xmlUnesc = function (s) {
+  return String(s).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\"").replace(/&amp;/g, "&");
+};
+
+/** The LazyLord fields in a layer's XMP ({ tag, fp }), or null when it has none. */
+LazyLord._ps_readMeta = function (lyr) {
+  var raw = "";
+  try { raw = String(lyr.xmpMetadata.rawData || ""); } catch (e) { return null; }
+  if (raw.indexOf("lazylord") < 0) return null;
+  if (LazyLord._ps_xmpLib()) {
+    try {
+      var meta = new XMPMeta(raw);
+      var t = meta.getProperty(LazyLord._PS_NS, "tag");
+      var f = meta.getProperty(LazyLord._PS_NS, "fp");
+      if (t) return { tag: String(t.value), fp: f ? String(f.value) : "" };
+    } catch (eX) {}
+  }
+  // Written as attributes (by hand) or as elements (by XMPMeta).
+  var tag = /lazylord:tag="([^"]*)"/.exec(raw) || /<lazylord:tag>([^<]*)<\/lazylord:tag>/.exec(raw);
+  var fp = /lazylord:fp="([^"]*)"/.exec(raw) || /<lazylord:fp>([^<]*)<\/lazylord:fp>/.exec(raw);
+  if (!tag) return null;
+  return { tag: LazyLord._ps_xmlUnesc(tag[1]), fp: fp ? LazyLord._ps_xmlUnesc(fp[1]) : "" };
+};
+
+/** Write the LazyLord fields into a layer's XMP, keeping whatever else it holds when XMPMeta can. */
+LazyLord._ps_writeMeta = function (lyr, tag, fp) {
+  try {
+    if (LazyLord._ps_xmpLib()) {
+      var meta;
+      try { meta = new XMPMeta(lyr.xmpMetadata.rawData); } catch (e0) { meta = new XMPMeta(); }
+      meta.setProperty(LazyLord._PS_NS, "tag", tag);
+      meta.setProperty(LazyLord._PS_NS, "fp", fp || "");
+      lyr.xmpMetadata.rawData = meta.serialize();
+      return true;
+    }
+    lyr.xmpMetadata.rawData = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+      '<rdf:Description rdf:about="" xmlns:lazylord="' + LazyLord._PS_NS + '" lazylord:tag="' + LazyLord._ps_xmlEsc(tag) +
+      '" lazylord:fp="' + LazyLord._ps_xmlEsc(fp || "") + '"/></rdf:RDF></x:xmpmeta>';
+    return true;
+  } catch (e) {
+    return false; // it simply will not match next time
+  }
+};
+
+/** Tag the layers one leaf made; their fingerprint follows once the build is done (_ps_seal). */
+LazyLord._ps_tag = function (st, made, layer) {
+  if (!st.ir) return;
+  var key = LazyLord.tagKey(st.ir, layer);
+  for (var i = 0; i < made.length; i++) LazyLord._ps_writeMeta(made[i], key, "");
+  st.seal.push({ key: key, layers: made });
+};
+
+LazyLord._ps_seal = function (st) {
+  for (var i = 0; i < st.seal.length; i++) {
+    var s = st.seal[i];
+    var fp = LazyLord._ps_state(s.layers);
+    for (var k = 0; k < s.layers.length; k++) {
+      try { if (!s.layers[k].removed) LazyLord._ps_writeMeta(s.layers[k], s.key, fp); } catch (e) {}
+    }
+  }
+};
+
+/** Tagged layers in the document, "#" + tag -> [layers], top to bottom. */
+LazyLord._ps_index = function (psDoc) {
+  var index = {};
+  function walk(layers) {
+    for (var i = 0; layers && i < layers.length; i++) {
+      var l = layers[i];
+      var m = null;
+      try { if (!l.isBackgroundLayer) m = LazyLord._ps_readMeta(l); } catch (e) {}
+      if (m && m.tag) {
+        if (!index["#" + m.tag]) index["#" + m.tag] = [];
+        index["#" + m.tag].push(l);
+      }
+      try { if (l.typename === "LayerSet" || l.isSet) walk(l.layers); } catch (e2) {}
+    }
+  }
+  walk(psDoc.layers);
+  return index;
+};
+
+/** How a set of layers stands now: what an update would replace. */
+LazyLord._ps_state = function (layers) {
+  var prints = [];
+  for (var i = 0; i < layers.length; i++) prints.push(LazyLord._ps_layerPrint(layers[i]));
+  prints.sort();
+  return LazyLord.hashText(prints.join("|"));
+};
+
+LazyLord._ps_layerPrint = function (lyr) {
+  var out = [];
+  function add(get) {
+    try { out.push(LazyLord.printValue(get())); } catch (e) { out.push("-"); }
+  }
+  add(function () { return String(lyr.bounds); });
+  add(function () { return lyr.opacity; });
+  add(function () { return lyr.fillOpacity; });
+  add(function () { return lyr.visible; });
+  add(function () { return String(lyr.blendMode); });
+  add(function () { return String(lyr.kind); });
+  if (lyr.kind === LayerKind.TEXT) {
+    add(function () { return lyr.textItem.contents; });
+    add(function () { return String(lyr.textItem.size); });
+    add(function () { return lyr.textItem.font; });
+    add(function () { var c = lyr.textItem.color.rgb; return [c.red, c.green, c.blue]; });
+  }
+  // A shape layer's colour lives in ActionManager (the reader's helper, when it is loaded).
+  if (typeof LazyLord._psr_solidColour === "function") {
+    add(function () { var c = LazyLord._psr_solidColour(lyr); return c ? [c.r, c.g, c.b] : null; });
+  }
+  return out.join(";");
+};
+
+/**
+ * Rebuild `layer` over the Photoshop layers an earlier transfer drew from it.
+ * True when there were some (replaced, kept as the user edited them, or
+ * reported), false to add it as new.
+ */
+LazyLord._ps_update = function (st, layer) {
+  var up = st.update;
+  var old = up.index["#" + LazyLord.tagKey(st.ir, layer)];
+  if (!old || !old.length) return false;
+  var name = layer.name || "Layer";
+
+  var meta = LazyLord._ps_readMeta(old[0]);
+  if (meta && meta.fp && meta.fp !== LazyLord._ps_state(old)) {
+    up.conflicts++;
+    if (up.keep) {
+      LazyLord.warn(name, "Was changed in Photoshop since it was last sent, so it was left as you made it " +
+        "(On conflict: Keep my edits)", "skipped");
+      return true;
+    }
+    LazyLord.warn(name, "Was changed in Photoshop since it was last sent; the update replaced it, and those changes with it", "approximated");
+  }
+
+  // New layers appear above the active one: starting from the old one's top
+  // puts them in its set, where it stands.
+  var top = old[0];
+  try { st.psDoc.activeLayer = top; } catch (eA) {}
+  var clipped = false;
+  try { clipped = old[old.length - 1].grouped === true; } catch (eG) {}
+  var made = LazyLord._ps_make(st, layer);
+  if (!made.length) return true; // reported; the old layers stay
+
+  // Bottom to top, each directly above the last: the stack keeps its order.
+  var at = top;
+  for (var m = 0; m < made.length; m++) {
+    try {
+      made[m].move(at, ElementPlacement.PLACEBEFORE);
+      at = made[m];
+    } catch (eM) {
+      LazyLord.warn(name, "The new version could not be put back in the old one's place in the stack", "approximated");
+      break;
+    }
+  }
+  if (clipped) {
+    for (var c = 0; c < made.length; c++) { try { made[c].grouped = true; } catch (eC) {} }
+  }
+  var removed = 0;
+  for (var r = 0; r < old.length; r++) {
+    try { old[r].remove(); removed++; } catch (eR) {}
+  }
+  if (removed < old.length) {
+    LazyLord.warn(name, "The old version could not be removed, so it is still under the new one", "approximated");
+  }
+  up.updated++;
+  return true;
 };
 
 /* -------------------------------------------------------------------------

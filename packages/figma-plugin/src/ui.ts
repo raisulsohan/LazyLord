@@ -78,7 +78,7 @@ let history: HistoryEntry[] = [];
 /** transfer id -> the name it carried, for the history line its ack completes. */
 const sentNames = new Map<string, string>();
 /** incoming transfer id -> who sent what, for the line written once it is built. */
-const incoming = new Map<string, { peer: string; name: string }>();
+const incoming = new Map<string, { peer: string; name: string; live?: boolean }>();
 const presetSel = $<HTMLSelectElement>("#preset");
 const presetName = $<HTMLInputElement>("#preset-name");
 const presetSave = $<HTMLButtonElement>("#preset-save");
@@ -219,7 +219,11 @@ function onMessage(msg: Message) {
       addDiagnostics(roleLabel((msg.document && msg.document.source) as Role), msg.document && msg.document.diagnostics);
       const n = countLeaves(msg.document && msg.document.layers);
       setStatus(`Receiving ${n} layer${n === 1 ? "" : "s"} from ${roleLabel((msg.document && msg.document.source) as Role)}…`, "");
-      incoming.set(msg.id, { peer: roleLabel((msg.document && msg.document.source) as Role), name: (msg.document && msg.document.name) || "" });
+      incoming.set(msg.id, {
+        peer: roleLabel((msg.document && msg.document.source) as Role),
+        name: (msg.document && msg.document.name) || "",
+        live: !!(msg.document && msg.document.options && msg.document.options.live),
+      });
       parent.postMessage({ pluginMessage: { type: "receive", id: msg.id, document: msg.document } }, "*");
       break;
     }
@@ -692,15 +696,20 @@ window.onmessage = (event: MessageEvent) => {
     // The main thread finished rebuilding a transfer: tell the sender.
     const r = msg.result || { ok: false, layersCreated: 0, message: "", diagnostics: [] };
     addDiagnostics("Figma", r.diagnostics);
-    const from = incoming.get(msg.id) || { peer: "Another app", name: "" };
+    const from = incoming.get(msg.id) || { peer: "Another app", name: "", live: false };
     incoming.delete(msg.id);
-    recordHistory({
-      dir: "in", peer: from.peer, name: from.name, ok: !!r.ok, layers: r.layersCreated || 0,
-      updated: r.layersUpdated || 0, fallbacks: r.diagnostics ? r.diagnostics.length : 0, message: r.ok ? "" : r.message || "",
-    });
+    // A live update is one of many: it stays out of the history, as on the sending side.
+    if (!from.live) {
+      recordHistory({
+        dir: "in", peer: from.peer, name: from.name, ok: !!r.ok, layers: r.layersCreated || 0,
+        updated: r.layersUpdated || 0, fallbacks: r.diagnostics ? r.diagnostics.length : 0, message: r.ok ? "" : r.message || "",
+      });
+    }
     if (r.ok) {
       const extra = r.message ? ` ${r.message}` : "";
-      setStatus(`Rebuilt ${r.layersCreated} layer${r.layersCreated === 1 ? "" : "s"}.${extra}`, "ok");
+      const updated = r.layersUpdated ? `Updated ${r.layersUpdated}, ` : "";
+      setStatus(r.layersUpdated && !r.layersCreated ? `${from.live ? "Live: " : ""}${r.message}`
+        : `${updated}rebuilt ${r.layersCreated} layer${r.layersCreated === 1 ? "" : "s"}.${extra}`.replace(/^r/, "R"), "ok");
     } else {
       setStatus(r.message || "The transfer could not be rebuilt.", "err");
     }
@@ -711,8 +720,9 @@ window.onmessage = (event: MessageEvent) => {
       ok: !!r.ok,
       message: r.message || "",
       layersCreated: r.layersCreated || 0,
+      layersUpdated: r.layersUpdated || 0,
       diagnostics: r.diagnostics || [],
-    });
+    } as Message);
   } else if (msg.type === "error") {
     setStatus(msg.message, "err");
     updateSendButton();
@@ -832,14 +842,13 @@ let liveOn = false;
 let liveQueued = false;
 
 /**
- * Live updates what its first send built, which only After Effects and
- * Illustrator can do; Photoshop (or every app at once) would get a new copy
- * with every change.
+ * Live updates what its first send built, in one app: sent to every app at
+ * once, the smart diff could not know what each one already holds.
  */
 function liveCanReach(t: Role | ""): boolean {
-  return t === "aftereffects" || t === "illustrator";
+  return t === "aftereffects" || t === "illustrator" || t === "photoshop";
 }
-const LIVE_NEEDS = "Live keeps one copy up to date, which only After Effects and Illustrator can do; choose one of them as the target";
+const LIVE_NEEDS = "Live keeps one app up to date; choose After Effects, Illustrator or Photoshop as the target rather than All apps";
 /** Live transfers, which stay out of the history. */
 const liveIds = new Set<string>();
 

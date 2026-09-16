@@ -119,6 +119,8 @@ function MockLayer(doc, kind, name) {
     this.removed = false;
     this.isSet = false;
     this.children = null;
+    this.xmpMetadata = { rawData: "" };  // where an update finds what a transfer drew
+    this.grouped = false;                // clipped to the layer below
 }
 MockLayer.prototype.remove = function () {
     detach(this);
@@ -1763,6 +1765,55 @@ WScript.Echo("");
     ok("runs: a failed rewrite keeps the first style, reported, text still built",
        hit && hit.object === "Styled" && hit.resolution === "approximated" && res.layersCreated === 1,
        JSON.stringify(LazyLord.diagnostics));
+})();
+
+// U) Updating into Photoshop: tags in each layer's XMP, rebuilt in place.
+(function () {
+    reset();
+    var box = function (x) { return vec("Box", { x: x, y: 10, width: 100, height: 50, rotation: 0, opacity: 1 }, [solid(1, 0, 0)]); };
+    var tagged = function (extra) { return irDoc([box(extra && extra.x || 10)], { sourceKey: "doc-P", options: extra && extra.options }); };
+    var r1 = LazyLord.build(tagged());
+    var first = ofKind(LayerKind.SOLIDFILL)[0];
+    var meta = first && LazyLord._ps_readMeta(first);
+    ok("PS tag: the drawn layer keeps its source in its XMP", meta && meta.tag === "figma|doc-P|Box", first && first.xmpMetadata.rawData);
+    ok("PS tag: and a fingerprint of how it stands", meta && meta.fp === LazyLord._ps_state([first]), meta && meta.fp);
+    ok("PS tag: a first send updates nothing", r1.layersUpdated === 0 && r1.layersCreated === 1);
+
+    // The user adds a layer above; the source moves the box and sends it again.
+    var mine = put(app.activeDocument, new MockLayer(app.activeDocument, LayerKind.NORMAL, "Mine"));
+    LazyLord.resetDiagnostics();
+    var r2 = LazyLord.build(tagged({ x: 60, options: { existing: "update" } }));
+    var fills = ofKind(LayerKind.SOLIDFILL);
+    var stack = app.activeDocument.children;
+    ok("PS update: still one box, the old one gone", fills.length === 1 && first.removed === true && fills[0] !== first,
+       fills.length + " " + first.removed);
+    ok("PS update: rebuilt where it stood, under the user's own layer", idxOf(stack, fills[0]) < idxOf(stack, mine),
+       names(stack));
+    ok("PS update: counted and said", r2.layersUpdated === 1 && r2.layersCreated === 0 && /Replaced 1 layer/.test(r2.message), r2.message);
+    ok("PS update: the new one is tagged for next time", LazyLord._ps_readMeta(fills[0]).tag === "figma|doc-P|Box");
+
+    // The user moves it in Photoshop: a conflict, kept or overwritten.
+    var now = fills[0];
+    now.translate(5, 5);
+    LazyLord.resetDiagnostics();
+    var r3 = LazyLord.build(tagged({ x: 60, options: { existing: "update", conflict: "keep" } }));
+    ok("PS conflict: kept as the user made it, and said", now.removed === false && ofKind(LayerKind.SOLIDFILL).length === 1 &&
+       !!diagMatching(/changed in Photoshop since it was last sent, so it was left as you made it/) &&
+       /left as you made them/.test(r3.message), diags() + " " + r3.message);
+    LazyLord.resetDiagnostics();
+    LazyLord.build(tagged({ x: 60, options: { existing: "update" } }));
+    ok("PS conflict: overwritten by default, and said", now.removed === true && ofKind(LayerKind.SOLIDFILL).length === 1 &&
+       !!diagMatching(/the update replaced it/), diags());
+    LazyLord.resetDiagnostics();
+    LazyLord.build(tagged({ x: 70, options: { existing: "update" } }));
+    ok("PS conflict: once replaced, the next update is clean", !diagMatching(/since it was last sent/), diags());
+
+    // Another file's layer with the same id never matches.
+    LazyLord.resetDiagnostics();
+    var other = irDoc([box(20)], { sourceKey: "doc-Q", options: { existing: "update" } });
+    var r4 = LazyLord.build(other);
+    ok("PS update: another file's layer is added, not matched", ofKind(LayerKind.SOLIDFILL).length === 2 && r4.layersUpdated === 0,
+       r4.message);
 })();
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

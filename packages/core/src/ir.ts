@@ -117,6 +117,27 @@ export type BaseLayer = {
   effects?: Effect[];
   /** Visible only inside this path. Nested masks keep the innermost one. */
   clip?: ClipPath;
+  /**
+   * Visible only where the layer with this id has pixels: a Photoshop
+   * clipping mask. That layer sits below this one in the same list and stays
+   * visible itself; every layer clipped to it names the same id.
+   */
+  clipTo?: string;
+  /** A greyscale image that hides part of the layer: a Photoshop layer mask. */
+  mask?: ImageMask;
+};
+
+/**
+ * A layer mask: white shows the layer, black hides it, grey lets it through
+ * partly. The image covers `frame` (frame space, like the layer's own frame);
+ * the layer has nothing to show beyond it.
+ */
+export type ImageMask = {
+  frame: { x: number; y: number; width: number; height: number };
+  /** Absolute path to the PNG on this machine. */
+  filePath?: string;
+  /** The PNG itself, for a host that cannot read files (Figma). */
+  pngBase64?: string;
 };
 
 /**

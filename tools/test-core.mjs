@@ -548,8 +548,21 @@ function makeNode(type, extra = {}) {
     fills: [],
     strokes: [],
     strokeWeight: 1,
+    // MaskMixin: every node that can be a mask has both.
+    isMask: false,
+    maskType: "ALPHA",
     removed: false,
     _pluginData: {},
+    clone() {
+      const copy = makeNode(this.type);
+      for (const k of Object.keys(this)) {
+        if (k === "id" || k === "parent" || k === "children" || k === "_pluginData" || typeof this[k] === "function") continue;
+        const d = Object.getOwnPropertyDescriptor(this, k);
+        if (d && "value" in d) copy[k] = Array.isArray(d.value) ? d.value.slice() : d.value;
+      }
+      if (this.parent) this.parent.insertChild(this.parent.children.indexOf(this) + 1, copy);
+      return copy;
+    },
     setPluginData(k, v) {
       this._pluginData[k] = String(v);
     },
@@ -2040,6 +2053,65 @@ await block("ui, live", async () => {
   ui.toPlugin.length = 0;
   ws.onclose();
   ok("live ui: the bridge going away stops it", live.checked === false && ui.toPlugin.some((m) => m.type === "live-stop"));
+});
+
+// Photoshop clipping masks and layer masks, rebuilt in Figma as masks.
+await block("figma masks", async () => {
+  const B = await import(pathToFileURL(join(figmaEsm, "build.ts")).href);
+  const vec = (id, x, y, w, h, extra = {}) => ({
+    id, name: id, type: "vector", frame: { x, y, width: w, height: h, rotation: 0, opacity: 1 },
+    subpaths: G.rectToSubPaths({ x: 0, y: 0, width: w, height: h }),
+    fills: [{ type: "solid", color: { r: 1, g: 0, b: 0, a: 1 } }], strokes: [], windingRule: "nonzero", ...extra,
+  });
+  const doc = (layers) => ({ version: "1.0", source: "photoshop", name: "Art",
+    bounds: { x: 0, y: 0, width: 200, height: 100 }, originSpace: "canvas", layers });
+  const png = Buffer.from("mask").toString("base64");
+
+  // Two layers clipped to one base: one group, an alpha mask copied from the base at its bottom.
+  resetPage();
+  await B.buildDocument(doc([vec("Base", 0, 0, 100, 100), vec("Tint", 0, 0, 100, 100, { clipTo: "Base" }),
+    vec("Glow", 10, 10, 50, 50, { clipTo: "Base" }), vec("Above", 0, 0, 10, 10)]));
+  const names = page.children.map((n) => n.name);
+  const grp = page.children.find((n) => n.type === "GROUP");
+  ok("clipping: the base still stands on its own", names.indexOf("Base") >= 0, names.join());
+  ok("clipping: its clipped layers go into one group", grp && grp.name === "Base (clipping)" &&
+    grp.children.map((c) => c.name).join() === "Base clip,Tint,Glow", grp && grp.children.map((c) => c.name).join());
+  ok("clipping: over an alpha mask copied from the base", grp && grp.children[0].isMask === true &&
+    grp.children[0].maskType === "ALPHA" && grp.children[0].type === "VECTOR");
+  ok("clipping: the copy does not carry the base's tag", grp && grp.children[0].getPluginData("lazylord.tag") === "");
+
+  // A base that was not sent.
+  resetPage();
+  const r2 = await B.buildDocument(doc([vec("Lone", 0, 0, 10, 10, { clipTo: "ps-9" })]));
+  ok("clipping: a missing base is reported, the layer left as it is",
+    page.children.length === 1 && (r2.diagnostics || []).some((d) => /not rebuilt here/.test(d.reason)), JSON.stringify(r2.diagnostics));
+
+  // A layer mask: a luminance image mask under the layer, grouped.
+  resetPage();
+  await B.buildDocument(doc([vec("Masked", 20, 10, 100, 50, { mask: { frame: { x: 20, y: 10, width: 100, height: 50 }, pngBase64: png } })]));
+  const mg = page.children.find((n) => n.type === "GROUP");
+  const mrect = mg && mg.children[0];
+  ok("layer mask: the layer and its mask in a group", mg && mg.name === "Masked (masked)" && mg.children.length === 2 &&
+    mg.children[1].name === "Masked", mg && mg.children.map((c) => c.name).join());
+  ok("layer mask: an image, used as a luminance mask", mrect && mrect.isMask === true && mrect.maskType === "LUMINANCE" &&
+    mrect.fills[0].type === "IMAGE");
+  ok("layer mask: over the mask's own frame", mrect && near(mrect.x, 20) && near(mrect.y, 10) && near(mrect.width, 100) &&
+    near(mrect.height, 50), mrect && [mrect.x, mrect.y, mrect.width, mrect.height].join());
+
+  // Only a path: a plugin cannot read files.
+  resetPage();
+  const r4 = await B.buildDocument(doc([vec("Path only", 0, 0, 10, 10, { mask: { frame: { x: 0, y: 0, width: 10, height: 10 }, filePath: "C:/m.png" } })]));
+  ok("layer mask: a path alone is reported, the layer kept", page.children.length === 1 && page.children[0].type === "VECTOR" &&
+    (r4.diagnostics || []).some((d) => /file path/.test(d.reason)), JSON.stringify(r4.diagnostics));
+
+  // Both: masked first, then the masked group is what is clipped.
+  resetPage();
+  await B.buildDocument(doc([vec("Base", 0, 0, 100, 100),
+    vec("Both", 0, 0, 100, 100, { clipTo: "Base", mask: { frame: { x: 0, y: 0, width: 100, height: 100 }, pngBase64: png } })]));
+  const outer = page.children.find((n) => n.type === "GROUP" && n.name === "Base (clipping)");
+  ok("mask and clip: Figma keeps both, the masked group inside the clipping group",
+    outer && outer.children.length === 2 && outer.children[1].type === "GROUP" && outer.children[1].name === "Both (masked)",
+    outer && outer.children.map((c) => c.name).join());
 });
 
 // From the in-depth review: Figma send, receive and smart diff.

@@ -556,6 +556,14 @@
    */
   function embedImagesForFigma(doc) {
     eachLayer(doc.layers, function (layer) {
+      // A layer mask is an image too.
+      if (layer.mask && layer.mask.filePath && !layer.mask.pngBase64) {
+        try {
+          layer.mask.pngBase64 = readBase64(layer.mask.filePath);
+        } catch (eMask) {
+          log("Could not read " + layer.mask.filePath + " to send to Figma: " + eMask.message, "warn");
+        }
+      }
       if (layer.type !== "image" || layer.pngBase64 || !layer.filePath) return;
       try {
         layer.pngBase64 = readBase64(layer.filePath);
@@ -897,6 +905,11 @@
     for (var k in layer) {
       if (!Object.prototype.hasOwnProperty.call(layer, k)) continue;
       if (k === "filePath" && layer.isOriginalFile !== true) continue;
+      // A layer mask is always generated: its frame counts, its path does not.
+      if (k === "mask" && layer.mask) {
+        copy.mask = { frame: layer.mask.frame };
+        continue;
+      }
       copy[k] = layer[k];
     }
     return hashText(salt + JSON.stringify(copy));

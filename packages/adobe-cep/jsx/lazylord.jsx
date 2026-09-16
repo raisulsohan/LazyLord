@@ -351,6 +351,10 @@ LazyLord.shiftLayers = function (layers, dx, dy) {
     }
     if (typeof layer.baseline === "number") layer.baseline += dy;
     if (typeof layer.anchorX === "number") layer.anchorX += dx;
+    if (layer.mask && layer.mask.frame) {
+      layer.mask.frame.x += dx;
+      layer.mask.frame.y += dy;
+    }
     if (layer.clip && layer.clip.subpaths) {
       for (var s = 0; s < layer.clip.subpaths.length; s++) {
         var vs = layer.clip.subpaths[s].vertices;
@@ -715,6 +719,22 @@ LazyLord.noteEffects = function (layer, why) {
     if (!seen) names.push(label);
   }
   LazyLord.warn(layer.name || "Layer", (why || "Effects are not rebuilt here") + ": " + names.join(", "), "skipped");
+};
+
+/**
+ * Photoshop clipping masks (clipTo) and layer masks (mask) that `host` does
+ * not rebuild, reported once per layer so nothing is dropped silently.
+ */
+LazyLord.noteMasks = function (layers, host) {
+  LazyLord.eachLayer(layers, function (layer) {
+    if (!layer) return;
+    if (layer.mask) {
+      LazyLord.warn(layer.name, "Its layer mask is not rebuilt in " + host + ", so it shows unmasked", "approximated");
+    }
+    if (layer.clipTo) {
+      LazyLord.warn(layer.name, "Its clipping mask is not rebuilt in " + host + ", so it shows unclipped", "approximated");
+    }
+  });
 };
 
 /*

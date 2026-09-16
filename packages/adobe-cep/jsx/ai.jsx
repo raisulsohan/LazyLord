@@ -15,6 +15,7 @@
  */
 
 LazyLord.build = function (doc) {
+  LazyLord.noteMasks(doc.layers, "Illustrator");
   LazyLord.applyOrigin(doc);
   var opts = LazyLord.options(doc);
   var aiDoc = LazyLord._ai_doc(doc);

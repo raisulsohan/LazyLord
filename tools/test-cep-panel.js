@@ -1750,6 +1750,21 @@ run("sending to Figma", function () {
     ok("figma: the path is kept alongside, so the origin is still known",
        t.document.layers[0].filePath === "C:\\art\\logo.png" &&
        t.document.layers[0].isOriginalFile === true);
+
+    // A Photoshop layer mask is an image too, and goes as bytes like one.
+    files["C:\\tmp\\gen\\Title-mask-0.png"] = { data: "TUFTSw==", enc: "Base64" };
+    var masked = {
+        version: "1.0", source: "photoshop", name: "Art", originSpace: "document",
+        bounds: { x: 0, y: 0, width: 50, height: 50 },
+        layers: [{ id: "t", name: "Title", type: "vector", frame: frame(0, 0), subpaths: [], fills: [], strokes: [],
+                   mask: { frame: frame(0, 0), filePath: "C:\\tmp\\gen\\Title-mask-0.png" } }],
+        diagnostics: []
+    };
+    files["C:/tmp/fig2/ir.json"] = { data: JSON.stringify(masked), enc: "" };
+    els["push"].fire("click");
+    lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/fig2/ir.json", message: "", diagnostics: [] }));
+    var m = lastSent(sock).document.layers[0].mask;
+    ok("figma: a layer mask carries its bytes too", m && m.pngBase64 === "TUFTSw==", m && dumpKeys(m));
 });
 
 // 20) Every other destination is on this machine and reads the file itself.

@@ -448,13 +448,19 @@ function placeFrame(frame: FrameNode, doc: Document) {
  */
 async function buildList(list: ReadonlyArray<Layer>, ctx: Ctx, parent: BaseNode & ChildrenMixin): Promise<SceneNode[]> {
   const out: SceneNode[] = [];
+  // What each layer became, for a clipping mask to find its base.
+  const made = new Map<string, SceneNode>();
   const clipOf = (l: Layer | undefined) => (l && l.type !== "group" ? l.clip : undefined);
   let i = 0;
   while (i < list.length) {
     const clip = clipOf(list[i]);
     if (!clip) {
-      const node = await buildLayer(list[i], ctx, parent);
-      if (node) out.push(node);
+      let node = await buildLayer(list[i], ctx, parent);
+      if (node) {
+        node = applyLayerMask(list[i], node, ctx, parent);
+        made.set(list[i].id, node);
+        out.push(node);
+      }
       i++;
       continue;
     }
@@ -481,7 +487,100 @@ async function buildList(list: ReadonlyArray<Layer>, ctx: Ctx, parent: BaseNode 
       out.push(...run);
     }
   }
-  return out;
+  return applyClipping(list, made, out, ctx, parent);
+}
+
+/**
+ * A layer mask (IR `mask`, a Photoshop layer mask) as Figma expresses one: the
+ * mask image directly under the layer as a luminance mask, the two grouped.
+ * Returns what now stands for the layer: the group, or the layer itself when
+ * there is no mask or it cannot be applied.
+ */
+function applyLayerMask(layer: Layer, node: SceneNode, ctx: Ctx, parent: BaseNode & ChildrenMixin): SceneNode {
+  const m = layer.mask;
+  if (!m) return node;
+  const name = layer.name || "Layer";
+  if (!m.pngBase64) {
+    warn(ctx, name, "Its layer mask arrived as a file path, which a Figma plugin cannot read, so it is not masked", "approximated");
+    return node;
+  }
+  let rect: RectangleNode | null = null;
+  try {
+    const image = figma.createImage(figma.base64Decode(m.pngBase64));
+    rect = figma.createRectangle();
+    const at = parent.children.indexOf(node);
+    if (at >= 0) parent.insertChild(at, rect);
+    else parent.appendChild(rect);
+    rect.name = `${name} mask`;
+    rect.resize(Math.max(0.01, m.frame.width), Math.max(0.01, m.frame.height));
+    rect.x = m.frame.x;
+    rect.y = m.frame.y;
+    rect.fills = [{ type: "IMAGE", imageHash: image.hash, scaleMode: "FILL" }];
+    rect.isMask = true;
+    // White shows and black hides, as the source meant it.
+    if ("maskType" in rect) (rect as RectangleNode & { maskType: string }).maskType = "LUMINANCE";
+    const group = figma.group([rect, node], parent);
+    group.name = `${name} (masked)`;
+    ctx.created++;
+    return group;
+  } catch (e) {
+    if (rect) { try { rect.remove(); } catch { /* already gone */ } }
+    warn(ctx, name, `Its layer mask could not be applied (${message(e)}), so it is not masked`, "approximated");
+    return node;
+  }
+}
+
+/**
+ * Photoshop clipping masks (IR `clipTo`): each run of layers clipped to the same
+ * base goes into a group over an alpha mask copied from that base, placed
+ * directly above it, so the base still shows and the run shows only where it
+ * does. `made` maps this list's layer ids to what they became; the returned
+ * list has the groups where their layers were.
+ */
+function applyClipping(
+  list: ReadonlyArray<Layer>,
+  made: Map<string, SceneNode>,
+  out: SceneNode[],
+  ctx: Ctx,
+  parent: BaseNode & ChildrenMixin
+): SceneNode[] {
+  let result = out;
+  let i = 0;
+  while (i < list.length) {
+    const baseId = list[i].clipTo;
+    if (!baseId) { i++; continue; }
+    const run: SceneNode[] = [];
+    const names: string[] = [];
+    while (i < list.length && list[i].clipTo === baseId) {
+      const n = made.get(list[i].id);
+      if (n) { run.push(n); names.push(list[i].name || "Layer"); }
+      i++;
+    }
+    if (!run.length) continue;
+    const base = made.get(baseId);
+    if (!base) {
+      for (const n of names) warn(ctx, n, "It is clipped to a layer that was not rebuilt here, so it is not clipped", "approximated");
+      continue;
+    }
+    let mask: SceneNode | null = null;
+    try {
+      mask = base.clone();
+      const at = parent.children.indexOf(base);
+      parent.insertChild(at + 1, mask);
+      mask.name = `${base.name} clip`;
+      if ("isMask" in mask) (mask as SceneNode & { isMask: boolean }).isMask = true;
+      if ("maskType" in mask) (mask as SceneNode & { maskType: string }).maskType = "ALPHA";
+      const group = figma.group([mask, ...run], parent);
+      group.name = `${base.name} (clipping)`;
+      const first = result.indexOf(run[0]);
+      result = result.filter((n) => run.indexOf(n) < 0);
+      result.splice(first < 0 ? result.length : Math.min(first, result.length), 0, group);
+    } catch (e) {
+      if (mask) { try { mask.remove(); } catch { /* already gone */ } }
+      for (const n of names) warn(ctx, n, `Its clipping mask could not be rebuilt (${message(e)}), so it is not clipped`, "approximated");
+    }
+  }
+  return result;
 }
 
 async function buildLayer(

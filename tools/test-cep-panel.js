@@ -174,7 +174,7 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-destination", "push-dest-note", "push-preset", "push-preset-name", "push-preset-save",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
-           "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last"];
+           "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last", "author"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
@@ -1205,7 +1205,8 @@ run("markup", function () {
        /<summary[^>]*>[^<]*Log[\s\S]*?id="log-last"[\s\S]*?<\/summary>/.test(HTML_SRC));
     // The footer used to print the bridge address; that is diagnostic, and the
     // panel is the only place a user learns who wrote it.
-    ok("markup: the footer credits the author", has(HTML_SRC, "by Raisul Sohan"));
+    ok("markup: the footer credits the author, and links to the site",
+       /<footer[\s\S]*?id="author"[^>]*>Raisul Sohan<\/a>[\s\S]*?<\/footer>/.test(HTML_SRC));
     ok("markup: the bridge address moved to the connection chip",
        !/<footer[\s\S]*?7878[\s\S]*?<\/footer>/.test(HTML_SRC) &&
        /<div id="conn"[^>]*title="[^"]*7878/.test(HTML_SRC));

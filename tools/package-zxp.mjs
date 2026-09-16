@@ -7,8 +7,10 @@
  *   node tools/package-zxp.mjs --skip-build
  *
  * Adobe's own ZXPSignCmd does the signing; tools/get-zxpsigncmd.mjs fetches it.
- * Everything this writes lands in release/, which git ignores — the .p12 is a
- * signing key and must never be committed or shared.
+ * Nothing is written inside the repository: the finished zip and the key that
+ * signs it go to a release folder of their own, outside it (see `release`
+ * below), and the half-built pieces go to the system temp folder and are swept
+ * up at the end. One zip comes out — that is the whole release.
  */
 import { execFileSync, execSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -16,6 +18,7 @@ import {
   chmodSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23,14 +26,24 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const VERSION = pkg.version;
 
-const release = join(root, "release");
-const staging = join(release, "staging", "com.lazylord.panel");
-const payload = join(release, `LazyLord-${VERSION}`);
-const zxpName = `LazyLord-${VERSION}.zxp`;
-const zxp = join(release, zxpName);
-const certDir = join(release, "cert");
+/*
+ * Where a release lands. Not in the repository and not beside it: what comes
+ * out of here is the finished thing plus the key that signs it, and neither
+ * belongs in a folder full of source. Two levels up from the repo, so
+ * D:\GitHub\LazyLord writes to D:\LazyLord Release. LAZYLORD_RELEASE_DIR
+ * overrides it.
+ */
+const release = process.env.LAZYLORD_RELEASE_DIR || resolve(root, "..", "..", "LazyLord Release");
+const certDir = join(release, "Signing key (do not share)");
 const p12 = join(certDir, "lazylord.p12");
 const pwFile = join(certDir, "password.txt");
+
+/* Everything half-built goes to a scratch folder and is swept up after. */
+const work = join(tmpdir(), `lazylord-build-${VERSION}`);
+const staging = join(work, "com.lazylord.panel");
+const payload = join(work, `LazyLord-${VERSION}`);
+const zxpName = `LazyLord-${VERSION}.zxp`;
+const zxp = join(work, zxpName);
 
 /* Who the installer names as the publisher. */
 const CERT = {
@@ -123,7 +136,7 @@ function makeCert(tool) {
   if (!existsSync(p12)) fail("ZXPSignCmd did not produce the certificate.");
   log("[cert]", `${p12} — ${CERT.commonName}, ${CERT.organisation} (${CERT.validityDays} days)`);
   console.log(
-    "\nBack up release/cert/ somewhere safe. Lose it and a future release cannot\n" +
+    `\nBack up "${certDir}" somewhere safe. Lose it and a future release cannot\n` +
     "update an installed LazyLord: users would have to remove the old one first.\n",
   );
 }
@@ -183,7 +196,7 @@ function syncVersion() {
 
 function stage() {
   syncVersion();
-  rmSync(join(release, "staging"), { recursive: true, force: true });
+  rmSync(work, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
   cpSync(join(root, "packages", "adobe-cep"), staging, {
     recursive: true,
@@ -210,7 +223,7 @@ function stage() {
     fail(`the panel contains symlinks, which break signed installs:\n    ${links.join("\n    ")}`);
   }
 
-  log("[2/6]", `staged ${count(staging)} files in release/staging/com.lazylord.panel`);
+  log("[2/6]", `staged ${count(staging)} panel files`);
 }
 
 function sign(tool) {
@@ -287,7 +300,7 @@ function assemble() {
   for (const file of ["code.js", "ui.html"]) {
     cpSync(join(root, "packages", "figma-plugin", "dist", file), join(figma, "dist", file));
   }
-  log("[5/6]", `assembled release/LazyLord-${VERSION}/`);
+  log("[5/6]", `assembled the download folder (${count(payload)} files)`);
 }
 
 function zip() {
@@ -299,10 +312,10 @@ function zip() {
       `Compress-Archive -Path "${payload}\\*" -DestinationPath "${out}" -Force`,
     ], { stdio: "inherit" });
   } else {
-    execFileSync("zip", ["-r", "-q", out, `LazyLord-${VERSION}`], { cwd: release });
+    execFileSync("zip", ["-r", "-q", out, `LazyLord-${VERSION}`], { cwd: work });
   }
   const mb = (statSync(out).size / 1024 / 1024).toFixed(2);
-  log("[6/6]", `release/LazyLord-${VERSION}.zip (${mb} MB)`);
+  log("[6/6]", `${out} (${mb} MB)`);
   return out;
 }
 
@@ -323,9 +336,14 @@ sign(tool);
 verify(tool);
 assemble();
 const out = zip();
+/* Leave one file behind, not a folder of half-built pieces. */
+rmSync(work, { recursive: true, force: true });
 
 console.log(`
-Done. Give people ${out.split(/[\\/]/).pop()}:
-  they unzip it and run "Install LazyLord.bat" (macOS: the .command file).
+Done. One file to give people, and it is the only thing here that matters:
+
+  ${out}
+
+They unzip it and run "Install LazyLord.bat" (macOS: the .command file).
 Nothing else is needed — no Node, no bridge window, no debug mode.
 `);

@@ -716,3 +716,52 @@ LazyLord.noteEffects = function (layer, why) {
   }
   LazyLord.warn(layer.name || "Layer", (why || "Effects are not rebuilt here") + ": " + names.join(", "), "skipped");
 };
+
+/*
+ * Gradient notes
+ *
+ * A real Gradient Fill or Stroke in After Effects has colours no script can
+ * read back, so the AE builder notes the stops it gave each one in the layer's
+ * comment, filed under where the property sits (vector group indices, then its
+ * index in that group's contents, then fill or stroke):
+ *   {{LazyLord gradients 1:3|fill|0,1,0,0,1;1,0,0,1,0.5}}
+ * each stop "position,r,g,b,a". ae-read.jsx reads the note back.
+ */
+
+/** The {{LazyLord gradients …}} token in a layer comment. */
+LazyLord.GRADIENT_STASH_RE = /\s*\{\{LazyLord gradients ([^}]*)\}\}/;
+
+/** Gradient entries from a comment: { "path:index|kind": "pos,r,g,b,a;…" }. */
+LazyLord.readGradientStash = function (text) {
+  var out = {};
+  var m = LazyLord.GRADIENT_STASH_RE.exec(String(text || ""));
+  if (!m) return out;
+  var items = m[1].split(" ");
+  for (var i = 0; i < items.length; i++) {
+    var bar = items[i].lastIndexOf("|");
+    if (bar > 0) out[items[i].substr(0, bar)] = items[i].substr(bar + 1);
+  }
+  return out;
+};
+
+/** The key a stashed gradient is filed under. */
+LazyLord.gradientStashKey = function (path, index, kind) {
+  return path.join(".") + ":" + index + "|" + kind;
+};
+
+/** Stops parsed back from a stash value, or null when it does not read. */
+LazyLord.parseGradientStops = function (value) {
+  var stops = [];
+  var rows = String(value || "").split(";");
+  for (var i = 0; i < rows.length; i++) {
+    var v = rows[i].split(",");
+    if (v.length !== 5) return null;
+    var n = [];
+    for (var k = 0; k < 5; k++) {
+      n.push(parseFloat(v[k]));
+      if (isNaN(n[k])) return null;
+    }
+    stops.push({ position: n[0], color: { r: n[1], g: n[2], b: n[3], a: n[4] } });
+  }
+  return stops.length >= 2 ? stops : null;
+};

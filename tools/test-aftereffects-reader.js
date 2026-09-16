@@ -756,6 +756,73 @@ WScript.Echo("");
        JSON.stringify(LazyLord.diagnostics));
 })();
 
+// 14b) A real gradient LazyLord built is read back: handles from the property,
+//      stops from the note it left in the layer comment.
+(function () {
+    function grad(mn, name, type, start, end, more) {
+        var kids = [node("ADBE Vector Grad Type", { value: type }),
+                    node("ADBE Vector Grad Start Pt", { value: start }),
+                    node("ADBE Vector Grad End Pt", { value: end })];
+        for (var i = 0; more && i < more.length; i++) kids.push(more[i]);
+        return node(mn, { name: name, children: kids });
+    }
+
+    LazyLord.resetDiagnostics();
+    // Comp-space box x 50..150, y 50..150: the layer sits at 100,100 with the rect centred on its origin.
+    var lin = shapeLayer("Noted", [
+        vectorGroup([
+            rectNode([100, 100], [0, 0]),
+            grad("ADBE Vector Graphic - G-Stroke", "Gradient Stroke 1", 1, [-50, -50], [50, 50], [
+                node("ADBE Vector Stroke Width", { value: 6 }),
+                node("ADBE Vector Stroke Line Cap", { value: 2 }),
+                node("ADBE Vector Stroke Line Join", { value: 3 })
+            ]),
+            grad("ADBE Vector Graphic - G-Fill", "Gradient Fill 1", 1, [-50, 0], [50, 0])
+        ], { name: "Noted" })
+    ], transform([100, 100]));
+    lin.comment = "Hand-written note\n{{LazyLord gradients 1:3|fill|0,1,0,0,1;0.4,0,1,0,0.5;1,0,0,1,1 " +
+                  "1:2|stroke|0,1,1,1,1;1,0,0,0,0}}\n[[LazyLord figma|file-A|Box]]";
+
+    var rad = shapeLayer("Noted radial", [
+        rectNode([100, 100], [0, 0]),
+        grad("ADBE Vector Graphic - G-Fill", "Gradient Fill 1", 2, [0, 0], [50, 0])
+    ], transform([300, 100], { scale: [200, 100] }));
+    rad.comment = "{{LazyLord gradients :2|fill|0,1,1,1,1;1,0,0,0,1}}";
+
+    var stale = shapeLayer("Wrong place", [
+        rectNode([100, 100], [0, 0]),
+        grad("ADBE Vector Graphic - G-Fill", "Gradient Fill 1", 1, [0, 0], [10, 0])
+    ], transform([500, 100]));
+    stale.comment = "{{LazyLord gradients :5|fill|0,1,1,1,1;1,0,0,0,1}}";
+
+    selectComp([lin, rad, stale]);
+    var doc = LazyLord.readSelection("C:\\temp");
+    var v = doc.layers[0];
+    var f = v.fills[0];
+    ok("noted gradient: read as a linear gradient", f && f.type === "linear-gradient", JSON.stringify(f));
+    ok("noted gradient: every stop, with its transparency",
+       f && f.stops.length === 3 && near(f.stops[1].position, 0.4) && near(f.stops[1].color.g, 1) && near(f.stops[1].color.a, 0.5),
+       JSON.stringify(f && f.stops));
+    ok("noted gradient: handles carried into the box, left middle to right middle",
+       f && near(f.from.x, 0) && near(f.from.y, 0.5) && near(f.to.x, 1) && near(f.to.y, 0.5), JSON.stringify(f));
+    var s = v.strokes[0];
+    ok("noted gradient stroke: a gradient paint, corner to corner",
+       s && s.paint.type === "linear-gradient" && near(s.paint.from.x, 0) && near(s.paint.to.y, 1), JSON.stringify(s));
+    ok("noted gradient stroke: width, cap and join read from the property",
+       s && near(s.weight, 6) && s.cap === "round" && s.join === "bevel", JSON.stringify(s));
+    ok("noted gradient stroke: fading to clear", s && near(s.paint.stops[1].color.a, 0), JSON.stringify(s && s.paint.stops));
+    ok("noted gradient: not reported as unreadable",
+       diagsWith("cannot be read").length === 1 && diagsWith("cannot be read")[0].object === "Wrong place",
+       JSON.stringify(LazyLord.diagnostics));
+
+    var r = doc.layers[1].fills[0];
+    ok("noted radial: radial, from a note at the top of the contents", r && r.type === "radial-gradient", JSON.stringify(r));
+    ok("noted radial: an uneven scale stretches it, which is reported",
+       diagsWith("stretched into an ellipse").length === 1, JSON.stringify(LazyLord.diagnostics));
+    ok("noted gradient: a note for another place does not apply", doc.layers[2].fills.length === 0,
+       JSON.stringify(doc.layers[2].fills));
+})();
+
 // 15) A gradient-ramp solid (the classic AE background) becomes a gradient rect.
 (function () {
     LazyLord.resetDiagnostics();

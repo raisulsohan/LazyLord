@@ -72,6 +72,121 @@ Folder.prototype.create = function () {
     return true;
 };
 
+// Files a script writes, with what it wrote: path -> a byte string.
+var mockFileData = {};
+File.prototype.open = function (mode) {
+    if (!mockDirs[dirOf(this.fsName)]) return false;
+    this.mode = mode;
+    this.buffer = "";
+    return true;
+};
+File.prototype.write = function (s) { this.buffer += String(s); return true; };
+File.prototype.close = function () {
+    if (this.mode === "w") { mockFileData[this.fsName] = this.buffer; mockFiles[this.fsName] = true; }
+    return true;
+};
+File.prototype.remove = function () {
+    delete mockFileData[this.fsName];
+    delete mockFiles[this.fsName];
+    return true;
+};
+Folder.temp = new Folder("C:/mock/temp");
+mockDirs["C:/mock/temp"] = true;
+
+/** The .ffx files still lying about in the mock file system. */
+function presetFilesLeft() {
+    var n = 0;
+    for (var k in mockFileData) if (/\.ffx$/.test(k)) n++;
+    return n;
+}
+
+/*
+ * Layer.applyPreset, for the gradient presets the builder writes. It is strict
+ * where After Effects would be, and stricter where a wrong preset would fail
+ * silently there: the RIFX chunk sizes must add up exactly, the preset must
+ * name the property it lands on, exactly one property must be selected, and
+ * the alpha and colour stops must pair up. What it read becomes the Colors
+ * property's `gradColors`, and every reference on the layer goes stale, as a
+ * change to its contents makes it.
+ */
+function u32(s, at) {
+    return (((s.charCodeAt(at) << 24) >>> 0) + (s.charCodeAt(at + 1) << 16) + (s.charCodeAt(at + 2) << 8) + s.charCodeAt(at + 3));
+}
+function riffWalk(s, off, end, out) {
+    while (off < end) {
+        if (off + 8 > end) throw new Error("preset: a chunk header runs past its parent at " + off);
+        var id = s.substr(off, 4), size = u32(s, off + 4), data = off + 8;
+        if (data + size > end) throw new Error("preset: chunk " + id + " at " + off + " runs past its parent");
+        if (id === "LIST" || id === "RIFX") {
+            riffWalk(s, data + 4, data + size, out);
+        } else {
+            if (id === "tdmn") out.names.push(s.substr(data, size).replace(/\u0000+$/, ""));
+            if (id === "Utf8") out.xml = s.substr(data, size);
+        }
+        off = data + size + (size % 2);
+    }
+    if (off !== end) throw new Error("preset: its chunks end at " + off + " but their parent at " + end);
+}
+function presetFloats(xml, key, count) {
+    var out = [], at = 0;
+    for (;;) {
+        var k = xml.indexOf("<key>" + key + "</key>", at);
+        if (k < 0) break;
+        var arr = xml.substring(k, xml.indexOf("</array>", k));
+        var nums = [], re = /<float>([^<]*)<\/float>/g, m;
+        while ((m = re.exec(arr))) nums.push(parseFloat(m[1]));
+        if (nums.length !== count) throw new Error("preset: " + key + " holds " + nums.length + " values, not " + count);
+        out.push(nums);
+        at = k + 1;
+    }
+    return out;
+}
+function selectedIn(n, out) {
+    if (n.selected === true) out.push(n);
+    for (var i = 0; i < n.children.length; i++) selectedIn(n.children[i], out);
+    return out;
+}
+function clearSelection(n) {
+    n.selected = false;
+    for (var i = 0; i < n.children.length; i++) clearSelection(n.children[i]);
+}
+function mockApplyPreset(layer, file) {
+    if (mock.presetThrows) throw new Error("After Effects could not apply the preset");
+    var s = mockFileData[file.fsName];
+    if (s === undefined) throw new Error("preset: there is no file at " + file.fsName);
+    if (s.substr(0, 4) !== "RIFX" || s.substr(8, 4) !== "FaFX") throw new Error("preset: not an animation preset");
+    if (u32(s, 4) + 8 !== s.length) throw new Error("preset: RIFX says " + (u32(s, 4) + 8) + " bytes, the file has " + s.length);
+    var info = { names: [], xml: null };
+    riffWalk(s, 12, s.length, info);
+
+    var sel = [];
+    for (var g in layer.groups) selectedIn(layer.groups[g], sel);
+    if (sel.length !== 1) throw new Error("preset: " + sel.length + " properties were selected, not one");
+    var target = sel[0];
+    if (info.names[3] !== target.matchName || info.names[4] !== "ADBE Vector Grad Colors") {
+        throw new Error("preset: made for " + info.names[3] + " > " + info.names[4] + ", applied to " + target.matchName);
+    }
+
+    var alpha = presetFloats(info.xml, "Stops Alpha", 3);
+    var colour = presetFloats(info.xml, "Stops Color", 6);
+    var sizes = info.xml.match(/<int type='unsigned' size='32'>\d+<\/int>/g) || [];
+    if (alpha.length !== colour.length || sizes.length !== 2 ||
+        sizes[0].indexOf(">" + alpha.length + "<") < 0 || sizes[1].indexOf(">" + colour.length + "<") < 0) {
+        throw new Error("preset: its alpha and colour stops do not pair up with their counts");
+    }
+    var stops = [];
+    for (var i = 0; i < colour.length; i++) {
+        stops.push({ position: colour[i][0], mid: colour[i][1], r: colour[i][2], g: colour[i][3], b: colour[i][4],
+                     a: alpha[i][2], alphaAt: alpha[i][0] });
+    }
+    target.property("ADBE Vector Grad Colors").gradColors = stops;
+    mock.presetsApplied.push({ layer: layer.name, target: target.matchName, stops: stops.length });
+
+    for (var k in layer.groups) clearSelection(layer.groups[k]);
+    layer.selected = false;
+    if (mock.invalidate) for (var q in layer.groups) layer.groups[q] = cloneTree(layer.groups[q], null, [], null);
+}
+
 // --- Minimal After Effects stand-ins ---------------------------------------
 function CompItem() {}
 function ShapeLayer() {}
@@ -102,7 +217,7 @@ var ParagraphJustification = {
 //   rejectRemove - { matchName: true }: remove() on that property throws
 //   rejectNull  - comp.layers.addNull() throws
 var mock = { rejectAdd: {}, rejectRemove: {}, rampWithoutMatchNames: false, invalidate: true, failSet: {}, setCounts: {},
-             rejectNull: false };
+             rejectNull: false, presets: false, presetThrows: false, presetsApplied: [], viewerOpens: [] };
 
 // Fonts the mocked After Effects has, by PostScript name: [family, style].
 var MOCK_FONTS = {
@@ -129,6 +244,12 @@ var SCHEMA = {
     "ADBE Vector Graphic - Fill": ["ADBE Vector Fill Rule", "ADBE Vector Fill Color", "ADBE Vector Fill Opacity"],
     "ADBE Vector Graphic - Stroke": ["ADBE Vector Stroke Color", "ADBE Vector Stroke Opacity", "ADBE Vector Stroke Width",
         "ADBE Vector Stroke Line Cap", "ADBE Vector Stroke Line Join"],
+    "ADBE Vector Graphic - G-Fill": ["ADBE Vector Fill Rule", "ADBE Vector Grad Type", "ADBE Vector Grad Start Pt",
+        "ADBE Vector Grad End Pt", "ADBE Vector Grad HiLite Length", "ADBE Vector Grad HiLite Angle",
+        "ADBE Vector Grad Colors", "ADBE Vector Fill Opacity"],
+    "ADBE Vector Graphic - G-Stroke": ["ADBE Vector Grad Type", "ADBE Vector Grad Start Pt", "ADBE Vector Grad End Pt",
+        "ADBE Vector Grad HiLite Length", "ADBE Vector Grad HiLite Angle", "ADBE Vector Grad Colors",
+        "ADBE Vector Stroke Opacity", "ADBE Vector Stroke Width", "ADBE Vector Stroke Line Cap", "ADBE Vector Stroke Line Join"],
     "ADBE Ramp": ["ADBE Ramp-0001", "ADBE Ramp-0002", "ADBE Ramp-0003", "ADBE Ramp-0004",
         "ADBE Ramp-0005", "ADBE Ramp-0006", "ADBE Ramp-0007"],
     "ADBE Drop Shadow": ["ADBE Drop Shadow-0001", "ADBE Drop Shadow-0002", "ADBE Drop Shadow-0003",
@@ -191,6 +312,7 @@ PNode.prototype.setValue = function (v) {
     if (this.numKeys > 0) throw new Error("Cannot set value of a property with keyframes");
     var count = mock.setCounts[this.matchName] = (mock.setCounts[this.matchName] || 0) + 1;
     if (mock.failSet[this.matchName] === count) throw new Error("After Effects could not set " + this.matchName);
+    if (this.matchName === "ADBE Vector Grad Colors") throw new Error("Can not set value: this property has no value type a script can write");
     if (this.matchName === "ADBE Text Document") resolveFont(this, v);
     this.value = v;
     this.wasSet = true;
@@ -241,6 +363,7 @@ function cloneTree(n, parent, keep, fresh) {
         c = new PNode(n.matchName, parent);
         c.name = n.name; c.value = n.value; c.wasSet = n.wasSet; c.maskMode = n.maskMode;
         c.fontState = n.fontState; c.layer = n.layer; c.removed = n.removed;
+        c.gradColors = n.gradColors; c.selected = n.selected;
         n.invalid = true;
     }
     c.parent = parent;
@@ -320,6 +443,9 @@ function makeLayer(Ctor, comp, groups) {
     for (var k in groups) l.groups[k] = groups[k];
     for (var g in l.groups) setLayer(l.groups[g], l);
     l.comment = ""; // where a layer records the source object it was built from
+    l.selected = false;
+    l.containingComp = comp;
+    if (mock.presets) l.applyPreset = function (file) { mockApplyPreset(this, file); };
     l.property = function (key) { return this.groups[key] || null; };
     l.remove = function () {
         for (var i = 0; i < comp.list.length; i++) if (comp.list[i] === this) { comp.list.splice(i, 1); break; }
@@ -339,6 +465,9 @@ function makeComp(name, w, h) {
     c.nullDurations = [];
     c.time = 0;              // the playhead, where update keys are written
     c.numLayers = 0;
+    c.selectedProperties = [];
+    c.selectedLayers = [];
+    c.openInViewer = function () { app.project.activeItem = c; mock.viewerOpens.push(c.name); return null; };
     c.syncCount = function () { c.numLayers = c.list.length; };
     c.layer = function (i) { return c.list[i - 1] || null; };
     c.layers = {
@@ -474,7 +603,14 @@ function build(doc, opts) {
     mock.rejectRemove = opts.rejectRemove || {};
     mock.rejectNull = !!opts.rejectNull;
     mock.setCounts = {};
+    mock.presets = !!opts.presets;
+    mock.presetThrows = !!opts.presetThrows;
+    mock.presetsApplied = [];
+    mock.viewerOpens = [];
     app.fonts = opts.fonts || undefined;
+    // The tests below this harness were written against the Gradient Ramp;
+    // real gradients are opted into with opts.gradients = "real".
+    LazyLord._ae_GRADIENTS = opts.gradients || "ramp";
     // opts.comp reuses a comp from an earlier build, so a second transfer can
     // find what the first one left behind.
     var comp = opts.comp || (opts.newComp ? null : makeComp("Active", 1920, 1080));
@@ -2177,6 +2313,296 @@ function fxVal(fx, mn) {
     ok("image: effects apply to footage too", !!fxNamed(r2.comp.list[0], "ADBE Drop Shadow"),
        fxOf(r2.comp.list[0]));
 })();
+// ---------------------------------------------------------------------------
+// G) Real gradients: a Gradient Fill / Stroke, its colours set through a preset
+// ---------------------------------------------------------------------------
+
+function realBuild(doc, extra) {
+    var o = { gradients: "real", presets: true };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return build(doc, o);
+}
+function gradColorsOf(prop) {
+    var c = prop ? prop.property("ADBE Vector Grad Colors") : null;
+    return c ? c.gradColors : null;
+}
+function stopsText(stops) {
+    if (!stops) return String(stops);
+    var out = [];
+    for (var i = 0; i < stops.length; i++) {
+        var s = stops[i];
+        out.push(s.position + ":" + [s.r, s.g, s.b, s.a].join(","));
+    }
+    return out.join(" | ");
+}
+function childNames(node) {
+    var out = [];
+    for (var i = 0; node && i < node.children.length; i++) out.push(node.children[i].matchName);
+    return out.join(",");
+}
+function gval2(prop, mn) { return prop ? prop.property(mn).value : null; }
+
+// G1) A linear gradient: every stop, each with its own transparency, on a real Gradient Fill.
+(function () {
+    var frame = { x: 10, y: 20, width: 100, height: 50 };
+    var fill = linear([stop(1, rgba(0, 0, 1, 0.5)), stop(0, rgba(1, 0, 0)), stop(0.3, rgba(0, 1, 0, 0.8))],
+                      { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var r = realBuild(irDoc([vector("Bar", frame, { fills: [fill] })]));
+    var l = r.comp.list[0];
+    var gf = findIn(contents(l), "ADBE Vector Graphic - G-Fill");
+    var c = gradColorsOf(gf);
+
+    ok("real: one shape layer", r.comp.list.length === 1, String(r.comp.list.length));
+    ok("real: a Gradient Fill, with no Gradient Ramp and no solid fill",
+       !!gf && effects(l).length === 0 && countIn(contents(l), "ADBE Vector Graphic - Fill") === 0, fxOf(l));
+    ok("real: linear", gval2(gf, "ADBE Vector Grad Type") === 1, String(gval2(gf, "ADBE Vector Grad Type")));
+    ok("real: start and end in the layer's own space",
+       nearPt(gval2(gf, "ADBE Vector Grad Start Pt"), [0, 25]) && nearPt(gval2(gf, "ADBE Vector Grad End Pt"), [100, 25]),
+       xy(gval2(gf, "ADBE Vector Grad Start Pt")) + " " + xy(gval2(gf, "ADBE Vector Grad End Pt")));
+    ok("real: all three stops arrive, sorted", c && c.length === 3 &&
+       near(c[0].position, 0) && near(c[1].position, 0.3) && near(c[2].position, 1), stopsText(c));
+    ok("real: each keeps its colour", c && near(c[0].r, 1) && near(c[1].g, 1) && near(c[2].b, 1), stopsText(c));
+    ok("real: and its own transparency", c && near(c[0].a, 1) && near(c[1].a, 0.8) && near(c[2].a, 0.5), stopsText(c));
+    ok("real: alpha stops sit with their colour stops, midpoints halfway",
+       c && near(c[1].alphaAt, 0.3) && near(c[1].mid, 0.5), stopsText(c));
+    ok("real: one preset, on the Gradient Fill",
+       mock.presetsApplied.length === 1 && mock.presetsApplied[0].target === "ADBE Vector Graphic - G-Fill",
+       JSON.stringify(mock.presetsApplied));
+    ok("real: the preset file is removed afterwards", presetFilesLeft() === 0, String(presetFilesLeft()));
+    var stash = LazyLord.readGradientStash(l.comment);
+    var key = LazyLord.gradientStashKey([1], gf.propertyIndex, "fill");
+    ok("real: the stops are noted on the layer, to be read back", LazyLord.parseGradientStops(stash[key]) !== null, l.comment);
+    ok("real: beside the layer's tag", /\[\[LazyLord /.test(l.comment), l.comment);
+    ok("real: nothing to report", r.diags.length === 0, dump(r.diags));
+})();
+
+// G2) Radial: centre to the radius, no approximation for an offset first stop.
+(function () {
+    var frame = { x: 100, y: 50, width: 200, height: 100 };
+    var fill = radial([stop(0.25, rgba(1, 1, 1)), stop(1, rgba(0, 0, 0, 0))], { x: 0.5, y: 0.5 }, { x: 1, y: 0.5 });
+    var r = realBuild(irDoc([vector("Halo", frame, { fills: [fill] })]));
+    var gf = findIn(contents(r.comp.list[0]), "ADBE Vector Graphic - G-Fill");
+    var c = gradColorsOf(gf);
+    ok("real radial: radial", gval2(gf, "ADBE Vector Grad Type") === 2);
+    ok("real radial: centre and a point on the radius, in layer space",
+       nearPt(gval2(gf, "ADBE Vector Grad Start Pt"), [100, 50]) && nearPt(gval2(gf, "ADBE Vector Grad End Pt"), [200, 50]),
+       xy(gval2(gf, "ADBE Vector Grad Start Pt")) + " " + xy(gval2(gf, "ADBE Vector Grad End Pt")));
+    ok("real radial: the first stop stays 25% out", c && near(c[0].position, 0.25), stopsText(c));
+    ok("real radial: fading to clear", c && near(c[1].a, 0), stopsText(c));
+    ok("real radial: nothing approximated", r.diags.length === 0, dump(r.diags));
+})();
+
+// G3) A stroke no longer needs a layer of its own: it sits above the fill in one layer.
+(function () {
+    var frame = { x: 0, y: 0, width: 80, height: 40 };
+    var fill = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0 }, { x: 1, y: 0 });
+    var r = realBuild(irDoc([vector("Pill", frame, { fills: [fill], strokes: [{ paint: solid(0, 0, 0), weight: 3 }] })]));
+    var l = r.comp.list[0];
+    var body = inside(vgroups(contents(l))[0]);
+    ok("real+stroke: one layer, nothing split off", r.comp.list.length === 1, String(r.comp.list.length));
+    ok("real+stroke: path, then stroke, then the gradient fill",
+       childNames(body) === "ADBE Vector Shape - Group,ADBE Vector Graphic - Stroke,ADBE Vector Graphic - G-Fill", childNames(body));
+    ok("real+stroke: the fill still gets its colours", gradColorsOf(findIn(body, "ADBE Vector Graphic - G-Fill")) !== null);
+    ok("real+stroke: nothing to report", r.diags.length === 0, dump(r.diags));
+})();
+
+// G4) A gradient stroke is a Gradient Stroke with its width, cap, join and colours.
+(function () {
+    var frame = { x: 0, y: 0, width: 80, height: 40 };
+    var sg = linear([stop(0, rgba(0, 1, 0)), stop(0.5, rgba(1, 1, 0)), stop(1, rgba(1, 0, 1))], { x: 0, y: 0 }, { x: 1, y: 1 });
+    var r = realBuild(irDoc([vector("Rim", frame, {
+        fills: [solid(1, 1, 1)], strokes: [{ paint: sg, weight: 4, cap: "round", join: "bevel" }]
+    })]));
+    var l = r.comp.list[0];
+    var gs = findIn(contents(l), "ADBE Vector Graphic - G-Stroke");
+    ok("gradient stroke: a Gradient Stroke", !!gs && countIn(contents(l), "ADBE Vector Graphic - Stroke") === 0);
+    ok("gradient stroke: width, cap and join", gval2(gs, "ADBE Vector Stroke Width") === 4 &&
+       gval2(gs, "ADBE Vector Stroke Line Cap") === 2 && gval2(gs, "ADBE Vector Stroke Line Join") === 3);
+    ok("gradient stroke: corner to corner", nearPt(gval2(gs, "ADBE Vector Grad End Pt"), [80, 40]),
+       xy(gval2(gs, "ADBE Vector Grad End Pt")));
+    ok("gradient stroke: all three colours, from a preset made for a stroke",
+       gradColorsOf(gs) && gradColorsOf(gs).length === 3 && mock.presetsApplied[0].target === "ADBE Vector Graphic - G-Stroke",
+       stopsText(gradColorsOf(gs)));
+    ok("gradient stroke: the white fill stays a solid fill", countIn(contents(l), "ADBE Vector Graphic - Fill") === 1);
+    ok("gradient stroke: no longer flattened to its first colour", r.diags.length === 0, dump(r.diags));
+})();
+
+// G5) Both a gradient fill and a gradient stroke: two presets, each where it belongs.
+(function () {
+    var frame = { x: 0, y: 0, width: 60, height: 60 };
+    var fg = radial([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 0))], { x: 0.5, y: 0.5 }, { x: 1, y: 0.5 });
+    var sg = linear([stop(0, rgba(0, 0, 1)), stop(1, rgba(0, 1, 1))], { x: 0, y: 0 }, { x: 0, y: 1 });
+    var r = realBuild(irDoc([vector("Coin", frame, { fills: [fg], strokes: [{ paint: sg, weight: 2 }] })]));
+    var l = r.comp.list[0];
+    var gf = findIn(contents(l), "ADBE Vector Graphic - G-Fill");
+    var gs = findIn(contents(l), "ADBE Vector Graphic - G-Stroke");
+    ok("both: two presets", mock.presetsApplied.length === 2, JSON.stringify(mock.presetsApplied));
+    ok("both: the fill got the fill's red", gradColorsOf(gf) && near(gradColorsOf(gf)[0].r, 1), stopsText(gradColorsOf(gf)));
+    ok("both: the stroke got the stroke's blue", gradColorsOf(gs) && near(gradColorsOf(gs)[0].b, 1), stopsText(gradColorsOf(gs)));
+    var stash = LazyLord.readGradientStash(l.comment);
+    ok("both: both are noted",
+       !!stash[LazyLord.gradientStashKey([1], gf.propertyIndex, "fill")] &&
+       !!stash[LazyLord.gradientStashKey([1], gs.propertyIndex, "stroke")], l.comment);
+})();
+
+// G6) A comp that is not in the viewer is brought forward before its first preset.
+(function () {
+    var fill = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0 }, { x: 1, y: 0 });
+    var r = realBuild(irDoc([vector("A", { x: 0, y: 0, width: 10, height: 10 }, { fills: [fill] }),
+                             vector("B", { x: 20, y: 0, width: 10, height: 10 }, { fills: [fill] })]),
+                      { newComp: true });
+    var made = app.compObjects[app.compObjects.length - 1];
+    ok("viewer: the new comp is opened once, not per preset",
+       mock.viewerOpens.length <= 1 && mock.presetsApplied.length === 2, mock.viewerOpens.join(","));
+    ok("viewer: and it is the comp the gradients went into",
+       mock.viewerOpens.length === 0 || mock.viewerOpens[0] === made.name, mock.viewerOpens.join(","));
+})();
+
+// G7) After Effects will not apply presets: the Gradient Ramp takes over, reported once.
+(function () {
+    var frame = { x: 0, y: 0, width: 100, height: 50 };
+    var fill = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var r = realBuild(irDoc([
+        vector("First", frame, { fills: [fill], strokes: [{ paint: solid(0, 0, 0), weight: 1 }] }),
+        vector("Second", frame, { fills: [fill] })
+    ]), { presets: false });
+    var once = diagsMatching(r.diags, /could not be built as real gradients/i);
+    ok("fallback: said once, for the whole transfer", once.length === 1, dump(r.diags));
+    ok("fallback: the reason is given", once.length === 1 && /cannot apply presets/.test(once[0].reason), dump(r.diags));
+    var ramps = 0, gfills = 0;
+    for (var i = 0; i < r.comp.list.length; i++) {
+        if (fxNamed(r.comp.list[i], "ADBE Ramp")) ramps++;
+        gfills += countIn(contents(r.comp.list[i]), "ADBE Vector Graphic - G-Fill");
+    }
+    ok("fallback: both shapes use a Gradient Ramp", ramps === 2, String(ramps));
+    ok("fallback: no half-made Gradient Fill is left behind", gfills === 0, String(gfills));
+    ok("fallback: and the stroke goes back on a layer of its own, as the Ramp needs",
+       r.comp.list.length === 3, String(r.comp.list.length));
+    ok("fallback: no preset files left", presetFilesLeft() === 0);
+})();
+
+// G8) A preset that fails to apply is handled the same way.
+(function () {
+    var fill = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0 }, { x: 1, y: 0 });
+    var r = realBuild(irDoc([vector("Only", { x: 0, y: 0, width: 50, height: 50 }, { fills: [fill] })]), { presetThrows: true });
+    ok("preset error: reported", diagsMatching(r.diags, /could not apply the preset/).length === 1, dump(r.diags));
+    ok("preset error: built with a Gradient Ramp instead",
+       r.comp.list.length === 1 && !!fxNamed(r.comp.list[0], "ADBE Ramp"), fxOf(r.comp.list[0]));
+    ok("preset error: the file is still cleaned up", presetFilesLeft() === 0);
+})();
+
+// G9) Combine: a gradient shape joins the combined layer, its handles in its group's space.
+(function () {
+    var grad = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var r = realBuild(irDoc([
+        vector("Flat", { x: 0, y: 0, width: 40, height: 40 }),
+        vector("Grad", { x: 100, y: 50, width: 60, height: 20 }, { fills: [grad] })
+    ], { options: { layout: "combine" } }));
+    ok("combine: one shape layer for both", r.comp.list.length === 1, String(r.comp.list.length));
+    var gf = findIn(contents(r.comp.list[0]), "ADBE Vector Graphic - G-Fill");
+    ok("combine: the gradient shape brought its Gradient Fill", !!gf && gradColorsOf(gf) !== null);
+    ok("combine: its handles are in its own group's space",
+       nearPt(gval2(gf, "ADBE Vector Grad Start Pt"), [0, 10]) && nearPt(gval2(gf, "ADBE Vector Grad End Pt"), [60, 10]),
+       xy(gval2(gf, "ADBE Vector Grad Start Pt")) + " " + xy(gval2(gf, "ADBE Vector Grad End Pt")));
+    ok("combine: no 'could not join' for gradients", diagsMatching(r.diags, /gradient-filled/).length === 0, dump(r.diags));
+    var stash = LazyLord.readGradientStash(r.comp.list[0].comment);
+    var any = false;
+    for (var k in stash) if (/\|fill$/.test(k)) any = true;
+    ok("combine: noted on the combined layer", any, r.comp.list[0].comment);
+})();
+
+// G10) Combine, when presets fail: that shape is flattened in place, the layer stays whole.
+(function () {
+    var grad = linear([stop(0, rgba(0, 1, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0 }, { x: 1, y: 0 });
+    var r = realBuild(irDoc([
+        vector("Flat", { x: 0, y: 0, width: 40, height: 40 }),
+        vector("Grad", { x: 50, y: 0, width: 40, height: 40 }, { fills: [grad], strokes: [{ paint: solid(0, 0, 0), weight: 1 }] })
+    ], { options: { layout: "combine" } }), { presetThrows: true });
+    var l = r.comp.list[0];
+    ok("combine fallback: still one layer", r.comp.list.length === 1, String(r.comp.list.length));
+    ok("combine fallback: no Gradient Fill and no Ramp", countIn(contents(l), "ADBE Vector Graphic - G-Fill") === 0 &&
+       !fxNamed(l, "ADBE Ramp"), fxOf(l));
+    var groups = vgroups(contents(l));
+    var grad2 = null;
+    for (var i = 0; i < groups.length; i++) if (groups[i].name === "Grad") grad2 = inside(groups[i]);
+    ok("combine fallback: the shape keeps its stroke above a flat fill in the first stop's green",
+       childNames(grad2) === "ADBE Vector Shape - Group,ADBE Vector Graphic - Stroke,ADBE Vector Graphic - Fill" &&
+       nearArr(findIn(grad2, "ADBE Vector Fill Color").value, [0, 1, 0, 1]), childNames(grad2));
+    ok("combine fallback: the flattening is reported", diagsMatching(r.diags, /flat colour of its first stop/).length === 1, dump(r.diags));
+})();
+
+// G11) A legacy rotated vector: the handles follow the layer's rotation into its own space.
+(function () {
+    var frame = { x: 0, y: 0, width: 100, height: 50, rotation: 90 };
+    var fill = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var r = realBuild(irDoc([vector("Turned", frame, { fills: [fill] })]));
+    var l = r.comp.list[0];
+    var gf = findIn(contents(l), "ADBE Vector Graphic - G-Fill");
+    // Unrotated, the handles are the frame's left and right middles; seen through the
+    // layer's own transform they come back to exactly that in the layer's space.
+    ok("rotated: handles in the unrotated shape's own space",
+       nearPt(gval2(gf, "ADBE Vector Grad Start Pt"), [0, 25], 1e-6) && nearPt(gval2(gf, "ADBE Vector Grad End Pt"), [100, 25], 1e-6),
+       xy(gval2(gf, "ADBE Vector Grad Start Pt")) + " " + xy(gval2(gf, "ADBE Vector Grad End Pt")));
+    ok("rotated: and they land where the source put them in the comp",
+       nearPt(toComp(l, gval2(gf, "ADBE Vector Grad Start Pt")), [50, -25], 1e-6),
+       xy(toComp(l, gval2(gf, "ADBE Vector Grad Start Pt"))));
+})();
+
+// G12) Updating a real gradient: new colours re-applied, unchanged ones left alone, handles moved.
+(function () {
+    var frame = { x: 0, y: 0, width: 100, height: 50 };
+    var red = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 0, y: 0.5 }, { x: 1, y: 0.5 });
+    var first = realBuild(taggedDoc([vector("Box", frame, { fills: [red] })]));
+    var was = first.comp.list[0];
+
+    // Same colours, handles swapped: geometry is written, no preset needed.
+    var flipped = linear([stop(0, rgba(1, 0, 0)), stop(1, rgba(0, 0, 1))], { x: 1, y: 0.5 }, { x: 0, y: 0.5 });
+    var second = realBuild(taggedDoc([vector("Box", frame, { fills: [flipped] })], "file-A", updateOpts()), { comp: first.comp });
+    var gf = findIn(contents(was), "ADBE Vector Graphic - G-Fill");
+    ok("update gradient: the same layer is edited", second.comp.list.length === 1 && second.comp.list[0] === was);
+    ok("update gradient: the handles move", nearPt(gval2(gf, "ADBE Vector Grad Start Pt"), [100, 25]),
+       xy(gval2(gf, "ADBE Vector Grad Start Pt")));
+    ok("update gradient: unchanged colours need no preset", mock.presetsApplied.length === 0, JSON.stringify(mock.presetsApplied));
+
+    // New colours: re-applied, and the note follows.
+    var green = linear([stop(0, rgba(0, 1, 0)), stop(0.5, rgba(1, 1, 1, 0.5)), stop(1, rgba(0, 0, 0))],
+                       { x: 1, y: 0.5 }, { x: 0, y: 0.5 });
+    var third = realBuild(taggedDoc([vector("Box", frame, { fills: [green] })], "file-A", updateOpts()), { comp: first.comp });
+    gf = findIn(contents(was), "ADBE Vector Graphic - G-Fill");
+    ok("update gradient: changed colours are applied again",
+       mock.presetsApplied.length === 1 && gradColorsOf(gf).length === 3 && near(gradColorsOf(gf)[1].a, 0.5),
+       stopsText(gradColorsOf(gf)));
+    var note = LazyLord.parseGradientStops(LazyLord.readGradientStash(was.comment)[LazyLord.gradientStashKey([1], gf.propertyIndex, "fill")]);
+    ok("update gradient: the note on the layer is the new one", note && note.length === 3, was.comment);
+    ok("update gradient: only one note, not a second token",
+       (was.comment.match(/\{\{LazyLord gradients/g) || []).length === 1, was.comment);
+    ok("update gradient: nothing to report", third.diags.length === 0, dump(third.diags));
+})();
+
+// G13) The preset bytes on their own: a stroke preset names the Gradient Stroke, and sizes add up for an odd length too.
+(function () {
+    var odd = null, xml = null;
+    var reds = [0.1, 0.12, 0.123, 0.1234];
+    for (var i = 0; i < reds.length && odd === null; i++) {
+        var s = [{ position: 0, color: rgba(reds[i], 0, 0) }, { position: 1, color: rgba(0, 0, 0, 1) }];
+        xml = LazyLord._ae_presetXml(s);
+        if (xml.length % 2) odd = LazyLord._ae_presetBytes(s, "stroke");
+    }
+    var info = { names: [], xml: null };
+    var threw = null;
+    try {
+        if (odd === null) throw new Error("no odd-length XML among the samples");
+        if (u32(odd, 4) + 8 !== odd.length) throw new Error("the RIFX size is off");
+        riffWalk(odd, 12, odd.length, info);
+    } catch (err) { threw = err.message; }
+    ok("preset bytes: an odd-length XML is padded and every size still adds up", threw === null, threw);
+    ok("preset bytes: the path runs down to the stroke's Colors",
+       info.names.join(" > ").indexOf("ADBE Root Vectors Group > ADBE Vector Group > ADBE Vectors Group > ADBE Vector Graphic - G-Stroke > ADBE Vector Grad Colors") === 0,
+       info.names.join(" > "));
+    var six = LazyLord._ae_presetXml([{ position: 0, color: rgba(0.123456789, 0, 0) }, { position: 1, color: rgba(0, 0, 0) }]);
+    ok("preset bytes: numbers carry at most six decimals", six.indexOf("<float>0.123457</float>") > 0);
+})();
+
 WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

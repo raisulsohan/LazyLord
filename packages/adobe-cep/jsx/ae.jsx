@@ -69,6 +69,7 @@ LazyLord.build = function (doc) {
       conflicts: 0,  // matched layers edited here since the last send
       keep: opts.conflict === "keep"
     };
+    LazyLord._ae_resetGradients(ctx.comp);
     if (update) {
       ctx.index = LazyLord._ae_index(ctx.comp);
       try { ctx.time = ctx.comp.time; } catch (eT) { ctx.time = 0; }
@@ -379,7 +380,8 @@ LazyLord._ae_group = function (ctx, group, fade, outer) {
  * nested vector groups carrying their own opacity.
  *
  * Not eligible, and built as layers of their own: text and images, gradient
- * fills (the Gradient Ramp colours a whole layer) and vectors whose clip
+ * fills when they fall back to a Gradient Ramp (which colours a whole layer;
+ * a real Gradient Fill joins like any other paint) and vectors whose clip
  * differs from the rest. The clip most combined vectors share (or none) wins;
  * when it is a clip, it goes on the combined layer as masks.
  * ---------------------------------------------------------------------- */
@@ -410,7 +412,8 @@ LazyLord._ae_planCombine = function (doc, layers) {
     if (l.type === "text") why.text++;
     else if (l.type === "image") why.image++;
     else if (l.type === "vector") {
-      if (LazyLord.isGradient(LazyLord.fillPaint(l))) { why.gradient++; continue; }
+      // A Gradient Ramp colours a whole layer; a real Gradient Fill does not.
+      if (LazyLord.isGradient(LazyLord.fillPaint(l)) && !LazyLord._ae_realGradients()) { why.gradient++; continue; }
       var key = LazyLord._ae_clipKey(l, i);
       vectors.push(l);
       keys.push(key);
@@ -616,9 +619,20 @@ LazyLord._ae_comboLeaf = function (sl, path, layer, origin) {
     // Paint above in Contents renders in front, so the stroke goes before the
     // fill and draws over it, as the source does (and as AE's own tools lay
     // out); _ae_vector does the same for a layer of its own.
+    var leaf = path.concat([at]);
+    var xf = LazyLord._ae_vectorXf(layer.frame);
+    var jobs = [];
     var stroke = LazyLord.firstStroke(layer);
-    if (stroke && stroke.paint) LazyLord._ae_stroke(g, layer, stroke);
-    if (layer.fills && layer.fills.length) LazyLord._ae_fill(g, layer, LazyLord.fillColor(layer));
+    var paint = LazyLord.fillPaint(layer);
+    if (stroke && stroke.paint) {
+      if (LazyLord.isGradient(stroke.paint) && LazyLord._ae_realGradients()) jobs.push(LazyLord._ae_gradStroke(g, layer, stroke, xf, leaf));
+      else LazyLord._ae_stroke(g, layer, stroke);
+    }
+    if (layer.fills && layer.fills.length) {
+      if (LazyLord.isGradient(paint) && LazyLord._ae_realGradients()) jobs.push(LazyLord._ae_gradFill(g, layer, paint, xf, leaf));
+      else LazyLord._ae_fill(g, layer, LazyLord.fillColor(layer));
+    }
+    if (jobs.length && !LazyLord._ae_paintGradients(sl, jobs)) LazyLord._ae_repaintFlat(sl, leaf, layer);
     layer._ae_drawn = true;
     return true;
   } catch (e) {
@@ -1164,10 +1178,22 @@ LazyLord._ae_vector = function (comp, layer, out) {
   var gradient = LazyLord.isGradient(paint);
   var stroke = LazyLord.firstStroke(layer);
   if (stroke && !stroke.paint) stroke = null;
+  var xf = LazyLord._ae_vectorXf(layer.frame);
+
+  // A real gradient is one layer, stroke and all. When its colours cannot be
+  // set, that layer is taken away again and the shape is built below with a
+  // Gradient Ramp instead.
+  if ((gradient || (stroke && LazyLord.isGradient(stroke.paint))) && LazyLord._ae_realGradients()) {
+    var real = LazyLord._ae_vectorReal(comp, layer, xf);
+    if (real) {
+      if (out) out.push(real);
+      return real;
+    }
+  }
+
   // A Gradient Ramp colours the whole layer, stroke included, so a
   // gradient-filled shape keeps its stroke on a layer of its own.
   var splitStroke = !!(gradient && stroke);
-  var xf = LazyLord._ae_vectorXf(layer.frame);
   var made = [];
   var main;
 
@@ -1220,6 +1246,45 @@ LazyLord._ae_vector = function (comp, layer, out) {
   }
   if (out) for (var k = 0; k < made.length; k++) out.push(made[k]);
   return main.layer;
+};
+
+/**
+ * A vector whose fill or stroke is a gradient, as one shape layer with a real
+ * Gradient Fill and/or Gradient Stroke. Returns the layer, or null when the
+ * gradient colours could not be set — the layer is gone again by then, and
+ * _ae_grad is marked so the rest of the transfer uses the Gradient Ramp.
+ */
+LazyLord._ae_vectorReal = function (comp, layer, xf) {
+  var name = layer.name || "Vector";
+  var made = [];
+  try {
+    var main = LazyLord._ae_shapeLayer(comp, layer, name, made, false);
+    var at = [main.group];
+    var jobs = [];
+    // Stroke before fill: paint above in Contents renders in front.
+    var stroke = LazyLord.firstStroke(layer);
+    if (stroke && stroke.paint) {
+      if (LazyLord.isGradient(stroke.paint)) jobs.push(LazyLord._ae_gradStroke(main.vectors, layer, stroke, xf, at));
+      else LazyLord._ae_stroke(main.vectors, layer, stroke);
+    }
+    if (layer.fills && layer.fills.length) {
+      var paint = LazyLord.fillPaint(layer);
+      if (LazyLord.isGradient(paint)) jobs.push(LazyLord._ae_gradFill(main.vectors, layer, paint, xf, at));
+      else LazyLord._ae_fill(main.vectors, layer, LazyLord.fillColor(layer));
+    }
+    LazyLord._ae_setTransform(main.layer, xf, layer.frame.opacity);
+    if (!LazyLord._ae_paintGradients(main.layer, jobs)) {
+      LazyLord._ae_discard(made);
+      return null;
+    }
+    LazyLord._ae_clip(main.layer, layer, xf);
+    LazyLord._ae_applyBlend(main.layer, layer);
+    LazyLord._ae_applyEffects(main.layer, layer);
+    return main.layer;
+  } catch (e) {
+    LazyLord._ae_discard(made);
+    throw e;
+  }
 };
 
 /**
@@ -1322,6 +1387,12 @@ LazyLord._ae_stroke = function (g, layer, stroke) {
   st.property("ADBE Vector Stroke Color").setValue(LazyLord._ae_rgba(sc));
   st.property("ADBE Vector Stroke Width").setValue(stroke.weight || 1);
   st.property("ADBE Vector Stroke Opacity").setValue(LazyLord.pct(LazyLord._ae_alpha(sc)));
+  LazyLord._ae_strokeStyle(st, layer, stroke);
+  return st;
+};
+
+/** Cap and join on a stroke or gradient stroke, falling back to AE's defaults. */
+LazyLord._ae_strokeStyle = function (st, layer, stroke) {
   try {
     var capMap = { none: 1, round: 2, square: 3 };
     var joinMap = { miter: 1, round: 2, bevel: 3 };
@@ -1330,8 +1401,381 @@ LazyLord._ae_stroke = function (g, layer, stroke) {
   } catch (e2) {
     LazyLord.warn(layer.name || "Shape", "Stroke cap and join could not be set, so After Effects' defaults are used", "approximated");
   }
-  return st;
 };
+
+/* -------------------------------------------------------------------------
+ * Gradients: a real Gradient Fill or Gradient Stroke
+ *
+ * Everything about a shape layer's gradient is scriptable but its colours:
+ * type, start point and end point take values like any other property, while
+ * Colors holds a value type a script can neither write nor read. An animation
+ * preset can carry it, though. So a gradient is built as a real Gradient Fill
+ * (or Stroke), and a preset holding nothing but its Colors is written out and
+ * applied with that one property selected. That gives every stop, each with
+ * its own transparency, in a gradient the user can open in AE's editor.
+ *
+ * A preset is a RIFX file. Its fixed chunks — the property path down to the
+ * Colors, and the chunks around the colour data — are the ones the open-source
+ * AEUX (Apache 2.0) ships for this same job; see THIRD-PARTY-NOTICES.md. The
+ * XML holding the stops is written here, and every chunk size is worked out
+ * from what is actually written.
+ *
+ * Nothing can be read back from Colors either, so the stops also go into the
+ * layer's comment as a {{LazyLord gradients …}} token for ae-read.jsx.
+ *
+ * If a preset cannot be written or applied, the rest of the transfer falls
+ * back to the Gradient Ramp (below), and that is reported once.
+ * ---------------------------------------------------------------------- */
+
+/** "real" builds Gradient Fills and Strokes; "ramp" keeps to the Gradient Ramp effect. */
+LazyLord._ae_GRADIENTS = "real";
+
+/** This build's gradient state, reset by LazyLord.build. */
+LazyLord._ae_grad = { mode: "real", failed: false, seq: 0, stamp: 0, comp: null, viewer: null };
+
+LazyLord._ae_resetGradients = function (comp) {
+  LazyLord._ae_grad = {
+    mode: LazyLord._ae_GRADIENTS,
+    failed: false,
+    seq: 0,
+    stamp: (new Date()).getTime(),
+    comp: comp,
+    viewer: null
+  };
+};
+
+/** True while gradients are built as real Gradient Fills and Strokes. */
+LazyLord._ae_realGradients = function () {
+  var st = LazyLord._ae_grad;
+  return st.mode === "real" && !st.failed;
+};
+
+/**
+ * The preset's fixed part, up to the start of the colour XML, as hex. Size
+ * fields are zero here and filled in by _ae_presetBytes; offsets:
+ *   4 RIFX · 40 LIST besc · 636 LIST GCst · 832 LIST GCky · 844 Utf8
+ * and the gradient property's match name is the 40 bytes at 396.
+ */
+LazyLord._ae_PRESET_HEAD =
+  "5249465800000000466146586865616400000010000000030000005700000001000000004c4953540000000062657363" +
+  "6265736f0000003800000001000000010000000000006000001800000000000400010001078004383ff0000000000000" +
+  "3ff000000000000000000000ffffffff4c495354000001847464737074646f7400000004ffffffff7464706c00000004" +
+  "000000054c49535400000040746473697464697800000004ffffffff74646d6e000000284144424520526f6f74205665" +
+  "63746f72732047726f757000000000000000000000000000000000004c49535400000040746473697464697800000004" +
+  "0000000074646d6e000000284144424520566563746f722047726f757000000000000000000000000000000000000000" +
+  "000000004c49535400000040746473697464697800000004ffffffff74646d6e000000284144424520566563746f7273" +
+  "2047726f7570000000000000000000000000000000000000000000004c49535400000040746473697464697800000004" +
+  "0000000274646d6e000000284144424520566563746f722047726170686963202d20472d46696c6c0000000000000000" +
+  "000000004c49535400000040746473697464697800000004ffffffff74646d6e000000284144424520566563746f7220" +
+  "4772616420436f6c6f727300000000000000000000000000000000007464736e00000007436f6c6f727300004c495354" +
+  "000000647464737074646f7400000004ffffffff7464706c00000004000000014c495354000000407464736974646978" +
+  "00000004ffffffff74646d6e000000284144424520456e64206f6620706174682073656e74696e656c00000000000000" +
+  "00000000000000004c49535400000000474373744c495354000000b0746462737464736200000004000000017464736e" +
+  "00000007436f6c6f72730000746462340000007cdb99000100070000ffffffff000060003f1a36e2eb1c432d3ff00000" +
+  "000000003ff00000000000003ff00000000000003ff00000000000000001000800000000000000000000000000000000" +
+  "000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "6364617400000004000000004c4953540000000047436b795574663800000000";
+
+/** Hex -> a byte string (one character per byte). */
+LazyLord._ae_hexBytes = function (hex) {
+  var out = [];
+  for (var i = 0; i < hex.length; i += 2) out.push(String.fromCharCode(parseInt(hex.substr(i, 2), 16)));
+  return out.join("");
+};
+
+/** `bytes` with a big-endian unsigned 32-bit `value` written at `at`. */
+LazyLord._ae_putU32 = function (bytes, at, value) {
+  var b = String.fromCharCode((value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255);
+  return bytes.substr(0, at) + b + bytes.substr(at + 4);
+};
+
+/** A number as the preset's XML writes it: clamped to 0..1, at most six decimals. */
+LazyLord._ae_presetFloat = function (v) {
+  v = (typeof v === "number" && !isNaN(v)) ? Math.max(0, Math.min(1, v)) : 0;
+  var s = v.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+  return "<float>" + (s === "" ? "0" : s) + "</float>";
+};
+
+/**
+ * The colour XML for sorted `stops`: an alpha stop and a colour stop at each
+ * position, midpoints halfway, as After Effects itself writes a gradient.
+ */
+LazyLord._ae_presetXml = function (stops) {
+  var f = LazyLord._ae_presetFloat;
+  var n = stops.length;
+  var L = ["<?xml version='1.0'?>", "<prop.map version='4'>", "<prop.list>",
+    "<prop.pair>", "<key>Gradient Color Data</key>", "<prop.list>"];
+
+  function list(key, row) {
+    L.push("<prop.pair>", "<key>" + key + "</key>", "<prop.list>", "<prop.pair>", "<key>Stops List</key>", "<prop.list>");
+    for (var i = 0; i < n; i++) {
+      L.push("<prop.pair>", "<key>Stop-" + i + "</key>", "<prop.list>", "<prop.pair>");
+      row(stops[i]);
+      L.push("</prop.pair>", "</prop.list>", "</prop.pair>");
+    }
+    L.push("</prop.list>", "</prop.pair>",
+      "<prop.pair>", "<key>Stops Size</key>", "<int type='unsigned' size='32'>" + n + "</int>", "</prop.pair>",
+      "</prop.list>", "</prop.pair>");
+  }
+
+  list("Alpha Stops", function (s) {
+    L.push("<key>Stops Alpha</key>", "<array>", "<array.type><float/></array.type>",
+      f(s.position || 0), f(0.5), f(LazyLord._ae_alpha(s.color)), "</array>");
+  });
+  list("Color Stops", function (s) {
+    var c = s.color || {};
+    L.push("<key>Stops Color</key>", "<array>", "<array.type><float/></array.type>",
+      f(s.position || 0), f(0.5), f(c.r || 0), f(c.g || 0), f(c.b || 0), "<float>1</float>", "</array>");
+  });
+
+  L.push("</prop.list>", "</prop.pair>",
+    "<prop.pair>", "<key>Gradient Colors</key>", "<string>1.0</string>", "</prop.pair>",
+    "</prop.list>", "</prop.map>");
+  return L.join("\n");
+};
+
+/**
+ * A whole preset file, as a byte string, giving `stops` (sorted, at least
+ * two) to the selected Gradient Fill (`kind` "fill") or Gradient Stroke.
+ */
+LazyLord._ae_presetBytes = function (stops, kind) {
+  var bytes = LazyLord._ae_hexBytes(LazyLord._ae_PRESET_HEAD);
+  var name = kind === "stroke" ? "ADBE Vector Graphic - G-Stroke" : "ADBE Vector Graphic - G-Fill";
+  while (name.length < 40) name += String.fromCharCode(0);
+  bytes = bytes.substr(0, 396) + name + bytes.substr(436);
+
+  var xml = LazyLord._ae_presetXml(stops);
+  var pad = xml.length % 2 ? String.fromCharCode(0) : "";
+
+  // Each size counts its chunk's contents; a parent counts its children's
+  // headers and padding too. The fixed children are the template's.
+  var gcky = 4 + 8 + xml.length + pad.length;
+  var gcst = 4 + (8 + 176) + (8 + gcky);
+  var besc = 4 + (8 + 56) + (8 + 388) + (8 + 8) + (8 + 100) + (8 + gcst);
+  var riff = 4 + (8 + 16) + (8 + besc);
+  bytes = LazyLord._ae_putU32(bytes, 4, riff);
+  bytes = LazyLord._ae_putU32(bytes, 40, besc);
+  bytes = LazyLord._ae_putU32(bytes, 636, gcst);
+  bytes = LazyLord._ae_putU32(bytes, 832, gcky);
+  bytes = LazyLord._ae_putU32(bytes, 844, xml.length);
+  return bytes + xml + pad;
+};
+
+/** Stops ready for a preset: sorted, and never fewer than two. */
+LazyLord._ae_presetStops = function (paint) {
+  var stops = LazyLord._ae_sortedStops(paint);
+  if (stops.length === 1) stops = [stops[0], { position: 1, color: stops[0].color }];
+  return stops;
+};
+
+/** Write a preset for `stops` to the temp folder. Returns the File. */
+LazyLord._ae_writePreset = function (stops, kind) {
+  var st = LazyLord._ae_grad;
+  st.seq++;
+  var dir = new Folder(Folder.temp.fsName + "/LazyLord");
+  if (!dir.exists) dir.create();
+  var file = new File(dir.fsName + "/gradient-" + st.stamp + "-" + st.seq + ".ffx");
+  file.encoding = "BINARY";
+  if (!file.open("w")) throw new Error("its colours could not be written to a preset in " + dir.fsName +
+    " — in After Effects, turn on Preferences > Scripting & Expressions > Allow Scripts to Write Files and Access Network");
+  var ok = file.write(LazyLord._ae_presetBytes(stops, kind));
+  file.close();
+  if (ok === false) throw new Error("its colours could not be written to a preset in " + dir.fsName);
+  return file;
+};
+
+/** Clear every selected property and layer in `comp`. */
+LazyLord._ae_deselectAll = function (comp) {
+  var list, i;
+  try {
+    list = comp.selectedProperties || [];
+    for (i = 0; i < list.length; i++) { try { list[i].selected = false; } catch (eP) {} }
+  } catch (e1) {}
+  try {
+    list = comp.selectedLayers || [];
+    for (i = 0; i < list.length; i++) { try { list[i].selected = false; } catch (eL) {} }
+  } catch (e2) {}
+};
+
+/**
+ * A preset lands on what is selected in the comp the viewer shows, so that
+ * comp is brought forward before the first preset goes into it.
+ */
+LazyLord._ae_viewerFor = function (sl) {
+  var st = LazyLord._ae_grad;
+  var comp = null;
+  try { comp = sl.containingComp; } catch (e) {}
+  if (!comp) comp = st.comp;
+  if (comp && st.viewer !== comp) {
+    try { if (app.project.activeItem !== comp) comp.openInViewer(); } catch (eOpen) {}
+    st.viewer = comp;
+  }
+  return comp;
+};
+
+/**
+ * Give the gradient property `job` names its colours: select it alone and
+ * apply a preset holding them. `job` = { path, index, kind, stops }, where
+ * `path` leads through vector groups to the Contents holding the property at
+ * `index`; it is looked up afresh, since every change to a shape layer's
+ * contents leaves earlier references invalid. Throws when it cannot.
+ */
+LazyLord._ae_applyGradColors = function (sl, job) {
+  if (typeof sl.applyPreset !== "function") throw new Error("this After Effects cannot apply presets from a script");
+  var comp = LazyLord._ae_viewerFor(sl);
+  var file = LazyLord._ae_writePreset(job.stops, job.kind);
+  try {
+    var prop = LazyLord._ae_contentsAt(sl, job.path).property(job.index);
+    var want = job.kind === "stroke" ? "ADBE Vector Graphic - G-Stroke" : "ADBE Vector Graphic - G-Fill";
+    if (!prop || prop.matchName !== want) throw new Error("the gradient property moved before its colours were set");
+    LazyLord._ae_deselectAll(comp);
+    sl.selected = true;
+    prop.selected = true;
+    sl.applyPreset(file);
+  } finally {
+    if (comp) LazyLord._ae_deselectAll(comp);
+    try { file.remove(); } catch (eRm) {}
+  }
+};
+
+/** Type, start and end point of a Gradient Fill or Stroke, in the shape's own space `xf`. */
+LazyLord._ae_gradGeometry = function (layer, paint, xf) {
+  var gp = LazyLord.gradientPx(layer, paint);
+  var centre = LazyLord.frameCenter(layer.frame);
+  var rot = layer.frame.rotation || 0;
+  var from = LazyLord._ae_toLayer(xf, LazyLord.rotatePoint(gp.from, centre, rot));
+  var to = LazyLord._ae_toLayer(xf, LazyLord.rotatePoint(gp.to, centre, rot));
+  return {
+    type: paint.type === "radial-gradient" ? 2 : 1,
+    start: [from[0], from[1]],
+    end: [to[0], to[1]]
+  };
+};
+
+LazyLord._ae_writeGradGeometry = function (prop, geo) {
+  prop.property("ADBE Vector Grad Type").setValue(geo.type);
+  prop.property("ADBE Vector Grad Start Pt").setValue(geo.start);
+  prop.property("ADBE Vector Grad End Pt").setValue(geo.end);
+};
+
+/**
+ * A Gradient Fill for `paint`, added to the Contents `g` at `path`. Its colours
+ * come later, from _ae_paintGradients. Returns the job that will set them.
+ */
+LazyLord._ae_gradFill = function (g, layer, paint, xf, path) {
+  var gf = g.addProperty("ADBE Vector Graphic - G-Fill");
+  var job = { path: path, index: gf.propertyIndex, kind: "fill", stops: LazyLord._ae_presetStops(paint) };
+  LazyLord._ae_writeGradGeometry(gf, LazyLord._ae_gradGeometry(layer, paint, xf));
+  try {
+    gf.property("ADBE Vector Fill Rule").setValue(layer.windingRule === "evenodd" ? 2 : 1);
+  } catch (eRule) {
+    if (layer.windingRule === "evenodd") {
+      LazyLord.warn(layer.name || "Vector", "The even-odd fill rule could not be set, so overlapping contours may fill in holes", "approximated");
+    }
+  }
+  return job;
+};
+
+/** A Gradient Stroke for `stroke`, added to the Contents `g` at `path`. Returns its job. */
+LazyLord._ae_gradStroke = function (g, layer, stroke, xf, path) {
+  var gs = g.addProperty("ADBE Vector Graphic - G-Stroke");
+  var job = { path: path, index: gs.propertyIndex, kind: "stroke", stops: LazyLord._ae_presetStops(stroke.paint) };
+  LazyLord._ae_writeGradGeometry(gs, LazyLord._ae_gradGeometry(layer, stroke.paint, xf));
+  gs.property("ADBE Vector Stroke Width").setValue(stroke.weight || 1);
+  LazyLord._ae_strokeStyle(gs, layer, stroke);
+  return job;
+};
+
+/** Record `jobs`' stops in the layer comment, alongside any already there. */
+LazyLord._ae_stashGradients = function (sl, jobs) {
+  var comment = "";
+  try { comment = sl.comment || ""; } catch (e) {}
+  var entries = LazyLord.readGradientStash(comment);
+  for (var i = 0; i < jobs.length; i++) {
+    entries[LazyLord.gradientStashKey(jobs[i].path, jobs[i].index, jobs[i].kind)] = LazyLord._ae_stashValue(jobs[i].stops);
+  }
+  var parts = [];
+  for (var k in entries) {
+    if (entries.hasOwnProperty(k)) parts.push(k + "|" + entries[k]);
+  }
+  var rest = comment.replace(LazyLord.GRADIENT_STASH_RE, "");
+  try {
+    sl.comment = (rest ? rest + " " : "") + "{{LazyLord gradients " + parts.join(" ") + "}}";
+  } catch (eSet) {
+    LazyLord.warn(sl.name || "Shape", "The gradient's colours could not be noted on the layer, so sending it back out of After Effects sends it unfilled", "approximated");
+  }
+};
+
+/** A number with at most four decimals, as text. */
+LazyLord._ae_num4 = function (v) {
+  return (Math.round(v * 10000) / 10000).toString();
+};
+
+/** Stops as a stash value: "pos,r,g,b,a;…". */
+LazyLord._ae_stashValue = function (stops) {
+  var rows = [];
+  for (var s = 0; s < stops.length; s++) {
+    var st = stops[s], c = st.color || {};
+    rows.push([LazyLord._ae_num4(st.position || 0), LazyLord._ae_num4(c.r || 0), LazyLord._ae_num4(c.g || 0),
+      LazyLord._ae_num4(c.b || 0), LazyLord._ae_num4(LazyLord._ae_alpha(c))].join(","));
+  }
+  return rows.join(";");
+};
+
+/**
+ * Colour the gradients just added to `sl`. Returns true when every one took;
+ * on failure, the rest of the transfer falls back to the Gradient Ramp, and
+ * the caller rebuilds this shape's paint the old way.
+ */
+LazyLord._ae_paintGradients = function (sl, jobs) {
+  if (!jobs.length) return true;
+  try {
+    for (var i = 0; i < jobs.length; i++) LazyLord._ae_applyGradColors(sl, jobs[i]);
+  } catch (e) {
+    LazyLord._ae_grad.failed = true;
+    LazyLord.warn("Gradients", "Could not be built as real gradients (" + ((e && e.message) || String(e)) +
+      "), so this transfer uses a Gradient Ramp for them instead", "approximated");
+    return false;
+  }
+  LazyLord._ae_stashGradients(sl, jobs);
+  return true;
+};
+
+/**
+ * A shape in a combined layer whose gradient colours could not be set: its
+ * paint is taken off and put back flat, in the first stops' colours. A Gradient
+ * Ramp is no way out here, since it would colour every shape on the layer.
+ */
+LazyLord._ae_repaintFlat = function (sl, leaf, layer) {
+  var name = layer.name || "Vector";
+  var PAINT = {
+    "ADBE Vector Graphic - Fill": 1, "ADBE Vector Graphic - Stroke": 1,
+    "ADBE Vector Graphic - G-Fill": 1, "ADBE Vector Graphic - G-Stroke": 1
+  };
+  try {
+    var g = LazyLord._ae_contentsAt(sl, leaf);
+    for (var i = g.numProperties; i >= 1; i--) {
+      var p = g.property(i);
+      if (p && PAINT[p.matchName]) p.remove();
+    }
+    g = LazyLord._ae_contentsAt(sl, leaf);
+    var stroke = LazyLord.firstStroke(layer);
+    if (stroke && stroke.paint) LazyLord._ae_stroke(g, layer, stroke); // a gradient stroke reports its flattening
+    if (layer.fills && layer.fills.length) {
+      var paint = LazyLord.fillPaint(layer);
+      if (LazyLord.isGradient(paint)) {
+        LazyLord._ae_fill(g, layer, LazyLord._ae_sortedStops(paint)[0].color);
+        LazyLord.warn(name, "Its gradient became the flat colour of its first stop, since a Gradient Ramp would colour every shape in the combined layer", "approximated");
+      } else {
+        LazyLord._ae_fill(g, layer, LazyLord.fillColor(layer));
+      }
+    }
+  } catch (e) {
+    LazyLord.warn(name, "Its paint could not be rebuilt after the gradient failed (" + ((e && e.message) || String(e)) +
+      "), so the shape may show without its fill or stroke", "approximated");
+  }
+};
+
 
 /* -------------------------------------------------------------------------
  * Gradients: the Gradient Ramp effect
@@ -1851,6 +2295,17 @@ LazyLord._ae_state = function (lyr) {
       add(parts.stroke.property("ADBE Vector Stroke Width"));
       add(parts.stroke.property("ADBE Vector Stroke Opacity"));
     }
+    // A real gradient's colours cannot be read, so an edit to them goes
+    // unseen; its type and handles can, and a moved handle is an edit.
+    var grads = [parts.gfill, parts.gstroke];
+    for (var gi = 0; gi < grads.length; gi++) {
+      if (!grads[gi]) continue;
+      var gp = LazyLord._ae_contentsAt(lyr, grads[gi].path).property(grads[gi].index);
+      add(gp.property("ADBE Vector Grad Type"));
+      add(gp.property("ADBE Vector Grad Start Pt"));
+      add(gp.property("ADBE Vector Grad End Pt"));
+      if (gi === 1) add(gp.property("ADBE Vector Stroke Width"));
+    }
   } catch (eP) {}
   try {
     var tp = lyr.property("ADBE Text Properties");
@@ -1978,9 +2433,11 @@ LazyLord._ae_writeTransform = function (ctx, lyr, xf, opacity) {
  * contents rather than assuming the shape was left as it was built.
  */
 LazyLord._ae_findParts = function (sl) {
-  var parts = { paths: [], rect: null, ellipse: null, fill: null, stroke: null };
+  var parts = { paths: [], rect: null, ellipse: null, fill: null, stroke: null, gfill: null, gstroke: null };
 
-  function walk(group) {
+  // Gradients are found with where they sit, so their colours can be applied
+  // again later: a kept reference does not survive a preset.
+  function walk(group, path) {
     for (var i = 1; i <= group.numProperties; i++) {
       var p = group.property(i);
       var mn;
@@ -1989,7 +2446,7 @@ LazyLord._ae_findParts = function (sl) {
       if (mn === "ADBE Vector Group") {
         var inner = null;
         try { inner = p.property("ADBE Vectors Group"); } catch (eG) {}
-        if (inner) walk(inner);
+        if (inner) walk(inner, path.concat([i]));
       } else if (mn === "ADBE Vector Shape - Group") {
         try { parts.paths.push(p.property("ADBE Vector Shape")); } catch (eP) {}
       } else if (mn === "ADBE Vector Shape - Rect") {
@@ -2000,11 +2457,15 @@ LazyLord._ae_findParts = function (sl) {
         if (!parts.fill) parts.fill = p;
       } else if (mn === "ADBE Vector Graphic - Stroke") {
         if (!parts.stroke) parts.stroke = p;
+      } else if (mn === "ADBE Vector Graphic - G-Fill") {
+        if (!parts.gfill) parts.gfill = { path: path, index: i };
+      } else if (mn === "ADBE Vector Graphic - G-Stroke") {
+        if (!parts.gstroke) parts.gstroke = { path: path, index: i };
       }
     }
   }
 
-  try { walk(sl.property("ADBE Root Vectors Group")); } catch (e) {}
+  try { walk(sl.property("ADBE Root Vectors Group"), []); } catch (e) {}
   return parts;
 };
 
@@ -2053,12 +2514,16 @@ LazyLord._ae_putOutline = function (ctx, parts, layer, name) {
  * `part`: "fill" for the fill layer of a shape whose stroke has a layer of its
  * own, "stroke" for that stroke layer, else both.
  */
-LazyLord._ae_putPaint = function (ctx, parts, layer, name, part) {
+LazyLord._ae_putPaint = function (ctx, lyr, parts, layer, name, part) {
   var n = 0;
   var paint = LazyLord.fillPaint(layer);
   var gradient = LazyLord.isGradient(paint);
 
-  if (part !== "stroke" && parts.fill && layer.fills && layer.fills.length) {
+  if (part !== "stroke" && gradient && parts.gfill && layer.fills && layer.fills.length) {
+    n += LazyLord._ae_putGradient(ctx, lyr, parts.gfill, layer, paint, "fill");
+  } else if (part !== "stroke" && parts.gfill && !parts.fill && layer.fills && layer.fills.length) {
+    LazyLord.warn(name, "The source fill is now a flat colour but the layer has a gradient fill, which was left as it was; re-send with Add to rebuild it", "skipped");
+  } else if (part !== "stroke" && parts.fill && layer.fills && layer.fills.length) {
     var stops = gradient ? LazyLord._ae_sortedStops(paint) : null;
     var c = gradient ? stops[0].color : LazyLord.fillColor(layer);
     // A gradient's transparency rides on the fill, as the build put it there.
@@ -2071,17 +2536,54 @@ LazyLord._ae_putPaint = function (ctx, parts, layer, name, part) {
   }
 
   var stroke = part === "fill" ? null : LazyLord.firstStroke(layer);
-  if (stroke && stroke.paint && parts.stroke) {
+  if (stroke && stroke.paint && LazyLord.isGradient(stroke.paint) && parts.gstroke) {
+    n += LazyLord._ae_putGradient(ctx, lyr, parts.gstroke, layer, stroke.paint, "stroke");
+    try {
+      var gs = LazyLord._ae_contentsAt(lyr, parts.gstroke.path).property(parts.gstroke.index);
+      if (LazyLord._ae_put(ctx, gs.property("ADBE Vector Stroke Width"), stroke.weight || 1)) n++;
+    } catch (eW) {}
+  } else if (stroke && stroke.paint && parts.stroke) {
     var sc;
     if (LazyLord.isGradient(stroke.paint)) sc = LazyLord._ae_sortedStops(stroke.paint)[0].color;
     else sc = stroke.paint.color || { r: 0, g: 0, b: 0, a: 1 };
     if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Color"), LazyLord._ae_rgba(sc))) n++;
     if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Width"), stroke.weight || 1)) n++;
     if (LazyLord._ae_put(ctx, parts.stroke.property("ADBE Vector Stroke Opacity"), LazyLord.pct(LazyLord._ae_alpha(sc)))) n++;
-  } else if (stroke && stroke.paint && !parts.stroke) {
+  } else if (stroke && stroke.paint && !parts.stroke && !parts.gstroke) {
     LazyLord.warn(name, "The source has a stroke but the layer has none to update; re-send with Add to rebuild it", "skipped");
   }
 
+  return n;
+};
+
+/**
+ * Update a real Gradient Fill or Stroke found at `found` = { path, index }:
+ * its type and points like any property (keyed when animated), and its
+ * colours through a preset, only when they differ from the ones the layer
+ * notes it was given. Returns how many properties were written.
+ */
+LazyLord._ae_putGradient = function (ctx, lyr, found, layer, paint, kind) {
+  var name = layer.name || "Shape";
+  var n = 0;
+  var geo = LazyLord._ae_gradGeometry(layer, paint, LazyLord._ae_vectorXf(layer.frame));
+  try {
+    var prop = LazyLord._ae_contentsAt(lyr, found.path).property(found.index);
+    if (LazyLord._ae_put(ctx, prop.property("ADBE Vector Grad Type"), geo.type)) n++;
+    if (LazyLord._ae_put(ctx, prop.property("ADBE Vector Grad Start Pt"), geo.start)) n++;
+    if (LazyLord._ae_put(ctx, prop.property("ADBE Vector Grad End Pt"), geo.end)) n++;
+  } catch (eGeo) {
+    LazyLord.warn(name, "The gradient's direction could not be updated (" + ((eGeo && eGeo.message) || String(eGeo)) + ")", "skipped");
+  }
+
+  var job = { path: found.path, index: found.index, kind: kind, stops: LazyLord._ae_presetStops(paint) };
+  var had = "";
+  try { had = LazyLord.readGradientStash(lyr.comment)[LazyLord.gradientStashKey(found.path, found.index, kind)] || ""; } catch (eC) {}
+  if (had === LazyLord._ae_stashValue(job.stops)) return n;
+  if (LazyLord._ae_realGradients() && LazyLord._ae_paintGradients(lyr, [job])) {
+    n++;
+  } else {
+    LazyLord.warn(name, "The gradient's colours could not be updated, so it keeps the ones it had", "skipped");
+  }
   return n;
 };
 
@@ -2092,7 +2594,7 @@ LazyLord._ae_updateVector = function (ctx, lyr, layer, part) {
   var n = 0;
   n += LazyLord._ae_putTransform(ctx, lyr, xf, layer.frame.opacity);
   n += LazyLord._ae_putOutline(ctx, parts, layer, name);
-  n += LazyLord._ae_putPaint(ctx, parts, layer, name, part);
+  n += LazyLord._ae_putPaint(ctx, lyr, parts, layer, name, part);
   LazyLord._ae_reclip(lyr, layer, xf);
   return n;
 };

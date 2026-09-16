@@ -851,8 +851,11 @@ LazyLord._aer_shape = function (ctx, layer) {
   if (!root) return null;
 
   var matrix = LazyLord._aer_layerMatrix(ctx, layer);
-  var scan = { paths: [], painted: [], ops: 0 };
-  var tree = LazyLord._aer_walk(ctx, root, matrix, scan, layer.name, layer.name, 1);
+  var comment = "";
+  try { comment = layer.comment || ""; } catch (eC) {}
+  // The stops LazyLord gave its own real gradients, which cannot be read from them.
+  var scan = { paths: [], painted: [], ops: 0, gradients: LazyLord.readGradientStash(comment) };
+  var tree = LazyLord._aer_walk(ctx, root, matrix, scan, layer.name, layer.name, 1, []);
 
   if (scan.paths.length === 0) {
     LazyLord.warn(layer.name, "Shape layer has no readable paths", "skipped");
@@ -1137,7 +1140,8 @@ LazyLord._aer_cubicTurns = function (p0, p1, p2, p3, out) {
  * it in its own group, nested groups included, so each paint takes the paths
  * met so far; one with none above it paints nothing and is not kept.
  */
-LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacity) {
+LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacity, path) {
+  path = path || [];
   var node = { name: name, opacity: opacity, items: [], paths: [] };
   var above = node.paths;
   for (var i = 1; i <= group.numProperties; i++) {
@@ -1165,7 +1169,7 @@ LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacit
       var inner = prop.property("ADBE Vectors Group");
       if (inner) {
         var child = LazyLord._aer_walk(ctx, inner, childMatrix, scan, layerName,
-                                       LazyLord._aer_nameOf(prop), childOpacity);
+                                       LazyLord._aer_nameOf(prop), childOpacity, path.concat([i]));
         for (var c = 0; c < child.paths.length; c++) above.push(child.paths[c]);
         node.items.push({ group: child });
       }
@@ -1190,9 +1194,12 @@ LazyLord._aer_walk = function (ctx, group, matrix, scan, layerName, name, opacit
       LazyLord._aer_addOp(node, scan, prop, isFill ? "fill" : "stroke", paint, false);
 
     } else if (mn === "ADBE Vector Graphic - G-Fill" || mn === "ADBE Vector Graphic - G-Stroke") {
-      // Its paths are still painted in After Effects, just not in a colour
-      // that can be read; reported with its paint set, like an unread colour.
-      LazyLord._aer_addOp(node, scan, prop, mn === "ADBE Vector Graphic - G-Fill" ? "fill" : "stroke", null, true);
+      // A gradient LazyLord built is read from the stops it noted on the layer.
+      // Any other still paints its paths in After Effects, just not in colours
+      // a script can read; it is reported with its paint set, like an unread colour.
+      var gkind = mn === "ADBE Vector Graphic - G-Fill" ? "fill" : "stroke";
+      var gpaint = LazyLord._aer_gradient(prop, matrix, scan, path, i, gkind, layerName);
+      LazyLord._aer_addOp(node, scan, prop, gkind, gpaint, !gpaint);
 
     } else if (mn === "ADBE Vector Filter - Merge" || mn === "ADBE Vector Filter - Trim" ||
                mn === "ADBE Vector Filter - Repeater" || mn === "ADBE Vector Filter - Offset" ||
@@ -1364,6 +1371,52 @@ LazyLord._aer_star = function (prop, matrix, layerName) {
   var ins = [], outs = [];
   for (var v = 0; v < verts.length; v++) { ins.push([0, 0]); outs.push([0, 0]); }
   return { closed: true, vertices: verts, inTangents: ins, outTangents: outs };
+};
+
+/**
+ * A Gradient Fill or Stroke that LazyLord built, read back: its type and
+ * handles from the property (so moving them in After Effects is seen), its
+ * stops from the note the builder left in the layer comment under `path`
+ * and `index`. The handles are carried into comp space, and boxed later like a
+ * Gradient Ramp's. Null when there is no note for it: the colours of a
+ * gradient drawn in After Effects cannot be read.
+ */
+LazyLord._aer_gradient = function (prop, matrix, scan, path, index, kind, layerName) {
+  var noted = scan.gradients ? scan.gradients[LazyLord.gradientStashKey(path, index, kind)] : null;
+  var stops = noted ? LazyLord.parseGradientStops(noted) : null;
+  if (!stops) return null;
+  var start = LazyLord._aer_val(prop, "ADBE Vector Grad Start Pt", null);
+  var end = LazyLord._aer_val(prop, "ADBE Vector Grad End Pt", null);
+  if (!start || !end) return null;
+  var radial = LazyLord._aer_val(prop, "ADBE Vector Grad Type", 1) === 2;
+  if (radial && !LazyLord._aer_evenScale(matrix)) {
+    LazyLord.warn(layerName, "Its radial gradient is stretched into an ellipse by an uneven scale; it is sent round", "approximated");
+  }
+  var paint = {
+    type: radial ? "radial-gradient" : "linear-gradient",
+    stops: stops,
+    _aerFrom: LazyLord._aer_apply(matrix, start),
+    _aerTo: LazyLord._aer_apply(matrix, end)
+  };
+  if (kind === "fill") return paint;
+
+  var cap = LazyLord._aer_val(prop, "ADBE Vector Stroke Line Cap", 1);
+  var join = LazyLord._aer_val(prop, "ADBE Vector Stroke Line Join", 1);
+  return {
+    paint: paint,
+    weight: LazyLord._aer_val(prop, "ADBE Vector Stroke Width", 1) * LazyLord._aer_scaleOf(matrix),
+    cap: ({ 1: "none", 2: "round", 3: "square" })[cap] || "none",
+    join: ({ 1: "miter", 2: "round", 3: "bevel" })[join] || "miter",
+    align: "center"
+  };
+};
+
+/** True when `m` scales both axes alike (within _aer_EVEN), so a circle stays one. */
+LazyLord._aer_evenScale = function (m) {
+  var sx = Math.sqrt(m[0] * m[0] + m[1] * m[1]);
+  var sy = Math.sqrt(m[2] * m[2] + m[3] * m[3]);
+  var big = Math.max(sx, sy);
+  return !big || Math.abs(sx - sy) / big <= LazyLord._aer_EVEN;
 };
 
 LazyLord._aer_fill = function (prop) {

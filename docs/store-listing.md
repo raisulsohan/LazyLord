@@ -110,3 +110,37 @@ Made by Raisul Sohan — https://raisulsohan.com/
 
 **0**, or "pay what you want" with a minimum of 0. Most storefronts fill in a
 price by default; check it before publishing.
+
+## Frequently asked questions
+
+Five, each short enough for a storefront's question-and-answer fields.
+
+**Is it really free?**
+
+```
+Yes, completely. There is no trial, no account and no subscription, and you can use it for client work. It is open source under the MIT licence.
+```
+
+**Which apps do I need?**
+
+```
+Any one of Photoshop, Illustrator or After Effects, 2021 or newer, is enough to get started. Figma is optional — if you use it, you need the Figma desktop app, because a browser tab cannot reach your computer.
+```
+
+**Does my work get uploaded anywhere?**
+
+```
+No. The apps talk to each other directly on your own computer. There is no server, no account and no analytics, and it works with the internet unplugged.
+```
+
+**Will it change or overwrite my existing layers?**
+
+```
+Only if you ask it to. "Add" always makes new layers. "Update" replaces only the layers LazyLord itself made earlier — and if you have edited one of those by hand, it asks whether to keep your version or overwrite it.
+```
+
+**The panel does not show up, or opens blank. What do I do?**
+
+```
+Restart the Adobe app first — it only looks for new panels while starting up. If the panel opens blank, run "Fix a blank panel.bat" from the download and restart again. Still stuck? Open an issue at github.com/raisulsohan/LazyLord/issues with a copy of the panel's Log.
+```

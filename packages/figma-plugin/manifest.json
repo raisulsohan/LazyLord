@@ -2,7 +2,9 @@
   "name": "LazyLord",
   "id": "lazylord-figma-transfer",
   "api": "1.0.0",
-  "editorType": ["figma", "figjam"],
+  "editorType": [
+    "figma"
+  ],
   "main": "dist/code.js",
   "ui": "dist/ui.html",
   "documentAccess": "dynamic-page",

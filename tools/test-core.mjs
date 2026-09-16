@@ -1970,6 +1970,23 @@ await block("live (plugin)", async () => {
   }
 });
 
+// Somebody who installs only the plugin has to be told the other half exists.
+await block("ui, no panel yet", async () => {
+  const ui = await loadUi();
+  const ws = ui.sockets[ui.sockets.length - 1];
+  ws.readyState = 1;
+  ws.onopen();
+  ws.onmessage({ data: JSON.stringify({ type: "welcome", protocol: 1, peers: ["figma"] }) });
+  const peers = ui.$("#peers");
+  ok("no panel: says nothing is connected", /No Adobe app connected yet/.test(peers.textContent), peers.textContent);
+  ok("no panel: says what to do about it", /Open the LazyLord panel/.test(peers.textContent), peers.textContent);
+  const link = (peers.children || []).find((c) => c.tagName === "A");
+  ok("no panel: and links to where the panel comes from",
+     link && String(link.href).indexOf("github.com/raisulsohan/LazyLord/releases") > 0, link && link.href);
+  ws.onmessage({ data: JSON.stringify({ type: "peers", peers: ["figma", "photoshop"] }) });
+  ok("no panel: the hint goes once a panel is there", /Listening/.test(ui.$("#peers").textContent), ui.$("#peers").textContent);
+});
+
 // Live sync, the UI half: every export sent as an update of only what changed.
 await block("ui, live", async () => {
   const ui = await loadUi();

@@ -73,6 +73,7 @@ LazyLord.build = function (doc) {
       matteUsed: []  // matte layers already serving a layer (older After Effects copies them)
     };
     LazyLord._ae_resetGradients(ctx.comp);
+    LazyLord._ae_shadowStyles = doc.source === "photoshop";
     if (update) {
       ctx.index = LazyLord._ae_index(ctx.comp);
       try { ctx.time = ctx.comp.time; } catch (eT) { ctx.time = 0; }
@@ -2967,23 +2968,25 @@ LazyLord._ae_applyBlend = function (lyr, layer) {
 };
 
 /**
- * Rebuild the IR's effects on `lyr`. Drop shadows and layer blurs become the
- * stock AE effects of the same name; the rest is reported.
+ * Rebuild the IR's effects on `lyr`. Layer blurs, and drop shadows from
+ * anywhere but Photoshop, become the stock AE effects of the same name;
+ * inner shadows, glows, strokes, overlays, satin and bevels become layer
+ * styles; what is left is reported.
  */
 LazyLord._ae_applyEffects = function (lyr, layer) {
   var list = layer.effects;
   if (!list || !list.length) return;
 
   var name = layer.name || "Layer";
+  var seen = {};
   for (var i = 0; i < list.length; i++) {
     var fx = list[i];
     if (!fx || !fx.kind) continue;
     try {
-      if (fx.kind === "drop-shadow") LazyLord._ae_dropShadow(lyr, fx, name);
+      if (fx.kind === "drop-shadow" && !LazyLord._ae_shadowStyles) LazyLord._ae_dropShadow(lyr, fx, name);
       else if (fx.kind === "layer-blur") LazyLord._ae_blur(lyr, fx, name);
-      else if (fx.kind === "inner-shadow") {
-        LazyLord.warn(name, "After Effects has no inner-shadow effect, so it was left off", "skipped");
-      } else if (fx.kind === "background-blur") {
+      else if (LazyLord._ae_STYLE_OF[fx.kind]) LazyLord._ae_style(lyr, fx, name, seen);
+      else if (fx.kind === "background-blur") {
         LazyLord.warn(name, "A background blur blurs what is behind the layer, which After Effects " +
           "cannot do from the layer itself, so it was left off", "skipped");
       }
@@ -2992,6 +2995,167 @@ LazyLord._ae_applyEffects = function (lyr, layer) {
         ((e && e.message) ? e.message : String(e)), "skipped");
     }
   }
+};
+
+/* -------------------------------------------------------------------------
+ * Layer styles
+ *
+ * After Effects has Photoshop's layer styles, editable in the Timeline under
+ * Layer Styles. A script cannot add one directly; the Layer > Layer Styles
+ * menu commands can, on the selected layer of the comp in the viewer (command
+ * ids 9000-9008, in the menu's order). Once added, a style's controls are
+ * ordinary properties with match names such as "dropShadow/color".
+ *
+ * Inner shadows, glows, Layer Style strokes, overlays, satin and bevels are
+ * built as styles. A drop shadow from Photoshop is too, so it keeps its spread
+ * and stays a Layer Style; one from anywhere else stays the Drop Shadow effect
+ * it has always been. A style's blend mode is left at the style's default,
+ * and reported when the source used another: the controls' menu values are
+ * not documented, and a wrong guess would go unseen.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._ae_STYLE_COMMANDS = {
+  dropShadow: 9000, innerShadow: 9001, outerGlow: 9002, innerGlow: 9003, bevelEmboss: 9004,
+  chromeFX: 9005, solidFill: 9006, gradientFill: 9007, frameFX: 9008
+};
+
+/** Each IR effect kind that becomes a style: its style key and default blend mode. */
+LazyLord._ae_STYLE_OF = {
+  "drop-shadow": { key: "dropShadow", blend: "multiply", label: "drop shadow" },
+  "inner-shadow": { key: "innerShadow", blend: "multiply", label: "inner shadow" },
+  "outer-glow": { key: "outerGlow", blend: "screen", label: "outer glow" },
+  "inner-glow": { key: "innerGlow", blend: "screen", label: "inner glow" },
+  "bevel": { key: "bevelEmboss", blend: null, label: "bevel and emboss" },
+  "satin": { key: "chromeFX", blend: "multiply", label: "satin" },
+  "color-overlay": { key: "solidFill", blend: "normal", label: "colour overlay" },
+  "gradient-overlay": { key: "gradientFill", blend: "normal", label: "gradient overlay" },
+  "stroke": { key: "frameFX", blend: "normal", label: "Layer Style stroke" }
+};
+
+/** Set by LazyLord.build: drop shadows from Photoshop are built as styles. */
+LazyLord._ae_shadowStyles = false;
+
+/**
+ * Turn on the style `key` on `lyr` and return its property group. Throws when
+ * After Effects does not add it.
+ */
+LazyLord._ae_addStyle = function (lyr, key) {
+  var existing = LazyLord._ae_styleGroup(lyr, key);
+  if (existing) return existing;
+  var comp = LazyLord._ae_viewerFor(lyr);
+  if (comp) LazyLord._ae_deselectAll(comp);
+  lyr.selected = true;
+  try {
+    app.executeCommand(LazyLord._ae_STYLE_COMMANDS[key]);
+  } finally {
+    try { lyr.selected = false; } catch (e) {}
+  }
+  var group = LazyLord._ae_styleGroup(lyr, key);
+  if (!group) throw new Error("After Effects did not add it from its Layer Styles menu");
+  return group;
+};
+
+LazyLord._ae_styleGroup = function (lyr, key) {
+  try {
+    var styles = lyr.property("ADBE Layer Styles");
+    return styles ? styles.property(key + "/enabled") : null;
+  } catch (e) {
+    return null;
+  }
+};
+
+/** Set one style control, keeping the rest of the style when one refuses. */
+LazyLord._ae_styleSet = function (group, key, control, value) {
+  try {
+    var p = group.property(key + "/" + control);
+    if (p) p.setValue(value);
+  } catch (e) {
+    /* one control of a style; the rest of it still applies */
+  }
+};
+
+LazyLord._ae_rgb1 = function (c) {
+  c = c || {};
+  return [c.r || 0, c.g || 0, c.b || 0, 1];
+};
+
+/** Build the effect `fx` as a layer style on `lyr`. `seen` stops a second of one kind. */
+LazyLord._ae_style = function (lyr, fx, name, seen) {
+  var info = LazyLord._ae_STYLE_OF[fx.kind];
+  var key = info.key;
+  if (seen[key]) {
+    LazyLord.warn(name, "After Effects takes one " + info.label + " per layer, so only the first is kept", "approximated");
+    return;
+  }
+  seen[key] = true;
+
+  var g = LazyLord._ae_addStyle(lyr, key);
+  var set = function (control, value) { LazyLord._ae_styleSet(g, key, control, value); };
+  var c = fx.color;
+  if (c) {
+    set("color", LazyLord._ae_rgb1(c));
+    set("opacity", LazyLord.pct(LazyLord._ae_alpha(c)));
+  }
+
+  if (fx.kind === "drop-shadow" || fx.kind === "inner-shadow") {
+    var dx = (fx.offset && fx.offset.x) || 0, dy = (fx.offset && fx.offset.y) || 0;
+    // Photoshop's angle names where the light comes from; the shadow falls opposite.
+    set("useGlobalAngle", 0);
+    set("localLightingAngle", Math.atan2(dy, -dx) * 180 / Math.PI);
+    set("distance", Math.sqrt(dx * dx + dy * dy));
+    set("blur", fx.radius || 0);
+    set("chokeMatte", LazyLord._ae_percentOf(fx.spread, fx.radius));
+  } else if (fx.kind === "outer-glow") {
+    set("blur", fx.radius || 0);
+    set("chokeMatte", LazyLord._ae_percentOf(fx.spread, fx.radius));
+  } else if (fx.kind === "inner-glow") {
+    set("blur", fx.radius || 0);
+    set("chokeMatte", LazyLord._ae_percentOf(fx.choke, fx.radius));
+    set("innerGlowSource", fx.source === "center" ? 1 : 2);
+  } else if (fx.kind === "stroke") {
+    set("size", fx.width || 1);
+    set("style", fx.position === "inside" ? 2 : (fx.position === "center" ? 3 : 1));
+  } else if (fx.kind === "satin") {
+    set("localLightingAngle", fx.angle || 0);
+    set("distance", fx.distance || 0);
+    set("blur", fx.radius || 0);
+    set("invert", fx.invert ? 1 : 0);
+  } else if (fx.kind === "gradient-overlay") {
+    set("opacity", LazyLord.pct(typeof fx.opacity === "number" ? fx.opacity : 1));
+    set("type", fx.style === "radial" ? 2 : 1);
+    set("angle", fx.angle || 0);
+    set("scale", typeof fx.scale === "number" ? fx.scale : 100);
+    set("reverse", fx.reverse ? 1 : 0);
+    LazyLord.warn(name, "The gradient overlay is built with After Effects' own colours, since a script cannot set a style's " +
+      "gradient; set them in its Colors", "approximated");
+  } else if (fx.kind === "bevel") {
+    var styles = { outer: 1, inner: 2, emboss: 3, pillow: 4, stroke: 5 };
+    var techniques = { smooth: 1, hard: 2, soft: 3 };
+    set("bevelStyle", styles[fx.style] || 2);
+    set("bevelTechnique", techniques[fx.technique] || 1);
+    set("strengthRatio", typeof fx.depth === "number" ? fx.depth : 100);
+    set("bevelDirection", fx.up === false ? 2 : 1);
+    set("blur", fx.size || 0);
+    set("softness", fx.soften || 0);
+    set("useGlobalAngle", 0);
+    set("localLightingAngle", fx.angle || 0);
+    set("localLightingAltitude", typeof fx.altitude === "number" ? fx.altitude : 30);
+    set("highlightColor", LazyLord._ae_rgb1(fx.highlight));
+    set("highlightOpacity", LazyLord.pct(LazyLord._ae_alpha(fx.highlight)));
+    set("shadowColor", LazyLord._ae_rgb1(fx.shadow));
+    set("shadowOpacity", LazyLord.pct(LazyLord._ae_alpha(fx.shadow)));
+  }
+
+  if (info.blend && fx.blendMode && fx.blendMode !== info.blend) {
+    LazyLord.warn(name, "Its " + info.label + " blends as " + LazyLord.blendLabel(fx.blendMode) + " in the source; " +
+      "After Effects' default is kept, set it in the style's Blend Mode", "approximated");
+  }
+};
+
+/** `part` as a percentage of `whole`, 0..100. */
+LazyLord._ae_percentOf = function (part, whole) {
+  if (!part || !whole) return 0;
+  return Math.max(0, Math.min(100, part / whole * 100));
 };
 
 LazyLord._ae_fxLabel = function (kind) {

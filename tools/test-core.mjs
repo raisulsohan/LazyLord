@@ -548,6 +548,7 @@ function makeNode(type, extra = {}) {
     fills: [],
     strokes: [],
     strokeWeight: 1,
+    effects: [],
     // MaskMixin: every node that can be a mask has both.
     isMask: false,
     maskType: "ALPHA",
@@ -2112,6 +2113,53 @@ await block("figma masks", async () => {
   ok("mask and clip: Figma keeps both, the masked group inside the clipping group",
     outer && outer.children.length === 2 && outer.children[1].type === "GROUP" && outer.children[1].name === "Both (masked)",
     outer && outer.children.map((c) => c.name).join());
+});
+
+// Photoshop layer styles, rebuilt in Figma where it has something to rebuild them with.
+await block("figma layer styles", async () => {
+  const B = await import(pathToFileURL(join(figmaEsm, "build.ts")).href);
+  const vec = (id, extra = {}) => ({
+    id, name: id, type: "vector", frame: { x: 0, y: 0, width: 100, height: 60, rotation: 0, opacity: 1 },
+    subpaths: G.rectToSubPaths({ x: 0, y: 0, width: 100, height: 60 }),
+    fills: [{ type: "solid", color: { r: 1, g: 1, b: 1, a: 1 } }], strokes: [], windingRule: "nonzero", ...extra,
+  });
+  const doc = (layers) => ({ version: "1.0", source: "photoshop", name: "Art",
+    bounds: { x: 0, y: 0, width: 100, height: 60 }, originSpace: "canvas", layers });
+  const c = (r, g, b, a) => ({ r, g, b, a });
+
+  resetPage();
+  const res = await B.buildDocument(doc([vec("Button", { effects: [
+    { kind: "outer-glow", color: c(1, 1, 0, 0.8), radius: 12, spread: 6, blendMode: "screen" },
+    { kind: "inner-glow", color: c(1, 1, 1, 0.6), radius: 6, choke: 3, source: "center" },
+    { kind: "stroke", color: c(1, 0, 0, 1), width: 3, position: "inside" },
+    { kind: "color-overlay", color: c(0, 0.5, 1, 0.4), blendMode: "overlay" },
+    { kind: "satin", color: c(0, 0, 0, 0.5), angle: 19, distance: 11, radius: 14 },
+    { kind: "bevel", style: "inner", technique: "smooth", depth: 100, up: true, size: 5, soften: 0, angle: 120, altitude: 30,
+      highlight: c(1, 1, 1, 0.75), shadow: c(0, 0, 0, 0.75) },
+  ] })]));
+  const n = page.children[0];
+  const fx = n.effects || [];
+  ok("styles in figma: an outer glow is a drop shadow that does not move",
+    fx[0] && fx[0].type === "DROP_SHADOW" && fx[0].offset.x === 0 && fx[0].spread === 6 && fx[0].blendMode === "SCREEN", JSON.stringify(fx[0]));
+  ok("styles in figma: an inner glow an inner shadow that does not move", fx[1] && fx[1].type === "INNER_SHADOW" && fx[1].spread === 3,
+    JSON.stringify(fx[1]));
+  ok("styles in figma: a centre-sourced inner glow is reported", (res.diagnostics || []).some((d) => /from the centre/.test(d.reason)));
+  ok("styles in figma: the stroke becomes the node's own, inside, 3 px",
+    n.strokes.length === 1 && n.strokeWeight === 3 && n.strokeAlign === "INSIDE", JSON.stringify(n.strokes));
+  ok("styles in figma: the colour overlay is a paint over the fill, at 40%, overlay",
+    n.fills.length === 2 && near(n.fills[1].opacity, 0.4) && n.fills[1].blendMode === "OVERLAY", JSON.stringify(n.fills));
+  ok("styles in figma: satin and bevel are named as left off",
+    (res.diagnostics || []).some((d) => /Figma has no satin, bevel and emboss/.test(d.reason)), JSON.stringify(res.diagnostics));
+
+  // A layer that already has a stroke keeps it; the style's is reported.
+  resetPage();
+  const res2 = await B.buildDocument(doc([vec("Outlined", {
+    strokes: [{ paint: { type: "solid", color: c(0, 0, 0, 1) }, weight: 1 }],
+    effects: [{ kind: "stroke", color: c(1, 0, 0, 1), width: 5, position: "outside" }],
+  })]));
+  ok("styles in figma: an existing stroke is kept, the style's reported",
+    page.children[0].strokeWeight === 1 && (res2.diagnostics || []).some((d) => /already has a stroke/.test(d.reason)),
+    JSON.stringify(res2.diagnostics));
 });
 
 // From the in-depth review: Figma send, receive and smart diff.

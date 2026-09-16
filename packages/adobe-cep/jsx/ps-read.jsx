@@ -307,6 +307,10 @@ LazyLord._psr_shiftSubPaths = function (subs, dx, dy) {
 
 LazyLord._psr_layer = function (ctx, lyr) {
   var out = LazyLord._psr_convert(ctx, lyr);
+  if (out && (out.type === "vector" || out.type === "text")) {
+    var styles = LazyLord._psr_styles(ctx, lyr, out.name);
+    if (styles.length) out.effects = styles;
+  }
   // Its blend mode travels whatever it became, rasterised layers included.
   if (out) {
     var bm = null;
@@ -420,9 +424,6 @@ LazyLord._psr_shape = function (ctx, lyr) {
   if (style) {
     if (style.fill === false) fills = [];
     if (style.stroke) strokes = [{ paint: { type: "solid", color: style.stroke.color }, weight: style.stroke.weight, align: style.stroke.align }];
-  }
-  if (LazyLord._psr_hasStyles(lyr)) {
-    LazyLord.warn(name, "Its layer style (shadows, glows, Layer Style strokes) is not transferred", "skipped");
   }
 
   return {
@@ -865,6 +866,304 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath) {
 };
 
 /* -------------------------------------------------------------------------
+ * Layer styles
+ *
+ * A live layer's layer style is read through ActionManager (the layer's
+ * layerEffects) into IR effects: drop and inner shadows, outer and inner
+ * glows, stroke, colour and gradient overlays, satin, and bevel and emboss.
+ * Keys as ScriptListener records them. Pattern overlays, contours, noise and
+ * the finer switches have no shared vocabulary and are reported. A layer sent
+ * as an image carries its style in its pixels already, so this is only asked
+ * for text, shapes and gradient fills.
+ *
+ * Photoshop may keep several of one kind (dropShadowMulti and so on); each
+ * enabled one becomes an effect, in the order Photoshop lists them.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._psr_BLENDS = {
+  normal: "normal", multiply: "multiply", screen: "screen", overlay: "overlay", darken: "darken",
+  lighten: "lighten", colorDodge: "color-dodge", colorBurn: "color-burn", hardLight: "hard-light",
+  softLight: "soft-light", difference: "difference", exclusion: "exclusion", hue: "hue",
+  saturation: "saturation", color: "color", luminosity: "luminosity"
+};
+
+/** The effects a layer's style adds, as IR effects. Empty when it has none. */
+LazyLord._psr_styles = function (ctx, lyr, name) {
+  var cid = LazyLord._ps_cid, sid = LazyLord._ps_sid;
+  var fx;
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(cid("Lyr "), lyr.id);
+    var d = executeActionGet(ref);
+    if (!d.hasKey(sid("layerEffects"))) return [];
+    try { if (d.getBoolean(sid("layerFXVisible")) === false) return []; } catch (eV) {}
+    fx = d.getObjectValue(sid("layerEffects"));
+  } catch (e) {
+    return [];
+  }
+
+  // "Scale Effects" resizes every size and distance in the style.
+  var k = 1;
+  try { if (fx.hasKey(cid("Scl "))) k = fx.getUnitDoubleValue(cid("Scl ")) / 100; } catch (eS) {}
+  var ctxS = { k: k, name: name, angle: LazyLord._psr_globalAngle(ctx) };
+
+  var out = [];
+  var kinds = [
+    ["dropShadow", LazyLord._psr_shadow, "drop-shadow"],
+    ["innerShadow", LazyLord._psr_shadow, "inner-shadow"],
+    ["outerGlow", LazyLord._psr_glow, "outer-glow"],
+    ["innerGlow", LazyLord._psr_glow, "inner-glow"],
+    ["bevelEmboss", LazyLord._psr_bevel, "bevel"],
+    ["chromeFX", LazyLord._psr_satin, "satin"],
+    ["solidFill", LazyLord._psr_colourOverlay, "color-overlay"],
+    ["gradientFill", LazyLord._psr_gradientOverlay, "gradient-overlay"],
+    ["frameFX", LazyLord._psr_strokeStyle, "stroke"]
+  ];
+  for (var i = 0; i < kinds.length; i++) {
+    var list = LazyLord._psr_styleList(fx, kinds[i][0]);
+    for (var j = 0; j < list.length; j++) {
+      var one = null;
+      try { one = kinds[i][1](list[j], kinds[i][2], ctxS); } catch (eOne) { one = null; }
+      if (one) out.push(one);
+      // false: not transferable, and already said why; null: could not be read.
+      else if (one === null) LazyLord.warn(name, "Its " + LazyLord._psr_styleName(kinds[i][2]) + " could not be read, so it is left out", "skipped");
+    }
+  }
+  if (LazyLord._psr_styleList(fx, "patternFill").length) {
+    LazyLord.warn(name, "Its pattern overlay is not transferred", "skipped");
+  }
+  return out;
+};
+
+/** A readable name for a style kind, for reports. */
+LazyLord._psr_styleName = function (kind) {
+  return ({ "drop-shadow": "drop shadow", "inner-shadow": "inner shadow", "outer-glow": "outer glow",
+    "inner-glow": "inner glow", "bevel": "bevel and emboss", "satin": "satin", "color-overlay": "colour overlay",
+    "gradient-overlay": "gradient overlay", "stroke": "Layer Style stroke" })[kind] || kind;
+};
+
+/** Every enabled instance of one style kind: the Multi list when there is one, else the single entry. */
+LazyLord._psr_styleList = function (fx, key) {
+  var sid = LazyLord._ps_sid, cid = LazyLord._ps_cid;
+  var out = [], i;
+  try {
+    if (fx.hasKey(sid(key + "Multi"))) {
+      var list = fx.getList(sid(key + "Multi"));
+      for (i = 0; i < list.count; i++) out.push(list.getObjectValue(i));
+    } else if (fx.hasKey(sid(key))) {
+      out.push(fx.getObjectValue(sid(key)));
+    }
+  } catch (e) {}
+  var on = [];
+  for (i = 0; i < out.length; i++) {
+    var enabled = true;
+    try { if (out[i].hasKey(cid("enab"))) enabled = out[i].getBoolean(cid("enab")) === true; } catch (eE) {}
+    if (enabled) on.push(out[i]);
+  }
+  return on;
+};
+
+/** The document's global light angle, used by styles that follow it. */
+LazyLord._psr_globalAngle = function (ctx) {
+  if (typeof ctx.globalAngle === "number") return ctx.globalAngle;
+  ctx.globalAngle = 120;
+  try {
+    var ref = new ActionReference();
+    ref.putProperty(LazyLord._ps_cid("Prpr"), LazyLord._ps_cid("gblA"));
+    ref.putEnumerated(LazyLord._ps_cid("Dcmn"), LazyLord._ps_cid("Ordn"), LazyLord._ps_cid("Trgt"));
+    var d = executeActionGet(ref);
+    if (d.hasKey(LazyLord._ps_cid("gblA"))) ctx.globalAngle = d.getUnitDoubleValue(LazyLord._ps_cid("gblA"));
+  } catch (e) {}
+  return ctx.globalAngle;
+};
+
+LazyLord._psr_num = function (d, key, fallback) {
+  var cid = LazyLord._ps_cid;
+  try {
+    if (!d.hasKey(cid(key))) return fallback;
+    try { return d.getUnitDoubleValue(cid(key)); } catch (eU) { return d.getDouble(cid(key)); }
+  } catch (e) {
+    return fallback;
+  }
+};
+
+/** A style's colour (RGB or grey) with its opacity as alpha. */
+LazyLord._psr_styleColour = function (d, alpha) {
+  var c = null;
+  try { if (d.hasKey(LazyLord._ps_cid("Clr "))) c = LazyLord._psr_readColour(d.getObjectValue(LazyLord._ps_cid("Clr "))); } catch (e) {}
+  if (!c) return null;
+  return { r: c.r, g: c.g, b: c.b, a: alpha };
+};
+
+/** A style's blend mode in the IR's spelling, or undefined when it has none there. */
+LazyLord._psr_styleBlend = function (d, s) {
+  try {
+    if (!d.hasKey(LazyLord._ps_cid("Md  "))) return undefined;
+    var id = typeIDToStringID(d.getEnumerationValue(LazyLord._ps_cid("Md  ")));
+    var bm = LazyLord._psr_BLENDS[id];
+    if (!bm) LazyLord.warn(s.name, "A layer style's blend mode '" + id + "' has no equivalent elsewhere, so its default is used", "approximated");
+    return bm;
+  } catch (e) {
+    return undefined;
+  }
+};
+
+/** The angle a style uses: its own, or the document's when it follows global light. */
+LazyLord._psr_styleAngle = function (d, s) {
+  var global = false;
+  try { if (d.hasKey(LazyLord._ps_cid("uglg"))) global = d.getBoolean(LazyLord._ps_cid("uglg")) === true; } catch (e) {}
+  return global ? s.angle : LazyLord._psr_num(d, "lagl", s.angle);
+};
+
+LazyLord._psr_shadow = function (d, kind, s) {
+  var alpha = LazyLord._psr_num(d, "Opct", 75) / 100;
+  var color = LazyLord._psr_styleColour(d, alpha);
+  if (!color) return null;
+  var angle = LazyLord._psr_styleAngle(d, s) * Math.PI / 180;
+  var distance = LazyLord._psr_num(d, "Dstn", 5) * s.k;
+  var size = LazyLord._psr_num(d, "blur", 5) * s.k;
+  var spread = LazyLord._psr_num(d, "Ckmt", 0); // percent of the size
+  // The light shines from the angle, so the shadow falls the other way; y is down.
+  var fx = {
+    kind: kind,
+    color: color,
+    offset: { x: -Math.cos(angle) * distance, y: Math.sin(angle) * distance },
+    radius: size,
+    spread: size * spread / 100
+  };
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_glow = function (d, kind, s) {
+  var cid = LazyLord._ps_cid;
+  var alpha = LazyLord._psr_num(d, "Opct", 75) / 100;
+  var color = LazyLord._psr_styleColour(d, alpha);
+  if (!color) {
+    if (d.hasKey(cid("Grad"))) LazyLord.warn(s.name, "Its " + LazyLord._psr_styleName(kind) + " uses a gradient, which is sent as its first colour", "approximated");
+    var g = null;
+    try { g = LazyLord._psr_colourStops(d.getObjectValue(cid("Grad")).getList(cid("Clrs")), s.name); } catch (eG) {}
+    if (!g || !g.length) return null;
+    color = { r: g[0].color.r, g: g[0].color.g, b: g[0].color.b, a: alpha };
+  }
+  var size = LazyLord._psr_num(d, "blur", 5) * s.k;
+  var spread = LazyLord._psr_num(d, "Ckmt", 0);
+  var fx = { kind: kind, color: color, radius: size };
+  if (kind === "outer-glow") fx.spread = size * spread / 100;
+  else {
+    fx.choke = size * spread / 100;
+    try {
+      if (d.hasKey(cid("glwS"))) fx.source = typeIDToCharID(d.getEnumerationValue(cid("glwS"))) === "SrcC" ? "center" : "edge";
+    } catch (eSrc) {}
+  }
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_strokeStyle = function (d, kind, s) {
+  var cid = LazyLord._ps_cid;
+  var paintType = "SClr";
+  try { if (d.hasKey(cid("PntT"))) paintType = typeIDToCharID(d.getEnumerationValue(cid("PntT"))); } catch (eP) {}
+  if (paintType !== "SClr") {
+    LazyLord.warn(s.name, "Its Layer Style stroke is filled with a gradient or pattern, which is not transferred", "skipped");
+    return false;
+  }
+  var color = LazyLord._psr_styleColour(d, LazyLord._psr_num(d, "Opct", 100) / 100);
+  if (!color) return null;
+  var pos = "OutF";
+  try { if (d.hasKey(cid("Styl"))) pos = typeIDToCharID(d.getEnumerationValue(cid("Styl"))); } catch (eS) {}
+  var fx = {
+    kind: kind, color: color, width: LazyLord._psr_num(d, "Sz  ", 3) * s.k,
+    position: pos === "InsF" ? "inside" : (pos === "CtrF" ? "center" : "outside")
+  };
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_colourOverlay = function (d, kind, s) {
+  var color = LazyLord._psr_styleColour(d, LazyLord._psr_num(d, "Opct", 100) / 100);
+  if (!color) return null;
+  var fx = { kind: kind, color: color };
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_gradientOverlay = function (d, kind, s) {
+  var cid = LazyLord._ps_cid;
+  var style = "Lnr ";
+  try { if (d.hasKey(cid("Type"))) style = typeIDToCharID(d.getEnumerationValue(cid("Type"))); } catch (eT) {}
+  if (style !== "Lnr " && style !== "Rdl ") {
+    LazyLord.warn(s.name, "Its gradient overlay is an angle, reflected or diamond gradient, which is not transferred", "skipped");
+    return false;
+  }
+  var grad = d.getObjectValue(cid("Grad"));
+  if (!grad.hasKey(cid("Clrs")) || !grad.hasKey(cid("Trns"))) return null;
+  var colours = LazyLord._psr_colourStops(grad.getList(cid("Clrs")), s.name);
+  var alphas = LazyLord._psr_alphaStops(grad.getList(cid("Trns")));
+  if (!colours || !colours.length || !alphas || !alphas.length) return null;
+  var fx = {
+    kind: kind,
+    stops: LazyLord._psr_mergeStops(colours, alphas),
+    style: style === "Rdl " ? "radial" : "linear",
+    angle: LazyLord._psr_num(d, "Angl", 90),
+    scale: LazyLord._psr_num(d, "Scl ", 100),
+    reverse: false,
+    opacity: LazyLord._psr_num(d, "Opct", 100) / 100
+  };
+  try { if (d.hasKey(cid("Rvrs"))) fx.reverse = d.getBoolean(cid("Rvrs")) === true; } catch (eR) {}
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_satin = function (d, kind, s) {
+  var color = LazyLord._psr_styleColour(d, LazyLord._psr_num(d, "Opct", 50) / 100);
+  if (!color) return null;
+  var fx = {
+    kind: kind, color: color,
+    angle: LazyLord._psr_num(d, "lagl", 19),
+    distance: LazyLord._psr_num(d, "Dstn", 11) * s.k,
+    radius: LazyLord._psr_num(d, "blur", 14) * s.k,
+    invert: false
+  };
+  try { if (d.hasKey(LazyLord._ps_cid("Invr"))) fx.invert = d.getBoolean(LazyLord._ps_cid("Invr")) === true; } catch (eI) {}
+  var bm = LazyLord._psr_styleBlend(d, s);
+  if (bm) fx.blendMode = bm;
+  return fx;
+};
+
+LazyLord._psr_bevel = function (d, kind, s) {
+  var cid = LazyLord._ps_cid;
+  function en(key, fallback) {
+    try { return d.hasKey(cid(key)) ? typeIDToCharID(d.getEnumerationValue(cid(key))) : fallback; } catch (e) { return fallback; }
+  }
+  var highlight = null, shadow = null;
+  try { highlight = LazyLord._psr_readColour(d.getObjectValue(cid("hglC"))); } catch (eH) {}
+  try { shadow = LazyLord._psr_readColour(d.getObjectValue(cid("sdwC"))); } catch (eS) {}
+  highlight = highlight || { r: 1, g: 1, b: 1 };
+  shadow = shadow || { r: 0, g: 0, b: 0 };
+  var styles = { OtrB: "outer", InrB: "inner", Embs: "emboss", PlEb: "pillow", strokeEmboss: "stroke" };
+  var techniques = { SfBL: "smooth", PrBL: "hard", Slmt: "soft" };
+  return {
+    kind: kind,
+    style: styles[en("bvlS", "InrB")] || "inner",
+    technique: techniques[en("bvlT", "SfBL")] || "smooth",
+    depth: LazyLord._psr_num(d, "srgR", 100),
+    up: en("bvlD", "In  ") !== "Out ",
+    size: LazyLord._psr_num(d, "blur", 5) * s.k,
+    soften: LazyLord._psr_num(d, "Sftn", 0) * s.k,
+    angle: LazyLord._psr_styleAngle(d, s),
+    altitude: LazyLord._psr_num(d, "Lald", 30),
+    highlight: { r: highlight.r, g: highlight.g, b: highlight.b, a: LazyLord._psr_num(d, "hglO", 75) / 100 },
+    shadow: { r: shadow.r, g: shadow.g, b: shadow.b, a: LazyLord._psr_num(d, "sdwO", 75) / 100 }
+  };
+};
+
+/* -------------------------------------------------------------------------
  * Gradient fill layers
  *
  * A Photoshop gradient fill layer is read as a vector with a gradient paint:
@@ -900,9 +1199,6 @@ LazyLord._psr_gradientShape = function (ctx, lyr) {
   var w = box.width, h = box.height;
   function norm(pt) { return { x: (pt[0] - box.x) / w, y: (pt[1] - box.y) / h }; }
 
-  if (LazyLord._psr_hasStyles(lyr)) {
-    LazyLord.warn(name, "Its layer style (shadows, glows, Layer Style strokes) is not transferred", "skipped");
-  }
   var out = {
     id: LazyLord._psr_id(ctx, lyr),
     name: name,

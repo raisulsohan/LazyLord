@@ -171,10 +171,43 @@ export type BlendMode =
  * blurred, and is left out by sources that have no such control.
  */
 export type Effect =
-  | { kind: "drop-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number }
-  | { kind: "inner-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number }
+  | { kind: "drop-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number; blendMode?: BlendMode }
+  | { kind: "inner-shadow"; color: RGBA; offset: { x: number; y: number }; radius: number; spread?: number; blendMode?: BlendMode }
   | { kind: "layer-blur"; radius: number }
-  | { kind: "background-blur"; radius: number };
+  | { kind: "background-blur"; radius: number }
+  // Photoshop's layer styles. A shadow or glow's `color` alpha is its opacity;
+  // `spread` (and an inner glow's `choke`) is in px, like a shadow's.
+  | { kind: "outer-glow"; color: RGBA; radius: number; spread?: number; blendMode?: BlendMode }
+  | { kind: "inner-glow"; color: RGBA; radius: number; choke?: number; source?: "edge" | "center"; blendMode?: BlendMode }
+  | { kind: "stroke"; color: RGBA; width: number; position: "outside" | "inside" | "center"; blendMode?: BlendMode }
+  | { kind: "color-overlay"; color: RGBA; blendMode?: BlendMode }
+  | {
+      kind: "gradient-overlay";
+      stops: GradientStop[];
+      style: "linear" | "radial";
+      /** Degrees, counter-clockwise from 3 o'clock, as Photoshop measures it. */
+      angle: number;
+      /** Percent, 100 reaching the layer's edge. */
+      scale: number;
+      reverse?: boolean;
+      opacity: number;
+      blendMode?: BlendMode;
+    }
+  | { kind: "satin"; color: RGBA; angle: number; distance: number; radius: number; invert?: boolean; blendMode?: BlendMode }
+  | {
+      kind: "bevel";
+      style: "outer" | "inner" | "emboss" | "pillow" | "stroke";
+      technique: "smooth" | "hard" | "soft";
+      /** Percent. */
+      depth: number;
+      up: boolean;
+      size: number;
+      soften: number;
+      angle: number;
+      altitude: number;
+      highlight: RGBA;
+      shadow: RGBA;
+    };
 
 /**
  * An axis-aligned parametric shape, in the layer's local space (the same

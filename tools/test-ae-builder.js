@@ -220,7 +220,7 @@ var ParagraphJustification = {
 //   rejectNull  - comp.layers.addNull() throws
 var mock = { rejectAdd: {}, rejectRemove: {}, rampWithoutMatchNames: false, invalidate: true, failSet: {}, setCounts: {},
              rejectNull: false, presets: false, presetThrows: false, presetsApplied: [], viewerOpens: [],
-             newMattes: false, duplicates: [] };
+             newMattes: false, duplicates: [], commands: [], rejectStyles: false };
 
 // Fonts the mocked After Effects has, by PostScript name: [family, style].
 var MOCK_FONTS = {
@@ -234,6 +234,16 @@ var MOCK_FONTS = {
 // Groups and the children AE creates inside them. Only names listed here can
 // be passed to addProperty, as in AE; anything else is a leaf property.
 var SCHEMA = {
+    "ADBE Layer Styles": [],
+    "dropShadow/enabled": ["dropShadow/mode2", "dropShadow/color", "dropShadow/opacity", "dropShadow/useGlobalAngle", "dropShadow/localLightingAngle", "dropShadow/distance", "dropShadow/chokeMatte", "dropShadow/blur", "dropShadow/noise", "dropShadow/layerConceals"],
+    "innerShadow/enabled": ["innerShadow/mode2", "innerShadow/color", "innerShadow/opacity", "innerShadow/useGlobalAngle", "innerShadow/localLightingAngle", "innerShadow/distance", "innerShadow/chokeMatte", "innerShadow/blur", "innerShadow/noise"],
+    "outerGlow/enabled": ["outerGlow/mode2", "outerGlow/opacity", "outerGlow/noise", "outerGlow/AEColorChoice", "outerGlow/color", "outerGlow/gradientSmoothness", "outerGlow/glowTechnique", "outerGlow/chokeMatte", "outerGlow/blur", "outerGlow/inputRange", "outerGlow/shadingNoise"],
+    "innerGlow/enabled": ["innerGlow/mode2", "innerGlow/opacity", "innerGlow/noise", "innerGlow/AEColorChoice", "innerGlow/color", "innerGlow/gradientSmoothness", "innerGlow/glowTechnique", "innerGlow/innerGlowSource", "innerGlow/chokeMatte", "innerGlow/blur", "innerGlow/inputRange", "innerGlow/shadingNoise"],
+    "bevelEmboss/enabled": ["bevelEmboss/bevelStyle", "bevelEmboss/bevelTechnique", "bevelEmboss/strengthRatio", "bevelEmboss/bevelDirection", "bevelEmboss/blur", "bevelEmboss/softness", "bevelEmboss/useGlobalAngle", "bevelEmboss/localLightingAngle", "bevelEmboss/localLightingAltitude", "bevelEmboss/highlightMode", "bevelEmboss/highlightColor", "bevelEmboss/highlightOpacity", "bevelEmboss/shadowMode", "bevelEmboss/shadowColor", "bevelEmboss/shadowOpacity"],
+    "chromeFX/enabled": ["chromeFX/mode2", "chromeFX/color", "chromeFX/opacity", "chromeFX/localLightingAngle", "chromeFX/distance", "chromeFX/blur", "chromeFX/invert"],
+    "solidFill/enabled": ["solidFill/mode2", "solidFill/color", "solidFill/opacity"],
+    "gradientFill/enabled": ["gradientFill/mode2", "gradientFill/opacity", "gradientFill/gradientSmoothness", "gradientFill/angle", "gradientFill/type", "gradientFill/reverse", "gradientFill/align", "gradientFill/scale", "gradientFill/offset"],
+    "frameFX/enabled": ["frameFX/mode2", "frameFX/color", "frameFX/size", "frameFX/opacity", "frameFX/style"],
     "ADBE Root Vectors Group": [],
     "ADBE Vectors Group": [],
     "ADBE Effect Parade": [],
@@ -532,6 +542,24 @@ function makeComp(name, w, h) {
 
 var app = {
     undo: [],
+    // Layer > Layer Styles: the style goes on every selected layer of the comp in the viewer.
+    executeCommand: function (id) {
+        mock.commands.push(id);
+        var keys = { 9000: "dropShadow", 9001: "innerShadow", 9002: "outerGlow", 9003: "innerGlow", 9004: "bevelEmboss",
+                     9005: "chromeFX", 9006: "solidFill", 9007: "gradientFill", 9008: "frameFX" };
+        var key = keys[id], comp = app.project.activeItem;
+        if (!key || !comp || mock.rejectStyles) return;
+        for (var i = 0; i < comp.list.length; i++) {
+            var l = comp.list[i];
+            if (l.selected !== true) continue;
+            if (!l.groups["ADBE Layer Styles"]) {
+                l.groups["ADBE Layer Styles"] = makeNode("ADBE Layer Styles");
+                setLayer(l.groups["ADBE Layer Styles"], l);
+            }
+            var styles = l.groups["ADBE Layer Styles"];
+            if (!styles.property(key + "/enabled")) styles.addProperty(key + "/enabled");
+        }
+    },
     compsAdded: [],
     imports: [],
     footageSize: [200, 100],
@@ -643,6 +671,8 @@ function build(doc, opts) {
     mock.presetsApplied = [];
     mock.viewerOpens = [];
     mock.newMattes = !!opts.newMattes;
+    mock.commands = [];
+    mock.rejectStyles = !!opts.rejectStyles;
     mock.duplicates = [];
     app.fonts = opts.fonts || undefined;
     // The tests below this harness were written against the Gradient Ramp;
@@ -2328,7 +2358,9 @@ function fxVal(fx, mn) {
                   { kind: "background-blur", radius: 6 }]
     })]));
     ok("effects: no effect was invented", effects(r.comp.list[0]).length === 0, fxOf(r.comp.list[0]));
-    ok("effects: the inner shadow is reported", diagsMatching(r.diags, /inner-shadow effect/).length === 1, dump(r.diags));
+    // An inner shadow used to be left off; it is a layer style now.
+    var st = r.comp.list[0].groups["ADBE Layer Styles"];
+    ok("effects: the inner shadow becomes a layer style", !!(st && st.property("innerShadow/enabled")), dump(r.diags));
     ok("effects: so is the background blur", diagsMatching(r.diags, /behind the layer/).length === 1, dump(r.diags));
 })();
 
@@ -2752,6 +2784,106 @@ function clippedDoc() {
     ok("combine: base and clipped stay separate, the rest combine", r.comp.list.length === 3, orderOf(r.comp));
     ok("combine: and still matted", layerNamed(r.comp, "Clipped").matteLayer === layerNamed(r.comp, "Base"));
     ok("combine: the reason is given", diagsMatching(r.diags, /clipped, masked or clipping others/).length === 1, dump(r.diags));
+})();
+
+// ---------------------------------------------------------------------------
+// ST) Layer styles
+// ---------------------------------------------------------------------------
+
+function styleOf(l, key) {
+    var g = l && l.groups["ADBE Layer Styles"];
+    return g ? g.property(key + "/enabled") : null;
+}
+function sval(l, key, control) {
+    var g = styleOf(l, key);
+    var p = g ? g.property(key + "/" + control) : null;
+    return p ? p.value : undefined;
+}
+function styledDoc(effects, source) {
+    var v = vector("Card", { x: 0, y: 0, width: 100, height: 60 });
+    v.effects = effects;
+    return irDoc([v], { source: source || "photoshop" });
+}
+
+// ST1) Photoshop's shadows, glows, stroke and overlay as editable layer styles.
+(function () {
+    var r = build(styledDoc([
+        { kind: "drop-shadow", color: rgba(0, 0, 0, 0.5), offset: { x: 0, y: 10 }, radius: 8, spread: 1.6, blendMode: "multiply" },
+        { kind: "inner-shadow", color: rgba(0.2, 0, 0, 0.75), offset: { x: -5, y: 0 }, radius: 4 },
+        { kind: "outer-glow", color: rgba(1, 1, 0, 0.8), radius: 12, spread: 6, blendMode: "screen" },
+        { kind: "inner-glow", color: rgba(1, 1, 1, 0.6), radius: 6, choke: 3, source: "center" },
+        { kind: "stroke", color: rgba(1, 0, 0, 1), width: 3, position: "inside" },
+        { kind: "color-overlay", color: rgba(0, 0.5, 1, 0.4), blendMode: "overlay" }
+    ]));
+    var l = r.comp.list[0];
+    ok("styles: a Photoshop drop shadow is a layer style, not the effect", !!styleOf(l, "dropShadow") && effects(l).length === 0,
+       fxOf(l));
+    ok("styles: light from 90 degrees for a shadow falling down, 10 px, size 8",
+       near(sval(l, "dropShadow", "localLightingAngle"), 90) && near(sval(l, "dropShadow", "distance"), 10) &&
+       near(sval(l, "dropShadow", "blur"), 8) && sval(l, "dropShadow", "useGlobalAngle") === 0);
+    ok("styles: spread back to its percentage, opacity from alpha",
+       near(sval(l, "dropShadow", "chokeMatte"), 20) && sval(l, "dropShadow", "opacity") === 50);
+    ok("styles: inner shadow built (it used to be left off), light from the right for a shadow to the left",
+       !!styleOf(l, "innerShadow") && near(sval(l, "innerShadow", "localLightingAngle"), 0) && near(sval(l, "innerShadow", "distance"), 5));
+    ok("styles: outer glow with its spread", near(sval(l, "outerGlow", "chokeMatte"), 50) && near(sval(l, "outerGlow", "blur"), 12));
+    ok("styles: inner glow from the centre", sval(l, "innerGlow", "innerGlowSource") === 1 && near(sval(l, "innerGlow", "chokeMatte"), 50));
+    ok("styles: stroke inside, 3 px, red", sval(l, "frameFX", "style") === 2 && sval(l, "frameFX", "size") === 3 &&
+       nearArr(sval(l, "frameFX", "color"), [1, 0, 0, 1]));
+    ok("styles: colour overlay at 40%", sval(l, "solidFill", "opacity") === 40);
+    ok("styles: the overlay's blend mode is reported, the defaults are not",
+       diagsMatching(r.diags, /blends as Overlay/).length === 1 && diagsMatching(r.diags, /blends as/).length === 1, dump(r.diags));
+    ok("styles: one menu command per style, each with the layer selected", mock.commands.join(",") === "9000,9001,9002,9003,9008,9006",
+       mock.commands.join(","));
+    ok("styles: the layer is not left selected", l.selected === false);
+})();
+
+// ST2) Satin, bevel and gradient overlay.
+(function () {
+    var r = build(styledDoc([
+        { kind: "satin", color: rgba(0, 0, 0, 0.5), angle: 19, distance: 11, radius: 14, invert: true },
+        { kind: "bevel", style: "emboss", technique: "hard", depth: 250, up: false, size: 7, soften: 2, angle: 120, altitude: 45,
+          highlight: rgba(1, 1, 1, 0.9), shadow: rgba(0, 0, 0, 0.6) },
+        { kind: "gradient-overlay", stops: [], style: "radial", angle: 45, scale: 80, reverse: true, opacity: 0.7 }
+    ]));
+    var l = r.comp.list[0];
+    ok("satin: angle, distance, size, inverted", sval(l, "chromeFX", "localLightingAngle") === 19 && sval(l, "chromeFX", "invert") === 1);
+    ok("bevel: emboss, chisel hard, down, 250%", sval(l, "bevelEmboss", "bevelStyle") === 3 && sval(l, "bevelEmboss", "bevelTechnique") === 2 &&
+       sval(l, "bevelEmboss", "bevelDirection") === 2 && sval(l, "bevelEmboss", "strengthRatio") === 250);
+    ok("bevel: light and colours", sval(l, "bevelEmboss", "localLightingAltitude") === 45 && sval(l, "bevelEmboss", "highlightOpacity") === 90 &&
+       sval(l, "bevelEmboss", "shadowOpacity") === 60);
+    ok("gradient overlay: radial, 45 degrees, 80%, reversed, 70%",
+       sval(l, "gradientFill", "type") === 2 && sval(l, "gradientFill", "angle") === 45 && sval(l, "gradientFill", "scale") === 80 &&
+       sval(l, "gradientFill", "reverse") === 1 && sval(l, "gradientFill", "opacity") === 70);
+    ok("gradient overlay: its colours are honestly reported", diagsMatching(r.diags, /cannot set a style's gradient/).length === 1,
+       dump(r.diags));
+})();
+
+// ST3) A drop shadow from Figma stays the Drop Shadow effect; its inner shadow is now a style.
+(function () {
+    var r = build(styledDoc([
+        { kind: "drop-shadow", color: rgba(0, 0, 0, 1), offset: { x: 2, y: 2 }, radius: 3 },
+        { kind: "inner-shadow", color: rgba(0, 0, 0, 1), offset: { x: 0, y: 2 }, radius: 2 }
+    ], "figma"));
+    var l = r.comp.list[0];
+    ok("figma shadows: the drop shadow is the effect, as before", fxOf(l) === "ADBE Drop Shadow" && !styleOf(l, "dropShadow"), fxOf(l));
+    ok("figma shadows: the inner shadow is a layer style", !!styleOf(l, "innerShadow"));
+})();
+
+// ST4) Two of one kind: After Effects takes one, the rest is reported.
+(function () {
+    var r = build(styledDoc([
+        { kind: "outer-glow", color: rgba(1, 1, 0, 1), radius: 4 },
+        { kind: "outer-glow", color: rgba(0, 1, 1, 1), radius: 8 }
+    ]));
+    ok("two glows: the first is kept", sval(r.comp.list[0], "outerGlow", "blur") === 4);
+    ok("two glows: the second is reported", diagsMatching(r.diags, /one outer glow per layer/).length === 1, dump(r.diags));
+})();
+
+// ST5) After Effects does not add the style: reported, the build goes on.
+(function () {
+    var r = build(styledDoc([{ kind: "stroke", color: rgba(1, 0, 0, 1), width: 2, position: "outside" }]), { rejectStyles: true });
+    ok("style refused: the layer is still built", r.comp.list.length === 1);
+    ok("style refused: reported", diagsMatching(r.diags, /stroke could not be rebuilt/).length === 1, dump(r.diags));
 })();
 
 WScript.Echo("");

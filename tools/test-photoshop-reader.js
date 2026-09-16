@@ -54,7 +54,7 @@ var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, 
              failMaskSelection: false };
 
 /** Photoshop's ActionManager, reduced to the two things the reader asks it. */
-var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {} };
+var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120 };
 function ActionReference() { this.parts = []; }
 ActionReference.prototype.putProperty = function (c, p) { this.parts.push(["prop", p]); };
 ActionReference.prototype.putEnumerated = function (a, b, c) { this.parts.push(["enum", c]); };
@@ -71,6 +71,7 @@ Desc.prototype.getBoolean = function (k) { return this.map[k]; };
 Desc.prototype.getUnitDoubleValue = function (k) { return this.map[k]; };
 Desc.prototype.getEnumerationValue = function (k) { return this.map[k]; };
 function typeIDToCharID(id) { return String(id).replace(/^c:/, ""); }
+function typeIDToStringID(id) { return String(id); }
 
 /** ActionManager's executeAction: only "load the layer mask as the selection" is expected. */
 function ActionDescriptor() { this.map = {}; }
@@ -97,6 +98,7 @@ function executeActionGet(ref) {
     var kind = ref.parts[0] ? ref.parts[0][0] : "";
     var what = ref.parts[0] ? ref.parts[0][1] : "";
 
+    if (kind === "prop" && what === "c:gblA") return new Desc({ "c:gblA": AM.globalAngle });
     if (kind === "prop" && what === "targetLayers") {
         return new Desc({ targetLayers: new List(AM.targetIndices) });
     }
@@ -114,6 +116,7 @@ function executeActionGet(ref) {
         var adj = AM.adjustments["#" + lid];
         if (adj && !MOCK.noSolidColour) map.adjustment = new List([new Desc({ color: new Desc(adj) })]);
         if (AM.gradients["#" + lid]) map.adjustment = new List([AM.gradients["#" + lid]]);
+        if (AM.styles["#" + lid]) map.layerEffects = AM.styles["#" + lid];
         return new Desc(map);
     }
     throw new Error("unexpected ActionReference");
@@ -258,7 +261,7 @@ function readIt(opts) {
 function reset() {
     MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
              failMaskSelection: false };
-    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {} };
+    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {}, styles: {}, globalAngle: 120 };
 }
 /** Select `list` (bottom-most first, as Photoshop indexes them). */
 function select(doc, list) {
@@ -790,6 +793,98 @@ function gradientRead(opts, box, docOpts) {
     var odd = gradientRead({ alphas: [tStop(0, 100), tStop(4096, 100, 25)] });
     ok("gradient fill: an off-centre midpoint is reported",
        odd && odd.type === "vector" && diagWith(/midpoints are moved off centre/) !== null, dump(LazyLord.diagnostics));
+})();
+
+// LS) Layer styles on live layers become IR effects.
+function rgbDesc(r, g, b) { return new Desc({ "c:Rd  ": r, "c:Grn ": g, "c:Bl  ": b }); }
+function styledShape(effects) {
+    reset();
+    var shapeMask = vectorMask([subPath([pp([0, 0]), pp([100, 0]), pp([100, 50]), pp([0, 50])])]);
+    var s = layer("Button", LayerKind.SOLIDFILL, [0, 0, 100, 50]);
+    AM.adjustments["#" + s.id] = { red: 255, grain: 255, blue: 255 };
+    AM.styles["#" + s.id] = new Desc(effects);
+    var doc = setUp(makeDoc({ layers: [s], pathItems: [shapeMask] }));
+    select(doc, [s]);
+    return readIt().layers[0];
+}
+function fxOfKind(l, kind) {
+    var out = [];
+    for (var i = 0; l && l.effects && i < l.effects.length; i++) if (l.effects[i].kind === kind) out.push(l.effects[i]);
+    return out;
+}
+
+(function () {
+    var l = styledShape({
+        "c:Scl ": 100,
+        dropShadow: new Desc({ "c:enab": true, "c:Md  ": "multiply", "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 50, "c:uglg": false,
+                               "c:lagl": 90, "c:Dstn": 10, "c:Ckmt": 20, "c:blur": 8 }),
+        innerShadow: new Desc({ "c:enab": false, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 75 }),
+        outerGlowMulti: new List([
+            new Desc({ "c:enab": true, "c:Md  ": "screen", "c:Clr ": rgbDesc(255, 255, 0), "c:Opct": 80, "c:Ckmt": 50, "c:blur": 12 }),
+            new Desc({ "c:enab": true, "c:Md  ": "dissolve", "c:Clr ": rgbDesc(0, 255, 255), "c:Opct": 100, "c:blur": 4 })
+        ]),
+        innerGlow: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(255, 255, 255), "c:Opct": 60, "c:blur": 6, "c:Ckmt": 50, "c:glwS": "c:SrcC" }),
+        frameFX: new Desc({ "c:enab": true, "c:Styl": "c:InsF", "c:PntT": "c:SClr", "c:Opct": 100, "c:Sz  ": 3, "c:Clr ": rgbDesc(255, 0, 0) }),
+        solidFill: new Desc({ "c:enab": true, "c:Md  ": "overlay", "c:Opct": 40, "c:Clr ": rgbDesc(0, 128, 255) }),
+        chromeFX: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 50, "c:lagl": 19, "c:Dstn": 11, "c:blur": 14, "c:Invr": true }),
+        bevelEmboss: new Desc({ "c:enab": true, "c:bvlS": "c:Embs", "c:bvlT": "c:PrBL", "c:srgR": 250, "c:bvlD": "c:Out ", "c:blur": 7,
+                                "c:Sftn": 2, "c:uglg": true, "c:Lald": 45, "c:hglC": rgbDesc(255, 255, 255), "c:hglO": 90,
+                                "c:sdwC": rgbDesc(0, 0, 0), "c:sdwO": 60 }),
+        patternFill: new Desc({ "c:enab": true })
+    });
+
+    var ds = fxOfKind(l, "drop-shadow")[0];
+    ok("styles: the shape still arrives as a vector", l && l.type === "vector", l && l.type);
+    ok("styles: a drop shadow, light from above so it falls down",
+       ds && near(ds.offset.x, 0, 1e-9) && near(ds.offset.y, 10) && near(ds.radius, 8) && near(ds.color.a, 0.5), dump(ds));
+    ok("styles: its spread is the percentage of its size, in px", ds && near(ds.spread, 1.6), dump(ds));
+    ok("styles: and its blend mode", ds && ds.blendMode === "multiply", dump(ds));
+    ok("styles: a switched-off inner shadow is not sent", fxOfKind(l, "inner-shadow").length === 0, dump(l && l.effects));
+
+    var glows = fxOfKind(l, "outer-glow");
+    ok("styles: both outer glows of a Multi list", glows.length === 2 && near(glows[0].spread, 6) && near(glows[0].color.a, 0.8),
+       dump(glows));
+    ok("styles: a blend mode with no equivalent is reported and left off",
+       glows.length === 2 && glows[1].blendMode === undefined && diagWith(/blend mode 'dissolve'/) !== null, dump(LazyLord.diagnostics));
+    var ig = fxOfKind(l, "inner-glow")[0];
+    ok("styles: inner glow from the centre, with its choke", ig && ig.source === "center" && near(ig.choke, 3), dump(ig));
+    var st = fxOfKind(l, "stroke")[0];
+    ok("styles: a Layer Style stroke, inside, 3 px red", st && st.position === "inside" && near(st.width, 3) && near(st.color.r, 1), dump(st));
+    var co = fxOfKind(l, "color-overlay")[0];
+    ok("styles: a colour overlay at 40%, overlay", co && near(co.color.a, 0.4) && co.blendMode === "overlay", dump(co));
+    var sa = fxOfKind(l, "satin")[0];
+    ok("styles: satin, inverted", sa && sa.invert === true && near(sa.distance, 11), dump(sa));
+    var bv = fxOfKind(l, "bevel")[0];
+    ok("styles: bevel and emboss read, down, following the global light",
+       bv && bv.style === "emboss" && bv.technique === "hard" && bv.up === false && near(bv.angle, 120) && near(bv.highlight.a, 0.9),
+       dump(bv));
+    ok("styles: a pattern overlay is reported", diagWith(/pattern overlay is not transferred/) !== null, dump(LazyLord.diagnostics));
+    ok("styles: the old 'not transferred' note is gone", diagWith(/layer style \(shadows/) === null, dump(LazyLord.diagnostics));
+})();
+
+(function () {
+    // Scale Effects halves every size; a gradient-filled stroke is not carried.
+    var l = styledShape({
+        "c:Scl ": 50,
+        dropShadow: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 100, "c:uglg": false, "c:lagl": 180, "c:Dstn": 20, "c:blur": 10 }),
+        frameFX: new Desc({ "c:enab": true, "c:PntT": "c:GrFl", "c:Sz  ": 4 })
+    });
+    var ds = fxOfKind(l, "drop-shadow")[0];
+    ok("styles: Scale Effects applies to distance and size", ds && near(ds.offset.x, 10) && near(ds.radius, 5), dump(ds));
+    ok("styles: a gradient stroke is reported once, not also as unreadable",
+       fxOfKind(l, "stroke").length === 0 && diagWith(/filled with a gradient or pattern/) !== null &&
+       diagWith(/stroke could not be read/) === null, dump(LazyLord.diagnostics));
+})();
+
+(function () {
+    // A layer sent as an image keeps its style in its pixels: no effects on top.
+    reset();
+    var pix = layer("Photo", LayerKind.NORMAL, [0, 0, 40, 40]);
+    AM.styles["#" + pix.id] = new Desc({ dropShadow: new Desc({ "c:enab": true, "c:Clr ": rgbDesc(0, 0, 0), "c:Opct": 100 }) });
+    var doc = setUp(makeDoc({ layers: [pix] }));
+    select(doc, [pix]);
+    var l = readIt().layers[0];
+    ok("styles: an image layer does not also send its style", l && l.type === "image" && !l.effects, dump(l));
 })();
 
 WScript.Echo("");

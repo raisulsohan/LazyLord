@@ -1982,5 +1982,20 @@ WScript.Echo("");
        JSON.stringify(LazyLord.diagnostics));
 })();
 
+// Photoshop clipping and layer masks have no scripted equivalent here: reported, not dropped.
+(function () {
+    var clipped = { type: "vector", id: "Tint", name: "Tint", frame: { x: 0, y: 0, width: 50, height: 50 },
+                    subpaths: [rectPath(50, 50)], fills: [{ type: "solid", color: rgba(1, 0, 0) }], strokes: [],
+                    clipTo: "ps-1", mask: { frame: { x: 0, y: 0, width: 50, height: 50 }, filePath: "C:/m.png" } };
+    build(canvasDoc([clipped]));
+    var d = LazyLord.diagnostics, mask = 0, clip = 0;
+    for (var i = 0; i < d.length; i++) {
+        if (/layer mask is not rebuilt in Illustrator/.test(d[i].reason)) mask++;
+        if (/clipping mask is not rebuilt in Illustrator/.test(d[i].reason)) clip++;
+    }
+    ok("masks: a Photoshop layer mask is reported", mask === 1, JSON.stringify(d));
+    ok("masks: so is a clipping mask", clip === 1, JSON.stringify(d));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

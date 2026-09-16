@@ -86,7 +86,7 @@ LazyLord.readSelection = function (outDir, opts) {
     if (!selected.length) throw new Error("No layers selected in Photoshop.");
 
     // Pass 1 — convert, with every frame still in document space.
-    var raws = [];
+    var raws = [], pairs = [];
     for (var i = 0; i < selected.length; i++) {
       var raw = null;
       try {
@@ -94,8 +94,12 @@ LazyLord.readSelection = function (outDir, opts) {
       } catch (e) {
         LazyLord.warn(selected[i].name, LazyLord._ps_msg(e), "skipped");
       }
-      if (raw) raws.push(raw);
+      if (raw) {
+        raws.push(raw);
+        pairs.push({ lyr: selected[i], raw: raw });
+      }
     }
+    LazyLord._psr_linkClipping(ctx, pairs);
     if (!raws.length) throw new Error("Nothing in the selection can be transferred.");
 
     // Pass 2 — selection bounds, then normalise everything to its top-left.
@@ -284,6 +288,7 @@ LazyLord._psr_shift = function (list, dx, dy) {
     if (typeof l.anchorX === "number") l.anchorX += dx;
     // A group's vector mask is read in document space, like the frames.
     if (l.clip && l.clip.subpaths) LazyLord._psr_shiftSubPaths(l.clip.subpaths, dx, dy);
+    if (l.mask && l.mask.frame) { l.mask.frame.x += dx; l.mask.frame.y += dy; }
     if (l.children) LazyLord._psr_shift(l.children, dx, dy);
   }
 };
@@ -322,12 +327,12 @@ LazyLord._psr_convert = function (ctx, lyr) {
   var kind = null;
   try { kind = lyr.kind; } catch (e2) {}
 
-  if (kind === LayerKind.TEXT) return LazyLord._psr_text(ctx, lyr);
+  if (kind === LayerKind.TEXT) return LazyLord._psr_withMask(ctx, lyr, LazyLord._psr_text(ctx, lyr));
 
   // A Photoshop shape layer is a fill layer wearing a vector mask.
   if (kind === LayerKind.SOLIDFILL) {
     var vec = LazyLord._psr_shape(ctx, lyr);
-    if (vec) return vec;
+    if (vec) return LazyLord._psr_withMask(ctx, lyr, vec);
   }
 
   return LazyLord._psr_raster(ctx, lyr, LazyLord._psr_reasonFor(kind));
@@ -350,6 +355,7 @@ LazyLord._psr_group = function (ctx, lset) {
   try { kids = lset.layers; } catch (e) { kids = null; }
 
   // Photoshop lists layers front to back; the IR is bottom to top.
+  var pairs = [];
   for (var i = (kids ? kids.length : 0) - 1; i >= 0; i--) {
     var child = null;
     try {
@@ -357,9 +363,16 @@ LazyLord._psr_group = function (ctx, lset) {
     } catch (e2) {
       LazyLord.warn(kids[i].name, LazyLord._ps_msg(e2), "skipped");
     }
-    if (child) children.push(child);
+    if (child) {
+      children.push(child);
+      pairs.push({ lyr: kids[i], raw: child });
+    }
   }
   if (!children.length) return null;
+  LazyLord._psr_linkClipping(ctx, pairs);
+  if (LazyLord._psr_maskState(lset).on) {
+    LazyLord.warn(lset.name || "Group", "The group's layer mask is not transferred, so its layers arrive unmasked", "approximated");
+  }
 
   var box = LazyLord._psr_box(lset) || LazyLord._psr_bounds(children);
   var group = {
@@ -836,6 +849,155 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath) {
       tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);
     }
 
+    var png = new PNGSaveOptions();
+    png.compression = 6;
+    png.interlaced = false;
+    tmp.saveAs(new File(outPath), png, true, Extension.LOWERCASE);
+  } finally {
+    try { tmp.close(SaveOptions.DONOTSAVECHANGES); } catch (e1) {}
+    try { app.activeDocument = src; } catch (e2) {}
+  }
+};
+
+/* -------------------------------------------------------------------------
+ * Clipping masks and layer masks
+ *
+ * A layer Photoshop marks `grouped` shows only where the first unclipped layer
+ * beneath it, in the same parent, has pixels. In the IR that is `clipTo`: the
+ * id of that base, set when the base was sent as well. One clipped to a layer
+ * that was not sent arrives unclipped, and says so.
+ *
+ * A layer mask on live text or a shape travels as a greyscale PNG covering the
+ * layer (`mask`). It is drawn in a scratch document, so the user's own document
+ * is never touched: the layer is copied there, a black layer is laid over it,
+ * the copy's mask is loaded as a selection — which keeps its greys — and filled
+ * with white. A layer sent as an image already carries its mask in its pixels.
+ * ---------------------------------------------------------------------- */
+
+/** The layer `lyr` is clipped to: the first unclipped layer below it in its parent. */
+LazyLord._psr_clipBase = function (lyr) {
+  var list;
+  try { list = lyr.parent.layers; } catch (e) { return null; }
+  var at = -1;
+  for (var i = 0; i < list.length; i++) {
+    try { if (list[i].id === lyr.id) { at = i; break; } } catch (e2) {}
+  }
+  if (at < 0) return null;
+  // Photoshop lists a parent's layers front to back, so what is below comes after.
+  for (var j = at + 1; j < list.length; j++) {
+    var clipped = false;
+    try { clipped = list[j].grouped === true; } catch (e3) {}
+    if (!clipped) return list[j];
+  }
+  return null;
+};
+
+/** Point each clipped layer in `pairs` ({ lyr, raw }, one parent's) at its base. */
+LazyLord._psr_linkClipping = function (ctx, pairs) {
+  var sent = {};
+  for (var i = 0; i < pairs.length; i++) sent[pairs[i].raw.id] = true;
+  for (var k = 0; k < pairs.length; k++) {
+    var clipped = false;
+    try { clipped = pairs[k].lyr.grouped === true; } catch (e) {}
+    if (!clipped) continue;
+    var base = LazyLord._psr_clipBase(pairs[k].lyr);
+    var baseId = base ? LazyLord._psr_id(ctx, base) : null;
+    if (baseId && sent[baseId] && baseId !== pairs[k].raw.id) {
+      pairs[k].raw.clipTo = baseId;
+    } else {
+      var what = "the layer beneath it";
+      try { if (base && base.name) what = "'" + base.name + "'"; } catch (eN) {}
+      LazyLord.warn(pairs[k].raw.name, "It is clipped to " + what + ", which was not sent, so it arrives unclipped", "approximated");
+    }
+  }
+};
+
+/** Whether a layer or group has a layer mask, and whether it is switched on. */
+LazyLord._psr_maskState = function (lyr) {
+  var out = { has: false, on: false };
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(LazyLord._ps_cid("Lyr "), lyr.id);
+    var d = executeActionGet(ref);
+    var hasKey = LazyLord._ps_sid("hasUserMask");
+    out.has = d.hasKey(hasKey) && d.getBoolean(hasKey) === true;
+    out.on = out.has;
+    var enabledKey = LazyLord._ps_sid("userMaskEnabled");
+    if (out.has && d.hasKey(enabledKey)) out.on = d.getBoolean(enabledKey) === true;
+  } catch (e) {}
+  return out;
+};
+
+/** `raw` with its layer's mask attached, when it has one switched on. */
+LazyLord._psr_withMask = function (ctx, lyr, raw) {
+  if (!raw || raw.type === "image" || !raw.frame) return raw;
+  if (!LazyLord._psr_maskState(lyr).on) return raw;
+  var f = raw.frame;
+  var box = { x: f.x, y: f.y, width: f.width, height: f.height };
+  var file = LazyLord.join(ctx.outDir, LazyLord._psr_safe(raw.name) + "-mask-" + (ctx.imageIndex++) + ".png");
+  try {
+    LazyLord._psr_exportMask(ctx, lyr, box, file);
+  } catch (e) {
+    LazyLord.warn(raw.name, "Its layer mask could not be read (" + LazyLord._ps_msg(e) + "), so it arrives unmasked", "approximated");
+    return raw;
+  }
+  raw.mask = { frame: box, filePath: file };
+  return raw;
+};
+
+/** A solid grey (0..255) as Photoshop's SolidColor. */
+LazyLord._psr_grey = function (v) {
+  var c = new SolidColor();
+  c.rgb.red = v;
+  c.rgb.green = v;
+  c.rgb.blue = v;
+  return c;
+};
+
+/** Load the active layer's layer mask as the selection, greys included. */
+LazyLord._psr_loadMaskSelection = function () {
+  var d = new ActionDescriptor();
+  var sel = new ActionReference();
+  sel.putProperty(LazyLord._ps_cid("Chnl"), LazyLord._ps_cid("fsel"));
+  d.putReference(LazyLord._ps_cid("null"), sel);
+  var mask = new ActionReference();
+  mask.putEnumerated(LazyLord._ps_cid("Chnl"), LazyLord._ps_cid("Chnl"), LazyLord._ps_cid("Msk "));
+  d.putReference(LazyLord._ps_cid("T   "), mask);
+  executeAction(LazyLord._ps_cid("setd"), d, DialogModes.NO);
+};
+
+/** Draw `lyr`'s layer mask over `box` into a greyscale PNG at `outPath`. */
+LazyLord._psr_exportMask = function (ctx, lyr, box, outPath) {
+  var src = ctx.doc;
+  var res = LazyLord._pv(src.resolution) || 72;
+  var w = Math.max(1, Math.ceil(box.width));
+  var h = Math.max(1, Math.ceil(box.height));
+
+  var tmp = app.documents.add(w, h, res, "LazyLord mask", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
+  try {
+    app.activeDocument = src;
+    var copy = lyr.duplicate(tmp, ElementPlacement.PLACEATBEGINNING);
+
+    app.activeDocument = tmp;
+    // The copy keeps the source's coordinates; its linked mask moves with it.
+    copy.translate(-box.x, -box.y);
+
+    var paper = tmp.artLayers.add();
+    tmp.activeLayer = paper;
+    tmp.selection.selectAll();
+    tmp.selection.fill(LazyLord._psr_grey(0));
+    tmp.selection.deselect();
+
+    tmp.activeLayer = copy;
+    LazyLord._psr_loadMaskSelection();
+    tmp.activeLayer = paper;
+    tmp.selection.fill(LazyLord._psr_grey(255));
+    tmp.selection.deselect();
+    copy.remove();
+
+    if (ctx.scale !== 1) {
+      tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);
+    }
     var png = new PNGSaveOptions();
     png.compression = 6;
     png.interlaced = false;

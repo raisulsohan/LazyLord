@@ -67,7 +67,10 @@ LazyLord.build = function (doc) {
       always: opts.keyframes === "always",
       seal: [],      // layers written, fingerprinted once the build is done
       conflicts: 0,  // matched layers edited here since the last send
-      keep: opts.conflict === "keep"
+      keep: opts.conflict === "keep",
+      built: {},     // IR id -> the AE layer made for it, for clipping to find its base
+      mattes: [],    // layers that are clipped or masked, matted once everything exists
+      matteUsed: []  // matte layers already serving a layer (older After Effects copies them)
     };
     LazyLord._ae_resetGradients(ctx.comp);
     if (update) {
@@ -85,6 +88,7 @@ LazyLord.build = function (doc) {
     }
     if (opts.layout === "combine") ctx.combo = LazyLord._ae_planCombine(doc, layers);
     LazyLord._ae_tree(ctx, layers, 1, { separate: 0, combined: false });
+    LazyLord._ae_applyMattes(ctx);
     LazyLord._ae_extras(ctx, doc);
     LazyLord._ae_seal(ctx);
   } finally {
@@ -196,6 +200,8 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
     if (layer.type === "group") {
       var up = !ctx.precomps ? LazyLord._ae_group(ctx, layer, fade, tally)
         : (layer.page ? LazyLord._ae_precomp(ctx, layer, fade, tally) : LazyLord._ae_dissolve(ctx, layer, fade, tally));
+      // A precomp has pixels a clipped layer can be matted to; a null does not.
+      if (ctx.precomps && layer.page && up.length === 1 && !up[0].nullLayer) ctx.built[layer.id] = up[0];
       for (var u = 0; u < up.length; u++) out.push(up[u]);
       continue;
     }
@@ -220,7 +226,11 @@ LazyLord._ae_tree = function (ctx, list, fade, tally) {
     try {
       var made = LazyLord._ae_leaf(ctx, layer);
       ctx.created += made.length;
-      if (made.length) tally.separate++;
+      if (made.length) {
+        tally.separate++;
+        ctx.built[layer.id] = made[0];
+        if (layer.clipTo || layer.mask) ctx.mattes.push({ layer: layer, made: made, comp: ctx.comp });
+      }
       for (var k = 0; k < made.length; k++) out.push(made[k]);
     } catch (e) {
       LazyLord.warn(layer.name, (e && e.message) ? e.message : String(e), "skipped");
@@ -402,7 +412,9 @@ LazyLord._ae_planCombine = function (doc, layers) {
   var leaves = [];
   LazyLord.eachLayer(layers, function (layer) { if (layer && layer.type !== "group") leaves.push(layer); });
 
-  var why = { text: 0, image: 0, gradient: 0, clip: 0 };
+  var why = { text: 0, image: 0, gradient: 0, clip: 0, matte: 0 };
+  var bases = {};
+  for (var b = 0; b < leaves.length; b++) if (leaves[b] && leaves[b].clipTo) bases[leaves[b].clipTo] = true;
   var vectors = [], keys = [], counts = {}, order = [];
   var i;
   for (i = 0; i < leaves.length; i++) {
@@ -412,6 +424,8 @@ LazyLord._ae_planCombine = function (doc, layers) {
     if (l.type === "text") why.text++;
     else if (l.type === "image") why.image++;
     else if (l.type === "vector") {
+      // A track matte works on a whole layer, so these stay layers of their own.
+      if (l.clipTo || l.mask || bases[l.id]) { why.matte++; continue; }
       // A Gradient Ramp colours a whole layer; a real Gradient Fill does not.
       if (LazyLord.isGradient(LazyLord.fillPaint(l)) && !LazyLord._ae_realGradients()) { why.gradient++; continue; }
       var key = LazyLord._ae_clipKey(l, i);
@@ -439,13 +453,14 @@ LazyLord._ae_planCombine = function (doc, layers) {
   }
 
   var name = doc.name || "LazyLord";
-  var separate = why.text + why.image + why.gradient + why.clip;
+  var separate = why.text + why.image + why.gradient + why.clip + why.matte;
   if (separate) {
     var parts = [];
     if (why.text) parts.push(LazyLord._ae_plural(why.text, "text layer"));
     if (why.image) parts.push(LazyLord._ae_plural(why.image, "image"));
     if (why.gradient) parts.push(LazyLord._ae_plural(why.gradient, "gradient-filled shape") + " (a Gradient Ramp colours a whole layer)");
     if (why.clip) parts.push(LazyLord._ae_plural(why.clip, "shape") + " with a different clipping mask");
+    if (why.matte) parts.push(LazyLord._ae_plural(why.matte, "shape") + " clipped, masked or clipping others (a track matte works on a whole layer)");
     var reason;
     if (members.length) {
       reason = LazyLord._ae_plural(separate, "layer") + " could not join the combined shape layer '" + name +
@@ -2202,6 +2217,122 @@ LazyLord._ae_image = function (comp, layer, assets) {
     throw e;
   }
   return il;
+};
+
+/* -------------------------------------------------------------------------
+ * Clipping masks and layer masks: track mattes
+ *
+ * A Photoshop clipping mask (IR `clipTo`) shows a layer only where its base
+ * has pixels, and the base stays visible: in After Effects, an Alpha matte
+ * from the base, with the base's video left on. A layer mask (IR `mask`) is a
+ * greyscale image: brought in as footage over the layer's frame and used as a
+ * Luma matte, its own video off.
+ *
+ * After Effects 23 takes any layer as a matte (AVLayer.setTrackMatte), and one
+ * matte can serve several layers. Earlier versions only matte a layer to the
+ * one directly above it, hiding it; there the matte is moved above its layer,
+ * and copied when a base must stay visible or serves more than one layer.
+ *
+ * An After Effects layer takes a single track matte, so a layer with both a
+ * layer mask and a clipping mask keeps the layer mask and reports the other.
+ * This runs once every layer exists, since a base may be built after the
+ * first layer clipped to it is queued.
+ * ---------------------------------------------------------------------- */
+
+LazyLord._ae_applyMattes = function (ctx) {
+  for (var i = 0; i < ctx.mattes.length; i++) {
+    var job = ctx.mattes[i];
+    var name = job.layer.name || "Layer";
+    try {
+      if (job.layer.mask && (job.layer.mask.filePath || job.layer.mask.pngBase64)) {
+        if (LazyLord._ae_layerMask(ctx, job) && job.layer.clipTo) {
+          LazyLord.warn(name, "It has both a layer mask and a clipping mask, and an After Effects layer takes one track matte, " +
+            "so it is masked but not clipped", "approximated");
+        }
+      } else if (job.layer.clipTo) {
+        LazyLord._ae_clipToBase(ctx, job);
+      }
+    } catch (e) {
+      LazyLord.warn(name, "Its " + (job.layer.mask ? "layer mask" : "clipping mask") + " could not be applied (" +
+        ((e && e.message) || String(e)) + "), so it shows unmasked", "approximated");
+    }
+  }
+};
+
+/** Matte every AE layer made for a clipped IR layer to its base's alpha. */
+LazyLord._ae_clipToBase = function (ctx, job) {
+  var base = ctx.built[job.layer.clipTo];
+  if (!base) {
+    LazyLord.warn(job.layer.name || "Layer", "It is clipped to a layer that was not built here (a group that became a null, " +
+      "or one that was updated rather than added), so it is not clipped", "approximated");
+    return;
+  }
+  for (var i = 0; i < job.made.length; i++) {
+    LazyLord._ae_matte(ctx, job.made[i], base, TrackMatteType.ALPHA, true);
+  }
+};
+
+/** Bring a layer mask in as footage and matte every AE layer made for the IR layer to its luminance. */
+LazyLord._ae_layerMask = function (ctx, job) {
+  var layer = job.layer;
+  var name = layer.name || "Layer";
+  var f = layer.mask.frame;
+  var image = {
+    id: layer.id + "-mask",
+    name: name + " mask",
+    type: "image",
+    frame: { x: f.x, y: f.y, width: f.width, height: f.height, rotation: 0, opacity: 1 },
+    filePath: layer.mask.filePath,
+    isOriginalFile: false
+  };
+  var ml;
+  try {
+    ml = LazyLord._ae_image(job.comp, image, ctx.assets);
+  } catch (e) {
+    LazyLord.warn(name, "Its layer mask could not be brought in (" + ((e && e.message) || String(e)) +
+      "), so it shows unmasked", "approximated");
+    return false;
+  }
+  ctx.created++;
+  for (var i = 0; i < job.made.length; i++) {
+    LazyLord._ae_matte(ctx, job.made[i], ml, TrackMatteType.LUMA, false);
+  }
+  return true;
+};
+
+/**
+ * Matte `target` to `matte` as `type`. `keepVisible` leaves the matte layer
+ * showing, as a clipping base does; a mask image is hidden. Uses
+ * setTrackMatte where After Effects has it, else the layer-above arrangement.
+ */
+LazyLord._ae_matte = function (ctx, target, matte, type, keepVisible) {
+  if (typeof target.setTrackMatte === "function") {
+    // A hidden mask is tidied in above its layer; a base stays where it is, below.
+    if (!keepVisible) { try { matte.moveBefore(target); } catch (eMove) {} }
+    target.setTrackMatte(matte, type);
+    try { matte.enabled = keepVisible === true; } catch (eVis) {}
+    return;
+  }
+  // Before After Effects 23: the matte must be the layer directly above, and
+  // it stops drawing. A base that has to stay visible, or that already mattes
+  // another layer, is copied for this one.
+  var m = matte;
+  var used = LazyLord._ae_indexOf(ctx.matteUsed, matte) >= 0;
+  if (keepVisible || used) {
+    m = matte.duplicate();
+    try { m.name = (matte.name || "Layer") + " (matte)"; } catch (eName) {}
+    try { m.comment = LazyLord.stripTag(m.comment); } catch (eTag) {}
+    ctx.created++;
+  }
+  if (!used) ctx.matteUsed.push(matte);
+  m.moveBefore(target);
+  target.trackMatteType = type;
+};
+
+/** Index of `x` in `list` by identity, or -1. */
+LazyLord._ae_indexOf = function (list, x) {
+  for (var i = 0; list && i < list.length; i++) if (list[i] === x) return i;
+  return -1;
 };
 
 /* -------------------------------------------------------------------------

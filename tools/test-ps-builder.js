@@ -1816,5 +1816,21 @@ WScript.Echo("");
        r4.message);
 })();
 
+// Clipping and layer masks come only from Photoshop itself, which never sends to Photoshop: reported if seen.
+(function () {
+    reset();
+    var v = vec("Tint", { x: 0, y: 0, width: 50, height: 50 }, [solid(1, 0, 0)]);
+    v.clipTo = "ps-1";
+    v.mask = { frame: { x: 0, y: 0, width: 50, height: 50 }, filePath: "C:/m.png" };
+    LazyLord.resetDiagnostics();
+    LazyLord.build(irDoc([v]));
+    var d = LazyLord.diagnostics, mask = 0, clip = 0;
+    for (var i = 0; i < d.length; i++) {
+        if (/layer mask is not rebuilt in Photoshop/.test(d[i].reason)) mask++;
+        if (/clipping mask is not rebuilt in Photoshop/.test(d[i].reason)) clip++;
+    }
+    ok("masks: reported, once each", mask === 1 && clip === 1, JSON.stringify(d));
+})();
+
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

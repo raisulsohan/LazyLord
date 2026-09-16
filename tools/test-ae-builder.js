@@ -197,6 +197,8 @@ function ImportOptions(file) { this.file = file; }
 
 var MaskMode = { NONE: "NONE", ADD: "ADD", SUBTRACT: "SUBTRACT", INTERSECT: "INTERSECT", DIFFERENCE: "DIFFERENCE" };
 /** After Effects' blend modes, by the names the scripting guide gives them. */
+var TrackMatteType = { NO_TRACK_MATTE: 5012, ALPHA: 5013, ALPHA_INVERTED: 5014, LUMA: 5015, LUMA_INVERTED: 5016 };
+
 var BlendingMode = {
     NORMAL: "NORMAL", MULTIPLY: "MULTIPLY", SCREEN: "SCREEN", OVERLAY: "OVERLAY",
     DARKEN: "DARKEN", LIGHTEN: "LIGHTEN", CLASSIC_COLOR_DODGE: "CLASSIC_COLOR_DODGE",
@@ -217,7 +219,8 @@ var ParagraphJustification = {
 //   rejectRemove - { matchName: true }: remove() on that property throws
 //   rejectNull  - comp.layers.addNull() throws
 var mock = { rejectAdd: {}, rejectRemove: {}, rampWithoutMatchNames: false, invalidate: true, failSet: {}, setCounts: {},
-             rejectNull: false, presets: false, presetThrows: false, presetsApplied: [], viewerOpens: [] };
+             rejectNull: false, presets: false, presetThrows: false, presetsApplied: [], viewerOpens: [],
+             newMattes: false, duplicates: [] };
 
 // Fonts the mocked After Effects has, by PostScript name: [family, style].
 var MOCK_FONTS = {
@@ -445,6 +448,36 @@ function makeLayer(Ctor, comp, groups) {
     l.comment = ""; // where a layer records the source object it was built from
     l.selected = false;
     l.containingComp = comp;
+    l.enabled = true;
+    l.trackMatteType = TrackMatteType.NO_TRACK_MATTE;
+    l.matteLayer = null;
+    // Layer.moveBefore: directly above `other` (comp.list runs top first).
+    l.moveBefore = function (other) {
+        var list = comp.list, i;
+        for (i = 0; i < list.length; i++) if (list[i] === this) { list.splice(i, 1); break; }
+        for (i = 0; i < list.length; i++) if (list[i] === other) { list.splice(i, 0, this); return; }
+        list.unshift(this);
+    };
+    // Layer.duplicate: a copy directly above the original.
+    l.duplicate = function () {
+        var groups = {};
+        for (var g in this.groups) groups[g] = cloneTree(this.groups[g], null, [], null);
+        var copy = makeLayer(Ctor, comp, groups);
+        copy.name = this.name;
+        copy.comment = this.comment;
+        copy.source = this.source;
+        copy.moveBefore(this);
+        mock.duplicates.push(copy);
+        return copy;
+    };
+    // AVLayer.setTrackMatte (After Effects 23): any layer, and it stops drawing.
+    if (mock.newMattes) {
+        l.setTrackMatte = function (matte, type) {
+            this.matteLayer = matte;
+            this.trackMatteType = type;
+            matte.enabled = false;
+        };
+    }
     if (mock.presets) l.applyPreset = function (file) { mockApplyPreset(this, file); };
     l.property = function (key) { return this.groups[key] || null; };
     l.remove = function () {
@@ -488,6 +521,8 @@ function makeComp(name, w, h) {
         },
         add: function (footage) {
             var l = makeLayer(AVLayer, c, {});
+            // A footage layer is named after its source until renamed, as in AE.
+            l.name = footage.name || "";
             l.source = footage;
             return l;
         }
@@ -607,6 +642,8 @@ function build(doc, opts) {
     mock.presetThrows = !!opts.presetThrows;
     mock.presetsApplied = [];
     mock.viewerOpens = [];
+    mock.newMattes = !!opts.newMattes;
+    mock.duplicates = [];
     app.fonts = opts.fonts || undefined;
     // The tests below this harness were written against the Gradient Ramp;
     // real gradients are opted into with opts.gradients = "real".
@@ -2601,6 +2638,120 @@ function gval2(prop, mn) { return prop ? prop.property(mn).value : null; }
        info.names.join(" > "));
     var six = LazyLord._ae_presetXml([{ position: 0, color: rgba(0.123456789, 0, 0) }, { position: 1, color: rgba(0, 0, 0) }]);
     ok("preset bytes: numbers carry at most six decimals", six.indexOf("<float>0.123457</float>") > 0);
+})();
+
+// ---------------------------------------------------------------------------
+// MA) Photoshop clipping masks and layer masks as track mattes
+// ---------------------------------------------------------------------------
+
+function layerNamed(comp, name) {
+    for (var i = 0; i < comp.list.length; i++) if (comp.list[i].name === name) return comp.list[i];
+    return null;
+}
+function orderOf(comp) {
+    var out = [];
+    for (var i = 0; i < comp.list.length; i++) out.push(comp.list[i].name);
+    return out.join(",");
+}
+function clippedDoc() {
+    var base = imageLayer("Photo", { x: 0, y: 0, width: 200, height: 100 }, "C:/photo.png", true);
+    var tint = vector("Tint", { x: 0, y: 0, width: 200, height: 100 });
+    tint.clipTo = base.id;
+    var label = textLayer("Label", { x: 10, y: 10, width: 80, height: 20 });
+    label.clipTo = base.id;
+    return irDoc([base, tint, label]);
+}
+
+// MA1) After Effects 23+: both clipped layers use the base's alpha; the base still shows.
+(function () {
+    var r = build(clippedDoc(), { newMattes: true });
+    var base = layerNamed(r.comp, "Photo"), tint = layerNamed(r.comp, "Tint"), label = layerNamed(r.comp, "Label");
+    ok("clip (AE 23): the shape is matted to the base's alpha",
+       tint && tint.matteLayer === base && tint.trackMatteType === TrackMatteType.ALPHA);
+    ok("clip (AE 23): so is the text", label && label.matteLayer === base && label.trackMatteType === TrackMatteType.ALPHA);
+    ok("clip (AE 23): the base keeps drawing", base && base.enabled === true);
+    ok("clip (AE 23): nothing copied, nothing moved", mock.duplicates.length === 0 && orderOf(r.comp) === "Label,Tint,Photo",
+       orderOf(r.comp));
+    ok("clip (AE 23): nothing to report", r.diags.length === 0, dump(r.diags));
+})();
+
+// MA2) Before After Effects 23: a copy of the base directly above each clipped layer.
+(function () {
+    var r = build(clippedDoc());
+    var base = layerNamed(r.comp, "Photo"), tint = layerNamed(r.comp, "Tint"), label = layerNamed(r.comp, "Label");
+    ok("clip (legacy): one copy of the base per clipped layer", mock.duplicates.length === 2, String(mock.duplicates.length));
+    ok("clip (legacy): each copy sits directly above its layer",
+       orderOf(r.comp) === "Photo (matte),Label,Photo (matte),Tint,Photo", orderOf(r.comp));
+    ok("clip (legacy): both layers take an Alpha matte",
+       tint.trackMatteType === TrackMatteType.ALPHA && label.trackMatteType === TrackMatteType.ALPHA);
+    ok("clip (legacy): the base itself is left drawing, untouched", base.enabled === true &&
+       base.trackMatteType === TrackMatteType.NO_TRACK_MATTE);
+    ok("clip (legacy): a copy carries no tag, so an update will not mistake it for the base",
+       !/\[\[LazyLord /.test(mock.duplicates[0].comment) && /\[\[LazyLord /.test(base.comment), mock.duplicates[0].comment);
+    ok("clip (legacy): layersCreated counts the copies", r.res.layersCreated === 5, String(r.res.layersCreated));
+})();
+
+// MA3) A layer mask: the mask image over the layer, used as a Luma matte, not drawn.
+(function () {
+    var t = textLayer("Headline", { x: 40, y: 30, width: 200, height: 50 });
+    t.mask = { frame: { x: 40, y: 30, width: 200, height: 50 }, filePath: "C:/tmp/Headline-mask-0.png" };
+    var r = build(irDoc([t]), { newMattes: true });
+    var text = layerNamed(r.comp, "Headline"), mask = layerNamed(r.comp, "Headline mask");
+    ok("layer mask: brought in as footage", !!mask && app.imports.join("|").indexOf("Headline-mask-0.png") >= 0, app.imports.join("|"));
+    ok("layer mask: a Luma matte for the text", text && text.matteLayer === mask && text.trackMatteType === TrackMatteType.LUMA);
+    ok("layer mask: the mask does not draw", mask && mask.enabled === false);
+    ok("layer mask: tidied in directly above the text", orderOf(r.comp) === "Headline mask,Headline", orderOf(r.comp));
+    ok("layer mask: stretched over the layer's frame",
+       mask && nearPt(tval(mask, "ADBE Position"), [140, 55]) && nearPt(tval(mask, "ADBE Scale"), [100, 50]),
+       mask && (xy(tval(mask, "ADBE Position")) + " " + xy(tval(mask, "ADBE Scale"))));
+    ok("layer mask: counted", r.res.layersCreated === 2, String(r.res.layersCreated));
+    // (An unsaved project is reported for any generated image, the mask included.)
+    ok("layer mask: nothing to report about the mask", diagsMatching(r.diags, /mask|matte/i).length === 0, dump(r.diags));
+})();
+
+// MA4) Before After Effects 23: the mask image directly above, the layer set to Luma.
+(function () {
+    var v = vector("Badge", { x: 0, y: 0, width: 50, height: 50 });
+    v.mask = { frame: { x: 0, y: 0, width: 50, height: 50 }, filePath: "C:/tmp/Badge-mask-1.png" };
+    var r = build(irDoc([v]));
+    var badge = layerNamed(r.comp, "Badge");
+    ok("layer mask (legacy): the mask right above, used as Luma, nothing copied",
+       orderOf(r.comp) === "Badge mask,Badge" && badge.trackMatteType === TrackMatteType.LUMA && mock.duplicates.length === 0,
+       orderOf(r.comp));
+})();
+
+// MA5) Both a layer mask and a clipping mask: the mask wins, the clip is reported.
+(function () {
+    var base = vector("Base", { x: 0, y: 0, width: 50, height: 50 });
+    var both = vector("Both", { x: 0, y: 0, width: 50, height: 50 });
+    both.clipTo = base.id;
+    both.mask = { frame: { x: 0, y: 0, width: 50, height: 50 }, filePath: "C:/tmp/Both-mask.png" };
+    var r = build(irDoc([base, both]), { newMattes: true });
+    var layer = layerNamed(r.comp, "Both");
+    ok("mask + clip: masked by its layer mask", layer.matteLayer === layerNamed(r.comp, "Both mask"));
+    ok("mask + clip: the clipping mask is reported", diagsMatching(r.diags, /masked but not clipped/).length === 1, dump(r.diags));
+})();
+
+// MA6) A base that was not built: reported, the layer left unclipped.
+(function () {
+    var lone = vector("Lone", { x: 0, y: 0, width: 50, height: 50 });
+    lone.clipTo = "ps-999";
+    var r = build(irDoc([lone]), { newMattes: true });
+    ok("missing base: not matted", layerNamed(r.comp, "Lone").matteLayer === null);
+    ok("missing base: reported", diagsMatching(r.diags, /clipped to a layer that was not built here/).length === 1, dump(r.diags));
+})();
+
+// MA7) Combine keeps clipped, masked and clipping shapes as layers of their own.
+(function () {
+    var a = vector("A", { x: 0, y: 0, width: 10, height: 10 });
+    var b = vector("B", { x: 20, y: 0, width: 10, height: 10 });
+    var base = vector("Base", { x: 40, y: 0, width: 10, height: 10 });
+    var clipped = vector("Clipped", { x: 40, y: 0, width: 10, height: 10 });
+    clipped.clipTo = base.id;
+    var r = build(irDoc([a, b, base, clipped], { options: { layout: "combine" } }), { newMattes: true });
+    ok("combine: base and clipped stay separate, the rest combine", r.comp.list.length === 3, orderOf(r.comp));
+    ok("combine: and still matted", layerNamed(r.comp, "Clipped").matteLayer === layerNamed(r.comp, "Base"));
+    ok("combine: the reason is given", diagsMatching(r.diags, /clipped, masked or clipping others/).length === 1, dump(r.diags));
 })();
 
 WScript.Echo("");

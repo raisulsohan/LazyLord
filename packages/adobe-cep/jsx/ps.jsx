@@ -20,6 +20,7 @@
  */
 
 LazyLord.build = function (doc) {
+  LazyLord.noteMasks(doc.layers, "Photoshop");
   var oldRuler = app.preferences.rulerUnits;
   var oldType = app.preferences.typeUnits;
   app.preferences.rulerUnits = Units.PIXELS;

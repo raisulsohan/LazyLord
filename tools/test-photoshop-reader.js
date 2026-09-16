@@ -45,13 +45,16 @@ var ElementPlacement = { PLACEATBEGINNING: "begin" };
 var NewDocumentMode = { RGB: "rgb" }, DocumentFill = { TRANSPARENT: "t" };
 var ResampleMethod = { BICUBIC: "bicubic" }, Extension = { LOWERCASE: "lower" };
 function PNGSaveOptions() { this.compression = 6; this.interlaced = false; }
+function SolidColor() { this.rgb = { red: 0, green: 0, blue: 0 }; }
+var DialogModes = { NO: "no" };
 function UnitValue(v) { return v; }
 function File(p) { this.fsName = String(p); }
 
-var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false };
+var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
+             failMaskSelection: false };
 
 /** Photoshop's ActionManager, reduced to the two things the reader asks it. */
-var AM = { targetIndices: [], layerIdAt: {}, adjustments: {} };
+var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [] };
 function ActionReference() { this.parts = []; }
 ActionReference.prototype.putProperty = function (c, p) { this.parts.push(["prop", p]); };
 ActionReference.prototype.putEnumerated = function (a, b, c) { this.parts.push(["enum", c]); };
@@ -64,6 +67,17 @@ Desc.prototype.getList = function (k) { return this.map[k]; };
 Desc.prototype.getInteger = function (k) { return this.map[k]; };
 Desc.prototype.getDouble = function (k) { return this.map[k]; };
 Desc.prototype.getObjectValue = function (k) { return this.map[k]; };
+Desc.prototype.getBoolean = function (k) { return this.map[k]; };
+
+/** ActionManager's executeAction: only "load the layer mask as the selection" is expected. */
+function ActionDescriptor() { this.map = {}; }
+ActionDescriptor.prototype.putReference = function (k, r) { this.map[k] = r; };
+function executeAction(id, desc, mode) {
+    var target = desc && desc.map["c:T   "];
+    var layerNow = app.activeDocument.activeLayer;
+    AM.actions.push({ id: id, to: target ? target.parts[0][1] : null, activeKind: layerNow ? layerNow.kind : null });
+    if (MOCK.failMaskSelection) throw new Error("the layer has no mask to load");
+}
 
 function List(items) { this.items = items; this.count = items.length; }
 List.prototype.getReference = function (i) {
@@ -90,9 +104,13 @@ function executeActionGet(ref) {
         return new Desc({ layerID: id });
     }
     if (kind === "id") {
-        var adj = AM.adjustments["#" + ref.parts[0][1]];
-        if (!adj || MOCK.noSolidColour) return new Desc({});
-        return new Desc({ adjustment: new List([new Desc({ color: new Desc(adj) })]) });
+        var lid = ref.parts[0][1];
+        var map = {};
+        var m = AM.masks["#" + lid];
+        if (m) { map.hasUserMask = true; map.userMaskEnabled = m.enabled !== false; }
+        var adj = AM.adjustments["#" + lid];
+        if (adj && !MOCK.noSolidColour) map.adjustment = new List([new Desc({ color: new Desc(adj) })]);
+        return new Desc(map);
     }
     throw new Error("unexpected ActionReference");
 }
@@ -111,6 +129,9 @@ function layer(name, kind, box, extra) {
         id: layer.nextId++,
         duplicate: function (target) {
             var copy = {
+                kind: "copy",
+                removed: false,
+                remove: function () { this.removed = true; },
                 bounds: this.bounds.slice(),
                 translate: function (dx, dy) {
                     this.bounds = [this.bounds[0] + dx, this.bounds[1] + dy,
@@ -127,7 +148,7 @@ function layer(name, kind, box, extra) {
 layer.nextId = 100;
 
 function layerSet(name, box, kids) {
-    return {
+    var set = {
         typename: "LayerSet",
         name: name,
         bounds: bounds(box[0], box[1], box[2], box[3]),
@@ -136,6 +157,8 @@ function layerSet(name, box, kids) {
         id: layer.nextId++,
         layers: kids
     };
+    for (var i = 0; i < kids.length; i++) kids[i].parent = set;
+    return set;
 }
 
 /** A path point in Photoshop's POINTS, the way the DOM reports them. */
@@ -169,8 +192,17 @@ function makeDoc(opts) {
             this.saved.push(file.fsName);
             MOCK.exports.push(file.fsName);
         },
-        close: function () { this.closed = true; }
+        close: function () { this.closed = true; },
+        added: [],
+        painted: [],
+        artLayers: { add: function () { var l = { kind: "paper" }; d.added.push(l); return l; } },
+        selection: {
+            selectAll: function () { d.painted.push("select all"); },
+            fill: function (c) { d.painted.push("fill " + c.rgb.red + " on " + (d.activeLayer ? d.activeLayer.kind : "?")); },
+            deselect: function () { d.painted.push("deselect"); }
+        }
     };
+    for (var i = 0; i < d.layers.length; i++) d.layers[i].parent = d;
     return d;
 }
 
@@ -220,8 +252,9 @@ function readIt(opts) {
     return LazyLord.readSelection("C:\\tmp\\out", LazyLord.readOptions);
 }
 function reset() {
-    MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false };
-    AM = { targetIndices: [], layerIdAt: {}, adjustments: {} };
+    MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
+             failMaskSelection: false };
+    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [] };
 }
 /** Select `list` (bottom-most first, as Photoshop indexes them). */
 function select(doc, list) {
@@ -548,6 +581,127 @@ WScript.Echo("");
     ok("export failure: reported with its reason", !!diagWith(/Could not be rasterised/),
        dump(LazyLord.diagnostics));
     ok("export failure: the scratch document was still closed", app.created[0].closed === true);
+})();
+
+// M1) A clipping group: every clipped layer points at its base, which stays itself.
+(function () {
+    reset();
+    var base = layer("Base", LayerKind.NORMAL, [0, 0, 100, 100]);
+    var one = layer("Tint", LayerKind.NORMAL, [10, 10, 50, 50], { grouped: true });
+    var two = layer("Glow", LayerKind.NORMAL, [20, 20, 50, 50], { grouped: true });
+    // Photoshop lists front to back.
+    var doc = setUp(makeDoc({ layers: [two, one, base] }));
+    select(doc, [base, one, two]);
+
+    var ir = readIt();
+    var ids = [];
+    for (var i = 0; i < ir.layers.length; i++) ids.push(ir.layers[i].name + ">" + (ir.layers[i].clipTo || "-"));
+    ok("clipping: the base is not clipped", !ir.layers[0].clipTo, ids.join(" "));
+    ok("clipping: both clipped layers name the base",
+       ir.layers[1].clipTo === ir.layers[0].id && ir.layers[2].clipTo === ir.layers[0].id, ids.join(" "));
+    ok("clipping: nothing reported about clipping", diagWith(/clipped to/) === null, dump(LazyLord.diagnostics));
+})();
+
+// M2) A clipped layer sent without its base arrives unclipped, and says to what it was clipped.
+(function () {
+    reset();
+    var base = layer("Photo", LayerKind.NORMAL, [0, 0, 100, 100]);
+    var tint = layer("Tint", LayerKind.NORMAL, [0, 0, 100, 100], { grouped: true });
+    var other = layer("Other", LayerKind.NORMAL, [0, 0, 10, 10]);
+    var doc = setUp(makeDoc({ layers: [tint, base, other] }));
+    select(doc, [other, tint]);
+
+    var ir = readIt();
+    var t = ir.layers[1];
+    ok("clipping, base not sent: no clipTo, and not to the wrong layer below", t && !t.clipTo, dump(t));
+    var d = diagWith(/clipped to 'Photo', which was not sent/);
+    ok("clipping, base not sent: reported with the base's name", d !== null && d.object === "Tint", dump(LazyLord.diagnostics));
+})();
+
+// M3) Clipping inside a group links within that group.
+(function () {
+    reset();
+    var base = layer("Card", LayerKind.NORMAL, [0, 0, 100, 60]);
+    var art = layer("Art", LayerKind.NORMAL, [0, 0, 100, 60], { grouped: true });
+    var set = layerSet("Folder", [0, 0, 100, 60], [art, base]);
+    var doc = setUp(makeDoc({ layers: [set] }));
+    select(doc, [set]);
+
+    var g = readIt().layers[0];
+    ok("clipping in a group: the clipped child names its sibling",
+       g && g.children && g.children[1].clipTo === g.children[0].id, dump(g && g.children));
+})();
+
+// M4) A layer mask on live text: drawn in a scratch document as a greyscale PNG.
+(function () {
+    reset();
+    var t = layer("Headline", LayerKind.TEXT, [40, 30, 200, 50], {
+        textItem: { contents: "Hi", size: 30, kind: TextType.POINTTEXT, position: [40, 70], font: "ArialMT",
+                    color: { rgb: { red: 0, green: 0, blue: 0 } }, justification: Justification.LEFT }
+    });
+    AM.masks["#" + t.id] = { enabled: true };
+    var doc = setUp(makeDoc({ layers: [t] }));
+    select(doc, [t]);
+
+    var ir = readIt();
+    var l = ir.layers[0];
+    ok("layer mask: the text stays live", l && l.type === "text", l && l.type);
+    ok("layer mask: carried as a mask covering the layer",
+       l && l.mask && near(l.mask.frame.x, 0) && near(l.mask.frame.y, 0) &&
+       near(l.mask.frame.width, 200) && near(l.mask.frame.height, 50), dump(l && l.mask));
+    ok("layer mask: saved as a PNG beside the transfer",
+       l && l.mask && /Headline-mask-\d+\.png$/.test(l.mask.filePath) && MOCK.exports.join("|").indexOf("-mask-") > 0,
+       MOCK.exports.join("|"));
+    var scratch = app.created[app.created.length - 1];
+    ok("layer mask: black first, then the mask loaded as a selection and filled white, on the paper layer",
+       scratch && scratch.painted.join(", ") === "select all, fill 0 on paper, deselect, fill 255 on paper, deselect",
+       scratch && scratch.painted.join(", "));
+    ok("layer mask: the selection came from the copy's mask channel",
+       AM.actions.length === 1 && AM.actions[0].to === "c:Msk " && AM.actions[0].activeKind === "copy", dump(AM.actions));
+    ok("layer mask: the copy is removed before saving, and the scratch document closed",
+       scratch && scratch.duplicated.length === 1 && scratch.duplicated[0].layer.removed === true && scratch.closed === true);
+    ok("layer mask: the user's document gains nothing", doc.added.length === 0 && doc.painted.length === 0);
+    ok("layer mask: the scratch copy was moved to the scratch origin",
+       scratch && near(scratch.duplicated[0].layer.bounds[0], 0) && near(scratch.duplicated[0].layer.bounds[1], 0),
+       scratch && dump(scratch.duplicated[0].layer.bounds));
+})();
+
+// M5) A mask that is switched off is not sent; one that cannot be read is reported.
+(function () {
+    reset();
+    var shapeMask = vectorMask([subPath([pp([0, 0]), pp([50, 0]), pp([50, 50]), pp([0, 50])])]);
+    var off = layer("Off", LayerKind.SOLIDFILL, [0, 0, 50, 50]);
+    AM.adjustments["#" + off.id] = { red: 255, grain: 255, blue: 255 };
+    AM.masks["#" + off.id] = { enabled: false };
+    var doc = setUp(makeDoc({ layers: [off], pathItems: [shapeMask] }));
+    select(doc, [off]);
+    var l = readIt().layers[0];
+    ok("mask off: the shape arrives without one", l && l.type === "vector" && !l.mask, dump(l));
+
+    reset();
+    var broken = layer("Broken", LayerKind.SOLIDFILL, [0, 0, 50, 50]);
+    AM.adjustments["#" + broken.id] = { red: 255, grain: 255, blue: 255 };
+    AM.masks["#" + broken.id] = { enabled: true };
+    MOCK.failMaskSelection = true;
+    doc = setUp(makeDoc({ layers: [broken], pathItems: [shapeMask] }));
+    select(doc, [broken]);
+    l = readIt().layers[0];
+    ok("mask unreadable: the shape still arrives, unmasked", l && l.type === "vector" && !l.mask, dump(l));
+    ok("mask unreadable: said so", diagWith(/layer mask could not be read/) !== null, dump(LazyLord.diagnostics));
+    ok("mask unreadable: the scratch document is still closed", app.created[app.created.length - 1].closed === true);
+})();
+
+// M6) A group's own layer mask is not transferred, and that is reported.
+(function () {
+    reset();
+    var kid = layer("Inside", LayerKind.NORMAL, [0, 0, 20, 20]);
+    var set = layerSet("Masked group", [0, 0, 20, 20], [kid]);
+    AM.masks["#" + set.id] = { enabled: true };
+    var doc = setUp(makeDoc({ layers: [set] }));
+    select(doc, [set]);
+    readIt();
+    var d = diagWith(/group's layer mask is not transferred/);
+    ok("group mask: reported", d !== null && d.object === "Masked group", dump(LazyLord.diagnostics));
 })();
 
 WScript.Echo("");

@@ -60,7 +60,8 @@ echo.
 echo   The dot turns green when the panel is ready. Keep one LazyLord
 echo   panel open and Figma can reach it - there is no separate bridge.
 echo.
-echo   Figma: see "Read me first.txt" - it takes one import, once.
+echo   Figma: run "2 - Add the Figma plugin.bat" next. Skip it if you only
+echo   move things between the Adobe apps.
 echo.
 echo   If a panel opens blank, run "Fix a blank panel.bat" and restart
 echo   the app.

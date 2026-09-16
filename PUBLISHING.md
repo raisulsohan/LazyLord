@@ -51,14 +51,21 @@ npm run release
 রিলিজ ফোল্ডারে জিপ ছাড়া আর কিছু জমে না। জিপের ভেতরে:
 
 ```
-LazyLord-1.0.0.zxp            প্যানেল, সাইন করা
-Install LazyLord.bat          Windows — ডাবল ক্লিক
-Install LazyLord (macOS)      macOS — ডাবল ক্লিক
+Read me first.txt                      দুই ধাপের নির্দেশনা
+1 - Install LazyLord.bat               Adobe প্যানেল (Windows)
+1 - Install LazyLord (macOS).command   Adobe প্যানেল (macOS)
+2 - Add the Figma plugin.bat           Figma অংশ (Windows)
+2 - Add the Figma plugin (macOS)…      Figma অংশ (macOS)
 Uninstall LazyLord.bat
-Fix a blank panel.bat         প্যানেল ফাঁকা এলে
-Read me first.txt             ব্যবহারকারীর নির্দেশনা
-Figma plugin\                 manifest.json + dist (Community-তে ওঠার আগ পর্যন্ত)
+Fix a blank panel.bat                  প্যানেল ফাঁকা এলে
+LazyLord-1.0.0.zxp                     প্যানেল, সাইন করা
+Figma plugin\                          manifest.json + dist
 ```
+
+ধাপ ২-র স্ক্রিপ্টটা Figma প্লাগিনের ফাইলগুলো `%LOCALAPPDATA%\LazyLord`-এ কপি করে
+রাখে, আর manifest-এর পথটা ক্লিপবোর্ডে তুলে দেয় — ব্যবহারকারী Figma-র ফাইল
+উইন্ডোতে শুধু Ctrl+V চেপে Enter দিলেই হলো। কপি করে রাখার কারণ, ডাউনলোড ফোল্ডারটা
+পরে মুছে ফেললেও প্লাগিন চলতে থাকে — Figma প্রতিবার ওই ফাইলগুলোই পড়ে।
 
 ব্যবহারকারীর কিছু লাগে না — Node নেই, ব্রিজের কালো উইন্ডো নেই, ডিবাগ মোড নেই,
 আলাদা কোনো এক্সটেনশন ম্যানেজারও লাগে না। জিপ খুলে `Install LazyLord.bat` চালালেই

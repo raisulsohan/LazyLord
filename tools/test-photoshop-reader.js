@@ -54,7 +54,7 @@ var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, 
              failMaskSelection: false };
 
 /** Photoshop's ActionManager, reduced to the two things the reader asks it. */
-var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [] };
+var AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {} };
 function ActionReference() { this.parts = []; }
 ActionReference.prototype.putProperty = function (c, p) { this.parts.push(["prop", p]); };
 ActionReference.prototype.putEnumerated = function (a, b, c) { this.parts.push(["enum", c]); };
@@ -68,6 +68,9 @@ Desc.prototype.getInteger = function (k) { return this.map[k]; };
 Desc.prototype.getDouble = function (k) { return this.map[k]; };
 Desc.prototype.getObjectValue = function (k) { return this.map[k]; };
 Desc.prototype.getBoolean = function (k) { return this.map[k]; };
+Desc.prototype.getUnitDoubleValue = function (k) { return this.map[k]; };
+Desc.prototype.getEnumerationValue = function (k) { return this.map[k]; };
+function typeIDToCharID(id) { return String(id).replace(/^c:/, ""); }
 
 /** ActionManager's executeAction: only "load the layer mask as the selection" is expected. */
 function ActionDescriptor() { this.map = {}; }
@@ -110,6 +113,7 @@ function executeActionGet(ref) {
         if (m) { map.hasUserMask = true; map.userMaskEnabled = m.enabled !== false; }
         var adj = AM.adjustments["#" + lid];
         if (adj && !MOCK.noSolidColour) map.adjustment = new List([new Desc({ color: new Desc(adj) })]);
+        if (AM.gradients["#" + lid]) map.adjustment = new List([AM.gradients["#" + lid]]);
         return new Desc(map);
     }
     throw new Error("unexpected ActionReference");
@@ -254,7 +258,7 @@ function readIt(opts) {
 function reset() {
     MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
              failMaskSelection: false };
-    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [] };
+    AM = { targetIndices: [], layerIdAt: {}, adjustments: {}, masks: {}, actions: [], gradients: {} };
 }
 /** Select `list` (bottom-most first, as Photoshop indexes them). */
 function select(doc, list) {
@@ -702,6 +706,90 @@ WScript.Echo("");
     readIt();
     var d = diagWith(/group's layer mask is not transferred/);
     ok("group mask: reported", d !== null && d.object === "Masked group", dump(LazyLord.diagnostics));
+})();
+
+// GF) Gradient fill layers become vectors with a real gradient paint.
+function gStop(loc, r, g, b, extra) {
+    var m = { "c:Lctn": loc, "c:Mdpn": 50, "c:Type": "c:UsrS", "c:Clr ": new Desc({ "c:Rd  ": r, "c:Grn ": g, "c:Bl  ": b }) };
+    if (extra) for (var k in extra) m[k] = extra[k];
+    return new Desc(m);
+}
+function tStop(loc, opacity, mid) { return new Desc({ "c:Lctn": loc, "c:Mdpn": mid === undefined ? 50 : mid, "c:Opct": opacity }); }
+function gradFill(opts) {
+    return new Desc({
+        "c:Type": "c:" + (opts.type || "Lnr "),
+        "c:Angl": opts.angle === undefined ? 0 : opts.angle,
+        "c:Scl ": opts.scale === undefined ? 100 : opts.scale,
+        "c:Rvrs": !!opts.reverse,
+        "c:Algn": opts.align !== false,
+        "c:Ofst": new Desc({ "c:Hrzn": opts.ox || 0, "c:Vrtc": opts.oy || 0 }),
+        "c:Grad": new Desc(opts.noise ? {} : {
+            "c:Clrs": new List(opts.colours || [gStop(0, 255, 0, 0), gStop(4096, 0, 0, 255)]),
+            "c:Trns": new List(opts.alphas || [tStop(0, 100), tStop(4096, 100)])
+        })
+    });
+}
+function gradientRead(opts, box, docOpts) {
+    reset();
+    var g = layer("Sky", LayerKind.GRADIENTFILL, box || [0, 0, 200, 100]);
+    AM.gradients["#" + g.id] = gradFill(opts);
+    var o = docOpts || {};
+    o.layers = [g];
+    var doc = setUp(makeDoc(o));
+    select(doc, [g]);
+    return readIt().layers[0];
+}
+
+(function () {
+    var l = gradientRead({ alphas: [tStop(0, 100), tStop(2048, 50), tStop(4096, 0)] });
+    var f = l && l.fills[0];
+    ok("gradient fill: a vector, not an image", l && l.type === "vector", l && l.type);
+    ok("gradient fill: without a mask it is its box, as a live rectangle",
+       l && l.primitive && l.primitive.kind === "rect" && near(l.primitive.width, 200) && l.subpaths.length === 1, dump(l && l.primitive));
+    ok("gradient fill: linear, left to right at 0 degrees",
+       f && f.type === "linear-gradient" && near(f.from.x, 0) && near(f.from.y, 0.5) && near(f.to.x, 1) && near(f.to.y, 0.5), dump(f));
+    ok("gradient fill: colour and transparency stops merged where either has one",
+       f && f.stops.length === 3 && near(f.stops[1].position, 0.5), dump(f && f.stops));
+    ok("gradient fill: the colour in the middle is read off the colour ramp",
+       f && near(f.stops[1].color.r, 0.5) && near(f.stops[1].color.b, 0.5), dump(f && f.stops[1]));
+    ok("gradient fill: each stop's alpha off the transparency ramp",
+       f && near(f.stops[0].color.a, 1) && near(f.stops[1].color.a, 0.5) && near(f.stops[2].color.a, 0), dump(f && f.stops));
+    ok("gradient fill: nothing to report", LazyLord.diagnostics.length === 0, dump(LazyLord.diagnostics));
+})();
+
+(function () {
+    var up = gradientRead({ angle: 90 });
+    var f = up && up.fills[0];
+    ok("gradient fill: 90 degrees runs bottom to top, to the box's edge",
+       f && near(f.from.x, 0.5) && near(f.from.y, 1) && near(f.to.x, 0.5) && near(f.to.y, 0), dump(f));
+
+    var rev = gradientRead({ reverse: true }).fills[0];
+    ok("gradient fill: reversed swaps its ends", near(rev.from.x, 1) && near(rev.to.x, 0), dump(rev));
+
+    var rad = gradientRead({ type: "Rdl ", scale: 50, ox: 10 }).fills[0];
+    ok("gradient fill: radial from its offset centre, half the reach at 50%",
+       rad.type === "radial-gradient" && near(rad.from.x, 0.6) && near(rad.from.y, 0.5) && near(rad.to.x, 0.85), dump(rad));
+
+    var rrev = gradientRead({ type: "Rdl ", reverse: true, colours: [gStop(0, 255, 255, 255), gStop(1024, 0, 0, 0)] }).fills[0];
+    ok("gradient fill: a reversed radial turns its stops around",
+       near(rrev.stops[0].position, 0) && near(rrev.stops[0].color.r, 0) && near(rrev.stops[rrev.stops.length - 1].position, 1) &&
+       near(rrev.stops[rrev.stops.length - 1].color.r, 1), dump(rrev.stops));
+
+    var canvas = gradientRead({ align: false }, [100, 0, 100, 100], { width: 800, height: 600 }).fills[0];
+    ok("gradient fill: not aligned with the layer, it is measured on the canvas",
+       near(canvas.from.x, -1) && near(canvas.to.x, 7) && near(canvas.from.y, 3), dump(canvas));
+})();
+
+(function () {
+    var angle = gradientRead({ type: "Angl" });
+    ok("gradient fill: an angle gradient falls back to an image, said why",
+       angle && angle.type === "image" && diagWith(/Angle, reflected and diamond/) !== null, dump(LazyLord.diagnostics));
+    var noise = gradientRead({ noise: true });
+    ok("gradient fill: so does a noise gradient", noise && noise.type === "image" && diagWith(/noise gradient/) !== null,
+       dump(LazyLord.diagnostics));
+    var odd = gradientRead({ alphas: [tStop(0, 100), tStop(4096, 100, 25)] });
+    ok("gradient fill: an off-centre midpoint is reported",
+       odd && odd.type === "vector" && diagWith(/midpoints are moved off centre/) !== null, dump(LazyLord.diagnostics));
 })();
 
 WScript.Echo("");

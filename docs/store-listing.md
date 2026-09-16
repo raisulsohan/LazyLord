@@ -32,19 +32,22 @@ After Effects users and loses everyone else.
 For a one-line field under the name:
 
 ```
-Move vectors, live text and images between Figma, Photoshop, Illustrator and After Effects — as real, editable layers. Free and open source.
+A full replacement for Overlord, free forever — move vectors, live text and images between Figma, Photoshop, Illustrator and After Effects as real, editable layers.
 ```
 
 ## Description
 
 ```
-LazyLord moves artwork between Figma, Photoshop, Illustrator and After Effects —
+LazyLord is a full replacement for Overlord — and it is free forever.
+
+It moves artwork between Figma, Photoshop, Illustrator and After Effects —
 any of them to any other. Select something, press Send, and it arrives in the
 other app as real artwork: editable Bézier paths, live text you can retype,
 proper layers and groups. Not a flattened screenshot, and not an SVG you have
 to clean up afterwards.
 
-It is free, open source, and runs entirely on your own computer.
+It is free, open source, and runs entirely on your own computer. No
+subscription, no licence key, no catch.
 
 
 WHY
@@ -63,6 +66,8 @@ WHAT YOU GET
 • It notices your edits — changed one of those layers by hand? It asks whether
   to keep your version or overwrite it
 • Live — keep one app updating while you work in another
+• Figma components become one shared After Effects precomp, with each copy's
+  own text and colours in Essential Graphics
 • Nothing to keep running — no console window, no separate bridge program
 • Honest about gaps — anything an app cannot rebuild is listed on the transfer,
   never silently dropped
@@ -71,11 +76,16 @@ WHAT YOU GET
 WHAT TRAVELS
 
 • Bézier and compound paths; rectangles and ellipses as live shapes
-• Live text, including per-character styling
-• Images, exported at 1x to 4x
-• Linear and radial gradients
+• Live text, with per-character styling and kerning
+• Linear and radial gradients with every colour stop — real shape gradients
+  in After Effects
 • Masks, clipping, groups and layer hierarchy
-• Blend modes, drop shadows and blurs
+• Blend modes, drop and inner shadows, and blurs
+• Images, exported at 1x to 4x — After Effects keeps them in a folder beside
+  your saved project
+• From Photoshop into After Effects: clipping and layer masks, layer styles as
+  editable layer styles, adjustment layers, gradient fills, and layers as the
+  frames of an image sequence
 
 
 WHAT IS IN THE DOWNLOAD
@@ -99,6 +109,13 @@ PRIVACY
 Nothing is uploaded. The apps talk to each other over your own computer's
 loopback address — there is no server, no account and no analytics, and it
 works with the internet unplugged.
+
+
+NEED HELP?
+
+Stuck somewhere? Email me the details — which apps and versions, what you did,
+a screenshot and the panel's Log — at lettertosohan@gmail.com, and I will
+solve it.
 
 
 Open source, MIT licensed: https://github.com/raisulsohan/LazyLord
@@ -141,5 +158,5 @@ Only if you ask it to. "Add" always makes new layers. "Update" replaces only the
 **The panel does not show up, or opens blank. What do I do?**
 
 ```
-Restart the Adobe app first — it only looks for new panels while starting up. If the panel opens blank, run "Fix a blank panel.bat" from the download and restart again. Still stuck? Open an issue at github.com/raisulsohan/LazyLord/issues with a copy of the panel's Log.
+Restart the Adobe app first — it only looks for new panels while starting up. If the panel opens blank, run "Fix a blank panel.bat" from the download and restart again. Still stuck? Email the details and a copy of the panel's Log to lettertosohan@gmail.com, and I will solve it.
 ```

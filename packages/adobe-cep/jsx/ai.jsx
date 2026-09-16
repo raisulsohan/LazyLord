@@ -1222,6 +1222,27 @@ LazyLord._ai_textRuns = function (tf, layer) {
   if (lost) LazyLord.warn(name, "Some mixed character styles could not be applied", "approximated");
 };
 
+/** The text's kerning method and its manually kerned pairs (each on the character after the gap). */
+LazyLord._ai_kerning = function (tf, layer) {
+  var name = layer.name || "Text";
+  if (layer.autoKern && typeof AutoKernType !== "undefined") {
+    var m = layer.autoKern === "optical" ? AutoKernType.OPTICAL : (layer.autoKern === "none" ? AutoKernType.NOAUTOKERN : AutoKernType.AUTO);
+    try { tf.textRange.characterAttributes.kerningMethod = m; }
+    catch (e) { LazyLord.warn(name, "Its kerning method could not be set, so Illustrator's default is used", "approximated"); }
+  }
+  var kerns = LazyLord.kernsOf(layer);
+  if (!kerns.length) return;
+  var chars = null;
+  try { chars = tf.textRange.characters; } catch (e1) {}
+  var lost = 0;
+  for (var i = 0; i < kerns.length; i++) {
+    try { chars[kerns[i].index].kerning = kerns[i].amount; } catch (e2) { lost++; }
+  }
+  if (lost) {
+    LazyLord.warn(name, lost + (lost === 1 ? " kerned letter pair" : " kerned letter pairs") + " could not be kerned", "approximated");
+  }
+};
+
 LazyLord._ai_text = function (ctx, layer) {
   var name = layer.name || "Text";
   var anchor = LazyLord.textAnchor(layer);
@@ -1241,6 +1262,7 @@ LazyLord._ai_text = function (ctx, layer) {
   var font = LazyLord._ai_findFont(layer.fontFamily, layer.fontStyle);
   if (font) attr.textFont = font;
   LazyLord._ai_textRuns(tf, layer);
+  LazyLord._ai_kerning(tf, layer);
 
   // Justify once the contents and their size are final, and before anything
   // is measured or turned: point text keeps its anchor where it was created

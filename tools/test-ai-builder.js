@@ -375,6 +375,10 @@ function TextFrame(parent) {
     this.contents = "";
     this.opacity = 100;
     this.textRange = { characterAttributes: {}, paragraphAttributes: MOCK.textNoParagraphs ? null : {} };
+    if (MOCK.textCharacters) {
+        this.textRange.characters = [];
+        for (var c = 0; c < MOCK.textCharacters; c++) this.textRange.characters.push({ characterAttributes: {} });
+    }
     this.rotations = [];
     this.turnedWith = []; // the justification in force at each rotate()
     this._place([0, 0]);
@@ -1995,6 +1999,28 @@ WScript.Echo("");
     }
     ok("masks: a Photoshop layer mask is reported", mask === 1, JSON.stringify(d));
     ok("masks: so is a clipping mask", clip === 1, JSON.stringify(d));
+})();
+
+// Kerning: the method on the text, each pair on the character after its gap.
+(function () {
+    resetMock();
+    var kdoc = openDoc();
+    AutoKernType = { NOAUTOKERN: 0, AUTO: 1, OPTICAL: 2, METRICSROMANONLY: 3 };
+    MOCK.textCharacters = 3;
+    try {
+        build(canvasDoc([{
+            id: "K", name: "AVA", type: "text", frame: { x: 0, y: 0, width: 50, height: 10 }, characters: "AVA",
+            fontFamily: "Inter", fontStyle: "Regular", fontSize: 12, color: { r: 0, g: 0, b: 0, a: 1 },
+            autoKern: "none", kerns: [{ index: 2, amount: -40 }, { index: 0, amount: 30 }]
+        }]));
+    } finally {
+        MOCK.textCharacters = 0;
+    }
+    var tf = kdoc.textFrames[0];
+    ok("kerning: the method", tf && tf.textRange.characterAttributes.kerningMethod === AutoKernType.NOAUTOKERN);
+    ok("kerning: the pair, and nothing outside the text", tf && tf.textRange.characters[2].kerning === -40 &&
+       tf.textRange.characters[0].kerning === undefined && tf.textRange.characters[1].kerning === undefined);
+    ok("kerning: nothing reported", !/kern/i.test(JSON.stringify(LazyLord.diagnostics)), JSON.stringify(LazyLord.diagnostics));
 })();
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

@@ -1248,11 +1248,22 @@ async function textToLayer(node: TextNode, ctx: Ctx): Promise<Layer | null> {
       decoration: decoMap[s.textDecoration as string] || "none",
     }));
   }
+  if (kerningOff(node)) layer.autoKern = "none";
   // Glyphs can spill out of a fixed-size text box: count their render bounds too.
   const rb = any.absoluteRenderBounds as Box | null;
   const ext = rotatedBoxBounds(frame);
   attachClip(layer, ctx, (rb && unionBoxes(ext, { x: rb.x - ctx.origin.x, y: rb.y - ctx.origin.y, width: rb.width, height: rb.height })) || ext);
   return layer;
+}
+
+/** Figma kerns with the font's own pairs unless the text switches its OpenType kern feature off. */
+function kerningOff(node: TextNode): boolean {
+  try {
+    const segs = (node as any).getStyledTextSegments(["openTypeFeatures"]) as any[];
+    return !!segs && segs.length > 0 && segs.every((s) => s && s.openTypeFeatures && s.openTypeFeatures.KERN === false);
+  } catch {
+    return false;
+  }
 }
 
 /** Live text carries one colour: the first solid fill, else a gradient's first stop. */

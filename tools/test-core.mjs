@@ -1451,6 +1451,13 @@ const frameNode = (name, w, h, t, props = {}) =>
     st && st.runs && st.runs.length === 2 && st.runs[1].start === 6 && st.runs[1].end === 11 && st.runs[1].fontStyle === "Bold" &&
     st.runs[1].fontSize === 20 && near(st.runs[1].color.b, 1) && st.runs[1].decoration === "underline" && st.runs[1].letterSpacing === 1);
   ok("runs: not reported as outlined", !diag(sdoc, "Styled", "approximated", "outlines"));
+  ok("kerning: on by default, so nothing said", st && st.autoKern === undefined);
+  const unkerned = textNode(100, 20, T(0), {
+    name: "Unkerned",
+    getStyledTextSegments: (fields) => (fields.includes("openTypeFeatures") ? [{ start: 0, end: 5, openTypeFeatures: { KERN: false } }] : []),
+  });
+  const kdoc = await docFor([unkerned]);
+  ok("kerning: switched off in Figma reads as none", kdoc.layers[0].autoKern === "none", JSON.stringify(kdoc.layers[0].autoKern));
   ok(
     "diag: image fill on a frame skipped, nothing drawn for it",
     diag(doc, "Hero", "skipped", "Image fill") && !doc.layers.some((l) => l.id === imageFrame.id || l.id === imageFrame.id + ":fill") && !groupsIn(doc.tree).some((g) => g.id === imageFrame.id)
@@ -2645,6 +2652,29 @@ await block("ui, late prefs", async () => {
     ok("figma text: and says so once", r2.diagnostics.length === 1 &&
        /not available here/.test(r2.diagnostics[0].reason), JSON.stringify(r2.diagnostics));
     ok("figma text: the text still arrived", t2.characters === "Hello");
+  }
+
+  // Kerned pairs fold into the letter spacing before their gap.
+  {
+    resetPage();
+    const made = figma.createText;
+    const spaced = [];
+    figma.createText = function () {
+      const n = made.call(this);
+      n.setRangeLetterSpacing = (s, e, v) => spaced.push([s, e, v.unit, v.value].join());
+      return n;
+    };
+    try {
+      const r = await B.buildDocument(irDoc([{
+        id: "K", name: "AVA", type: "text", frame: { x: 0, y: 0, width: 80, height: 20, rotation: 0, opacity: 1 },
+        characters: "AVA", fontFamily: "Inter", fontStyle: "Regular", fontSize: 20, color: { r: 0, g: 0, b: 0, a: 1 },
+        letterSpacing: 1, autoKern: "optical", kerns: [{ index: 1, amount: -100 }, { index: 9, amount: 50 }],
+      }]));
+      ok("figma kerning: a pair's kern joins the spacing of the letter before it", spaced.join("|") === "0,1,PIXELS,-1", spaced.join("|"));
+      ok("figma kerning: optical kerning is reported", r.diagnostics.some((d) => /optical/.test(d.reason)), JSON.stringify(r.diagnostics));
+    } finally {
+      figma.createText = made;
+    }
   }
 
   // A baseline places the box above it; without one the frame is used as sent.

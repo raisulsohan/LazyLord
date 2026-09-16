@@ -1708,6 +1708,7 @@ LazyLord._air_text = function (ctx, tf) {
   // Mixed character styles travel as runs rather than being flattened.
   var runs = LazyLord._air_textRuns(tf, name, size);
   if (runs) out.runs = runs;
+  LazyLord._air_kerning(tf, out);
   return out;
 };
 
@@ -1758,6 +1759,33 @@ LazyLord._air_textRuns = function (tf, name, size) {
     out.push(run);
   }
   return out;
+};
+
+/** Past this many characters, manual kerning is not read: each pair is a call to Illustrator. */
+LazyLord._air_KERN_LIMIT = 2000;
+
+/**
+ * The text's kerning method, and its manually kerned pairs: a character's
+ * kerning is the space before it, in thousandths of an em.
+ */
+LazyLord._air_kerning = function (tf, out) {
+  try {
+    var m = tf.textRange.characterAttributes.kerningMethod;
+    if (typeof AutoKernType !== "undefined") {
+      if (m === AutoKernType.OPTICAL) out.autoKern = "optical";
+      else if (m === AutoKernType.NOAUTOKERN) out.autoKern = "none";
+    }
+  } catch (e) {}
+  var chars = null;
+  try { chars = tf.textRange.characters; } catch (e1) {}
+  if (!chars || typeof chars.length !== "number" || chars.length < 2 || chars.length > LazyLord._air_KERN_LIMIT) return;
+  var kerns = [];
+  for (var i = 1; i < chars.length; i++) {
+    var k = 0;
+    try { k = chars[i].kerning; } catch (e2) { return; }
+    if (LazyLord._air_num(k) && k !== 0) kerns.push({ index: i, amount: k });
+  }
+  if (kerns.length) out.kerns = kerns;
 };
 
 /** Auto leading as a percentage of the font size: the paragraph's own, else Illustrator's default 120. */

@@ -1968,5 +1968,34 @@ function linkedImage(file, bw, bh, deg, opts) {
 })();
 
 WScript.Echo("");
+// Kerning: the method, and the pairs kerned by hand.
+(function () {
+    AutoKernType = { NOAUTOKERN: 0, AUTO: 1, OPTICAL: 2, METRICSROMANONLY: 3 };
+    function ch(kern) {
+        return { kerning: kern, characterAttributes: { size: 24, tracking: 0, textFont: { family: "Futura", style: "Bold", name: "Futura-Bold" },
+                 fillColor: rgb(0, 0, 0), underline: false, strikeThrough: false } };
+    }
+    var tf = {
+        typename: "TextFrame", name: "Kerned", contents: "AVA", kind: TextType.POINTTEXT,
+        anchor: [100, 480], opacity: 100, hidden: false, guides: false,
+        geometricBounds: [100, 500, 160, 470], matrix: mx(1, 0, 0, 1, 100, 480),
+        textRange: {
+            characterAttributes: { size: 24, tracking: 0, autoLeading: true, kerningMethod: AutoKernType.OPTICAL,
+                                   textFont: { family: "Futura", style: "Bold", name: "Futura-Bold" }, fillColor: rgb(0, 0, 0) },
+            paragraphAttributes: { justification: Justification.LEFT },
+            characters: [ch(0), ch(-75), ch(0)]
+        }
+    };
+    var l = readSel([tf]).layers[0];
+    ok("kerning: the method", l.autoKern === "optical", String(l.autoKern));
+    ok("kerning: a kerned pair, by the character after its gap", l.kerns && l.kerns.length === 1 && l.kerns[0].index === 1 &&
+       l.kerns[0].amount === -75, JSON.stringify(l.kerns));
+    tf.textRange.characterAttributes.kerningMethod = AutoKernType.AUTO;
+    tf.textRange.characters = [ch(0), ch(0), ch(0)];
+    l = readSel([tf]).layers[0];
+    ok("kerning: the default, unkerned, says nothing", l.autoKern === undefined && l.kerns === undefined, JSON.stringify(l));
+})();
+
+WScript.Echo("");
 WScript.Echo(passed + " passed, " + failed + " failed.");
 WScript.Quit(failed === 0 ? 0 : 1);

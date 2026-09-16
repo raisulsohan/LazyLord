@@ -1520,6 +1520,14 @@ LazyLord._ps_text = function (psDoc, layer) {
       try { ti.tracking = Math.round((layer.letterSpacing / (layer.fontSize || 24)) * 1000); }
       catch (eT) { LazyLord.warn(name, "Letter spacing could not be applied", "approximated"); }
     }
+    if (layer.autoKern && typeof AutoKernType !== "undefined") {
+      var kern = layer.autoKern === "optical" ? AutoKernType.OPTICAL : (layer.autoKern === "none" ? AutoKernType.MANUAL : AutoKernType.METRICS);
+      try { ti.autoKerning = kern; }
+      catch (eK) { LazyLord.warn(name, "Its kerning setting could not be applied, so Photoshop's default is used", "approximated"); }
+    }
+    if (LazyLord.kernsOf(layer).length) {
+      LazyLord.warn(name, "Manually kerned letter pairs are not rebuilt in Photoshop, so those pairs use the font's own spacing", "approximated");
+    }
     if (layer.lineHeight) {
       try { ti.leading = layer.lineHeight; ti.autoLeading = false; }
       catch (eL) { LazyLord.warn(name, "Line height could not be applied", "approximated"); }

@@ -2273,6 +2273,53 @@ LazyLord._ae_textRuns = function (prop, layer) {
   if (deco) LazyLord.warn(name, "Underline and strikethrough on part of the text are not rebuilt in After Effects", "approximated");
 };
 
+/** IR kerning method -> AutoKernType (After Effects 24.0 and newer). */
+LazyLord._ae_AUTOKERN = { metrics: "METRIC_KERN", optical: "OPTICAL_KERN", none: "NO_AUTO_KERN" };
+
+/**
+ * Kerning into a text document: the method (After Effects 24.0 and newer)
+ * and the manually kerned pairs, each on the character after its gap
+ * (characterRange, 24.3 and newer). Returns what could not be set.
+ */
+LazyLord._ae_putKerning = function (td, layer) {
+  var lost = [];
+  if (layer.autoKern) {
+    var key = LazyLord._ae_AUTOKERN[layer.autoKern];
+    var ok = false;
+    try {
+      if (key && typeof AutoKernType !== "undefined" && AutoKernType[key] !== undefined) {
+        td.autoKernType = AutoKernType[key];
+        ok = true;
+      }
+    } catch (e) {}
+    // Metrics is what After Effects does anyway.
+    if (!ok && layer.autoKern !== "metrics") lost.push(layer.autoKern + " kerning");
+  }
+  var kerns = LazyLord.kernsOf(layer);
+  if (kerns.length) {
+    var missed = typeof td.characterRange !== "function";
+    for (var i = 0; !missed && i < kerns.length; i++) {
+      try { td.characterRange(kerns[i].index, kerns[i].index + 1).kerning = kerns[i].amount; } catch (e2) { missed = true; }
+    }
+    if (missed) lost.push("kerned letter pairs");
+  }
+  return lost;
+};
+
+LazyLord._ae_kerning = function (prop, layer) {
+  if (!layer.autoKern && !(layer.kerns && layer.kerns.length)) return;
+  var td = prop.value;
+  var lost = LazyLord._ae_putKerning(td, layer);
+  try { prop.setValue(td); } catch (e) { lost = ["kerning"]; }
+  LazyLord._ae_noteKerning(layer, lost);
+};
+
+LazyLord._ae_noteKerning = function (layer, lost) {
+  if (!lost.length) return;
+  LazyLord.warn(layer.name || "Text", "Its " + LazyLord._ae_list(lost) + " could not be set (kerning needs After Effects 24.3 or newer), " +
+    "so After Effects' own kerning is used", "approximated");
+};
+
 /** A list without repeats, first occurrence kept. */
 LazyLord._ae_unique = function (list) {
   var out = [], seen = {};
@@ -2315,6 +2362,7 @@ LazyLord._ae_text = function (comp, layer) {
     // The font goes last: it is set by PostScript name and checked by reading back.
     LazyLord._ae_font(prop, layer);
     LazyLord._ae_textRuns(prop, layer);
+    LazyLord._ae_kerning(prop, layer);
 
     // fillColor has no alpha, so the colour's alpha joins the layer opacity:
     // exact, as the text has no stroke.
@@ -3113,7 +3161,9 @@ LazyLord._ae_updateText = function (ctx, lyr, layer) {
     try { td.font = LazyLord._ae_fontNames(String(layer.fontFamily), String(layer.fontStyle || "Regular"))[0]; } catch (eFN) {}
   }
 
+  var kernLost = (layer.autoKern || (layer.kerns && layer.kerns.length)) ? LazyLord._ae_putKerning(td, layer) : [];
   var n = LazyLord._ae_put(ctx, prop, td) ? 1 : 0;
+  LazyLord._ae_noteKerning(layer, kernLost);
   if (!keyed) {
     try { LazyLord._ae_font(prop, layer); } catch (eF) {}
     if (layer.runs && layer.runs.length) {

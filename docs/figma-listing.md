@@ -130,17 +130,54 @@ account — *Plugins → Development → Import plugin from manifest…* and pic
 
 ### Data security answers
 
-Every one of these is simply true, and all of it is verifiable in the source.
+Five questions. Every answer below is a plain fact about the plugin, and all of
+it can be checked in the source.
 
-- **Does the plugin collect or store user data?** No.
-- **Does it send data to a server or third party?** No. The only address it
-  contacts is `ws://localhost:7878`, which is the user's own computer.
-- **Does it use analytics or tracking?** No.
-- **Does it require an account, login or payment?** No.
-- **Where does data go?** Between the Figma desktop app and the LazyLord panel
-  running inside Photoshop, Illustrator or After Effects on the same machine.
-  Nothing is uploaded, and it works with the internet disconnected.
-- **Third-party services used?** None.
+**1. Do you host a backend service for your plugin/widget?**
+→ *No, I do not host a backend service for my plugin/widget.*
+
+Nothing is hosted anywhere. The bridge LazyLord talks to runs on the user's own
+computer, inside the Adobe panel they installed themselves.
+
+**2. Does your plugin/widget make any network requests with services you do not
+host?**
+→ *My plugin/widget makes network requests not captured by the above*, with
+this in the box:
+
+```
+LazyLord opens a WebSocket to ws://localhost:7878 — an address on the user's own
+computer. That is the LazyLord panel running inside Photoshop, Illustrator or
+After Effects, which the user installs themselves and which is open source. The
+selection read from Figma's plugin API is sent there so the Adobe app can
+rebuild it natively, and a report of what was built comes back. No remote server
+is contacted, nothing is uploaded, and the plugin works with the internet
+disconnected.
+```
+
+Do not tick "does not make any network requests": the manifest declares
+`ws://localhost:7878`, and a reviewer comparing the two would be right to stop.
+There are no static-asset or analytics requests — the UI is a single inlined
+file and there is no telemetry of any kind.
+
+**3. Does your plugin/widget use any user authentication?**
+→ *No, my plugin/widget does not require or use any user authentication.*
+
+**4. Do you store any data read/derived from Figma's plugin API?**
+→ *Yes, my plugin/widget stores data read/derived from Figma's plugin API
+locally (eg. localStorage, figma.clientStorage, or node.setPluginData).*
+
+Two kinds, both local:
+
+- `setPluginData` on the nodes a transfer builds — a tag saying which object in
+  which document it came from, plus a fingerprint. That is what lets a later
+  send update the node in place instead of dropping a second copy beside it.
+- `figma.clientStorage` for the user's own settings: the chosen target, image
+  scale, options, the recent-transfer list and saved presets.
+
+Neither leaves the machine.
+
+**5. How do you manage updates to your plugin/widget?**
+→ *I am a solo developer. I manage and update my plugin/widget myself.*
 
 Review takes up to about two weeks, and the plugin sits under **Published**
 with an **In review** badge until then.

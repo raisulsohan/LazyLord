@@ -58,7 +58,7 @@ Read me first.txt                      দুই ধাপের নির্দ
 2 - Add the Figma plugin (macOS)…      Figma অংশ (macOS)
 Uninstall LazyLord.bat
 Fix a blank panel.bat                  প্যানেল ফাঁকা এলে
-LazyLord-1.0.0.zxp                     প্যানেল, সাইন করা
+LazyLord-<ভার্সন>.zxp                  প্যানেল, সাইন করা
 Figma plugin\                          manifest.json + dist
 ```
 
@@ -107,8 +107,8 @@ node tools/get-zxpsigncmd.mjs --force     # সাইনিং টুল আব�
 GitHub-এ রিপো তোলার পর:
 
 1. রিপোর পাতায় **Releases → Draft a new release**।
-2. ট্যাগ `v1.0.0`, শিরোনাম `LazyLord 1.0.0`।
-3. `D:\LazyLord Release\LazyLord-1.0.0.zip` ফাইলটা টেনে ছেড়ে দিন।
+2. ট্যাগ `v<ভার্সন>`, শিরোনাম `LazyLord <ভার্সন>` (যেমন `v1.1.0`, `LazyLord 1.1.0`)।
+3. `D:\LazyLord Release\LazyLord-<ভার্সন>.zip` ফাইলটা টেনে ছেড়ে দিন। README-র ডাউনলোডের লেখা `npm run release` নিজেই নতুন ভার্সনে বদলে দেয়।
 4. বিবরণে ছোট করে লিখুন: কী কী নতুন, কোন কোন অ্যাপ লাগে, আর "জিপ খুলে
    Install LazyLord.bat চালান"।
 5. Publish।

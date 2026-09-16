@@ -163,12 +163,24 @@ function count(dir) {
 
 /*
  * package.json holds the version; the panel's manifest and its ExtendScript
- * each carry a copy. Keep them in step here rather than asking a person to
- * remember three files — Adobe decides whether an install is an update by
- * comparing the manifest version, so a stale one ships as "already installed".
+ * each carry a copy, and so do the workspace packages and the README's
+ * download line. Keep them in step here rather than asking a person to
+ * remember them all — Adobe decides whether an install is an update by
+ * comparing the manifest version, so a stale one ships as "already installed",
+ * and a workspace asking for an old @lazylord/core breaks npm install.
  */
 function syncVersion() {
   const edits = [
+    ...["adobe-cep", "bridge", "core", "figma-plugin"].map((name) => ({
+      file: join(root, "packages", name, "package.json"),
+      find: /("(?:version|@lazylord\/core)": )"[\d.]+"/g,
+      to: `$1"${VERSION}"`,
+    })),
+    {
+      file: join(root, "README.md"),
+      find: /(LazyLord-)\d+\.\d+\.\d+(\.zip)/g,
+      to: `$1${VERSION}$2`,
+    },
     {
       file: join(root, "packages", "adobe-cep", "CSXS", "manifest.xml"),
       find: /(ExtensionBundleVersion|Extension Id="com\.lazylord\.panel" Version)="[\d.]+"/g,

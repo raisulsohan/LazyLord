@@ -127,18 +127,14 @@ Adobe-র নিজের মার্কেটপ্লেসে উঠলে �
 
 ## ৩. Figma প্লাগিন — Community-তে প্রকাশ
 
-### ধাপ ১: আসল plugin id নিন (এটা না করলে প্রকাশ হবে না)
+### ধাপ ১: plugin id — ✅ হয়ে গেছে
 
-এখন `packages/figma-plugin/manifest.json`-এ আছে `"id": "lazylord-figma-transfer"`।
-এটা হাতে লেখা, নিজে চালানোর জন্য ঠিক আছে, কিন্তু **Figma-র দেওয়া id ছাড়া
-প্রকাশ করা যায় না** — id Figma নিজে দেয়।
+`packages/figma-plugin/manifest.json`-এ এখন Figma-র দেওয়া আসল id বসানো আছে:
+`"id": "1681970197584828240"`। id Figma নিজে দেয় (**Plugins → Development →
+New plugin…** করলে), হাতে লেখা যায় না, আর এটা ছাড়া প্রকাশ করা যায় না।
 
-1. Figma ডেস্কটপ অ্যাপে **Plugins → Development → New plugin…**
-2. নাম `LazyLord`, ধরন **Figma + FigJam** (বা শুধু Figma), তারপর যেকোনো
-   টেমপ্লেট বেছে একটা অস্থায়ী ফোল্ডারে সেভ করুন।
-3. ওই ফোল্ডারের `manifest.json` খুলে `"id"`-র নম্বরটা কপি করুন (বড় একটা সংখ্যা)।
-4. সেটা আমাদের `packages/figma-plugin/manifest.json`-এ `"id"`-র জায়গায় বসান।
-5. Figma-তে পুরোনো ইমপোর্ট করা LazyLord সরিয়ে আমাদের manifest আবার ইমপোর্ট করুন।
+id বদলে গেলে বা নতুন করে লাগলে ওই একই পথে নিয়ে manifest-এ বসিয়ে
+`npm run build:figma` চালাবেন, তারপর Figma-তে প্লাগিনটা আবার ইমপোর্ট করবেন।
 
 ### ধাপ ২: ছবি দুটো তৈরি করুন
 

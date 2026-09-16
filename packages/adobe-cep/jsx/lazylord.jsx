@@ -111,7 +111,8 @@ LazyLord.undoBuild = function (snap) {
  *
  * `opts` carries the choices that only matter while reading — the ones the
  * builder never sees because they change what is written, not how it is built:
- *   { scale }  image export scale, 1 / 2 / 3 / 4 (default 2)
+ *   { scale }     image export scale, 1 / 2 / 3 / 4 (default 2)
+ *   { sequence }  Photoshop: the selected layers as the frames of one image sequence
  */
 LazyLord.runRead = function (outDir, opts) {
   var result = { ok: false, layerCount: 0, irPath: "", message: "", diagnostics: [] };
@@ -333,6 +334,14 @@ LazyLord.kernsOf = function (layer) {
   return out;
 };
 
+/** A target that cannot play an image sequence places its first frame, and says so. */
+LazyLord.noteSequence = function (layer, host) {
+  var s = layer && layer.sequence;
+  if (!s || !s.frames || s.frames.length < 2) return;
+  LazyLord.warn(layer.name || "Image", host + " has no image sequences, so only the first of its " + s.frames.length +
+    " frames was placed", "approximated");
+};
+
 /**
  * Ask the user for a folder, starting in `start` when it exists. A JSON
  * string: { path } with the folder's full path, or "" when cancelled.
@@ -471,7 +480,7 @@ LazyLord.normaliseReadOptions = function (opts) {
   var scale = opts ? Number(opts.scale) : NaN;
   var ok = false;
   for (var i = 0; i < LazyLord.SCALES.length; i++) if (LazyLord.SCALES[i] === scale) ok = true;
-  return { scale: ok ? scale : LazyLord.DEFAULT_SCALE };
+  return { scale: ok ? scale : LazyLord.DEFAULT_SCALE, sequence: !!(opts && opts.sequence === true) };
 };
 
 /** What runRead was last asked for; readers use it when rasterising. */

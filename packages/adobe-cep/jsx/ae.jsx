@@ -2481,14 +2481,64 @@ LazyLord._ae_assetFile = function (assets, layer, path) {
   }
 };
 
+/** An image sequence's frame files, in order; [] for a still image. */
+LazyLord._ae_frames = function (layer) {
+  var s = layer.sequence;
+  if (!s || !s.frames || typeof s.frames.length !== "number" || s.frames.length < 2) return [];
+  var out = [];
+  for (var i = 0; i < s.frames.length; i++) if (typeof s.frames[i] === "string" && s.frames[i]) out.push(s.frames[i]);
+  return out.length > 1 ? out : [];
+};
+
+/**
+ * The first frame to import. With a saved project (or a chosen image folder)
+ * the frames are copied, names kept, into a folder of their own there, so the
+ * sequence outlives the temporary folder; otherwise they are used in place.
+ */
+LazyLord._ae_sequenceFiles = function (assets, layer, frames) {
+  if (!assets.dir) return LazyLord._ae_assetFile(assets, layer, frames[0]);
+  try {
+    var parent = new Folder(assets.dir);
+    if (!parent.exists && !parent.create()) throw new Error("the folder could not be created");
+    var base = String(layer.name || "Frames").replace(/[\\\/:*?"<>|\x00-\x1f.]+/g, "_").replace(/^[\s_]+|[\s_]+$/g, "") || "Frames";
+    var dir = LazyLord._ae_uniquePath(assets.dir, base + " frames");
+    if (!new Folder(dir).create()) throw new Error("the frames folder could not be created");
+    var first = null;
+    for (var i = 0; i < frames.length; i++) {
+      var name = String(frames[i]).replace(/^.*[\\\/]/, "");
+      var target = LazyLord.join(dir, name);
+      if (!new File(frames[i]).copy(target)) throw new Error("frame " + (i + 1) + " could not be copied");
+      if (!first) first = new File(target).fsName;
+    }
+    return first;
+  } catch (e) {
+    LazyLord.warn(layer.name || "Image", "Could not copy the sequence's frames beside the project (" + ((e && e.message) || String(e)) +
+      "), so they are linked from the temporary folder", "approximated");
+    return frames[0];
+  }
+};
+
 LazyLord._ae_image = function (comp, layer, assets) {
   var path = LazyLord.imagePath(layer);
   if (!path) throw new Error("The image has no file to import");
-  var src = LazyLord._ae_assetFile(assets || { dir: null, noted: true }, layer, path);
+  var frames = LazyLord._ae_frames(layer);
+  var kept = assets || { dir: null, noted: true };
+  var src = frames.length ? LazyLord._ae_sequenceFiles(kept, layer, frames) : LazyLord._ae_assetFile(kept, layer, path);
 
   var io = new ImportOptions(new File(src));
+  // Numbered files in a folder of their own, imported as one footage item.
+  if (frames.length) {
+    io.sequence = true;
+    try { io.forceAlphabetical = true; } catch (eA) {}
+  }
   var footage = app.project.importFile(io);
   footage.name = layer.name || "Image";
+  if (frames.length) {
+    var fps = layer.sequence.fps > 0 ? layer.sequence.fps : (comp.frameRate || 30);
+    try { footage.mainSource.conformFrameRate = fps; } catch (eR) {
+      LazyLord.warn(layer.name || "Image", "The sequence's frame rate could not be set, so it plays at After Effects' default", "approximated");
+    }
+  }
   var il = comp.layers.add(footage);
   try {
     var fw = layer.frame.width || footage.width;

@@ -51,6 +51,9 @@ function SolidColor() { this.rgb = { red: 0, green: 0, blue: 0 }; }
 var DialogModes = { NO: "no" };
 function UnitValue(v) { return v; }
 function File(p) { this.fsName = String(p); }
+var foldersMade = [];
+function Folder(p) { this.fsName = String(p); this.exists = false; }
+Folder.prototype.create = function () { foldersMade.push(this.fsName); return true; };
 
 var MOCK = { noActionManager: false, noVectorMask: false, noSolidColour: false, exports: [], failExport: false,
              failMaskSelection: false };
@@ -142,6 +145,7 @@ function layer(name, kind, box, extra) {
         duplicate: function (target) {
             var copy = {
                 kind: "copy",
+                visible: this.visible,
                 removed: false,
                 remove: function () { this.removed = true; },
                 bounds: this.bounds.slice(),
@@ -972,6 +976,45 @@ WScript.Echo("");
     l = readIt().layers[0];
     ok("kerning: metrics is left unset", l.autoKern === undefined, String(l.autoKern));
     AutoKernType = undefined;
+})();
+
+WScript.Echo("");
+// Layers as frames: one image sequence, every frame at the shared bounds.
+(function () {
+    reset();
+    foldersMade = [];
+    var f1 = layer("Walk 1", LayerKind.NORMAL, [10, 10, 40, 40]);
+    var f2 = layer("Walk 2", LayerKind.NORMAL, [30, 20, 40, 40], { visible: false });
+    var f3 = layer("Walk 3", LayerKind.NORMAL, [20, 10, 40, 40], { visible: false });
+    // The DOM lists a group's layers top first: Walk 3 is on top, Walk 1 at the bottom.
+    var walk = layerSet("Walk", [10, 10, 60, 50], [f3, f2, f1]);
+    var doc = setUp(makeDoc({ layers: [walk] }));
+    select(doc, [walk]);
+    var out = readIt({ scale: 1, sequence: true });
+    var l = out.layers[0];
+    ok("frames: one image layer named after the group", out.layers.length === 1 && l.type === "image" && l.name === "Walk", dump(out.layers));
+    ok("frames: bottom layer first, numbered, in a folder of their own",
+       l.sequence && l.sequence.frames.length === 3 && /Walk-frames-\d+[\\\/]Walk_0000\.png$/.test(l.sequence.frames[0]) &&
+       /Walk_0002\.png$/.test(l.sequence.frames[2]) && l.filePath === l.sequence.frames[0] && foldersMade.length === 1,
+       dump(l.sequence) + " " + foldersMade.join());
+    ok("frames: the shared bounds, as the layer's frame and size", near(l.frame.width, 60) && near(l.frame.height, 50) &&
+       l.pixelWidth === 60 && l.pixelHeight === 50, dump(l.frame));
+    var dup = [];
+    for (var i = 0; i < app.created.length; i++) dup.push(app.created[i].duplicated[0]);
+    ok("frames: each frame keeps its place within the shared bounds", dup.length === 3 && dup[0].name === "Walk 1" &&
+       near(dup[0].layer.bounds[0], 0) && near(dup[1].layer.bounds[0], 20) && near(dup[1].layer.bounds[1], 10) && near(dup[2].layer.bounds[0], 10),
+       dump(dup));
+    ok("frames: hidden frames are shown in their export", dup[1].layer.visible === true && dup[2].layer.visible === true);
+    ok("frames: exported, one PNG each", MOCK.exports.length === 3, dump(MOCK.exports));
+
+    // One plain layer is not a sequence.
+    reset();
+    var lone = layer("Lone", LayerKind.NORMAL, [0, 0, 10, 10]);
+    var doc2 = setUp(makeDoc({ layers: [lone] }));
+    select(doc2, [lone]);
+    var threw = null;
+    try { readIt({ sequence: true }); } catch (e) { threw = e.message; }
+    ok("frames: a single layer is refused, saying why", threw !== null && /at least two layers/.test(threw), threw);
 })();
 
 WScript.Echo("");

@@ -175,7 +175,7 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
            "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last", "author",
-           "image-folder-row", "image-folder", "image-folder-choose", "image-folder-reset"];
+           "image-folder-row", "image-folder", "image-folder-choose", "image-folder-reset", "push-sequence", "push-sequence-row"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
@@ -184,7 +184,7 @@ var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "diag-list": "ul", "push-options": "details", "log-card": "details",
              "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
-             "push-destination": "select", "image-folder-choose": "button", "image-folder-reset": "button" };
+             "push-destination": "select", "image-folder-choose": "button", "image-folder-reset": "button", "push-sequence": "input" };
 
 /** Fill a mock chip row the way index.html does, with one chip active. */
 function addChips(row, key, values, active) {
@@ -258,6 +258,7 @@ function boot(appName, storage) {
     els["push-only-changed"].checked = true; // index.html default
     els["push-card"].hidden = true;
     els["image-folder-row"].hidden = true; // index.html default
+    els["push-sequence-row"].hidden = true;
     els["image-folder-reset"].hidden = true;
     els["diag-card"].hidden = true;
     addOptions(els["push-layout"], LAYOUT_VALUES);
@@ -2005,6 +2006,23 @@ run("image folder elsewhere", function () {
     var ir = irFile();
     var built = ir ? JSON.parse(ir.file.data) : null;
     ok("image folder: a sender cannot set it", built && (!built.options || built.options.imageFolder === undefined));
+});
+
+// Photoshop: layers as the frames of one sequence, asked of the reader.
+run("frames", function () {
+    var st = new MemoryStorage();
+    var sock = boot("PHXS", st);
+    peersMsg(sock, "welcome", ["photoshop", "aftereffects"]);
+    ok("frames: offered in Photoshop", els["push-sequence-row"].hidden === false);
+    els["push-sequence"].checked = true;
+    els["push-sequence"].fire("change");
+    ok("frames: remembered", JSON.parse(st.getItem("lazylord.prefs.photoshop")).sequence === true);
+    els["push"].fire("click");
+    var call = lastEval();
+    ok("frames: the reader is asked for a sequence", has(call.script, "LazyLord.runRead(") && has(call.script, '"sequence":true'), call.script);
+
+    boot("AEFT", new MemoryStorage());
+    ok("frames: not offered elsewhere", els["push-sequence-row"].hidden === true);
 });
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

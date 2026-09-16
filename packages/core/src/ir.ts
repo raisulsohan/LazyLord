@@ -306,6 +306,13 @@ export type ImageLayer = BaseLayer & {
   /** Pixel dimensions of the encoded image (may exceed frame for @2x). */
   pixelWidth: number;
   pixelHeight: number;
+  /**
+   * The image is the first frame of a sequence (Photoshop "Layers as frames"):
+   * every frame's file, in order, all the same size and in one folder. A
+   * target that plays footage (After Effects) imports them as one image
+   * sequence; `fps`, when set, is its frame rate, else the target's own.
+   */
+  sequence?: { frames: string[]; fps?: number };
 };
 
 /**

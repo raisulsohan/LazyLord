@@ -84,13 +84,14 @@ LazyLord.readSelection = function (outDir, opts) {
 
     var selected = LazyLord._psr_selectedLayers(psDoc);
     if (!selected.length) throw new Error("No layers selected in Photoshop.");
+    if (opts && opts.sequence) selected = [LazyLord._psr_frameSource(selected)];
 
     // Pass 1 — convert, with every frame still in document space.
     var raws = [], pairs = [];
     for (var i = 0; i < selected.length; i++) {
       var raw = null;
       try {
-        raw = LazyLord._psr_layer(ctx, selected[i]);
+        raw = selected[i].frames ? LazyLord._psr_sequence(ctx, selected[i]) : LazyLord._psr_layer(ctx, selected[i]);
       } catch (e) {
         LazyLord.warn(selected[i].name, LazyLord._ps_msg(e), "skipped");
       }
@@ -849,7 +850,74 @@ LazyLord._psr_raster = function (ctx, lyr, reason) {
   };
 };
 
-LazyLord._psr_export = function (ctx, lyr, box, outPath) {
+/**
+ * "Layers as frames": the layers that make the frames — the selected ones, or
+ * with a single group selected, the layers inside it — bottom to top, so the
+ * lowest is the first frame. Hidden layers count: frame animations keep all
+ * but one hidden.
+ */
+LazyLord._psr_frameSource = function (selected) {
+  var list = [], owner = selected[0];
+  if (selected.length === 1 && selected[0].typename === "LayerSet") {
+    var kids = selected[0].layers || [];
+    for (var i = kids.length - 1; i >= 0; i--) list.push(kids[i]);
+  } else {
+    for (var j = 0; j < selected.length; j++) list.push(selected[j]);
+  }
+  if (list.length < 2) throw new Error("Layers as frames needs at least two layers, or a group holding them.");
+  return { frames: list, owner: owner, name: owner.name || "Frames" };
+};
+
+/**
+ * One image layer whose frames are the source's layers, each exported at
+ * their shared bounds so every frame is the same size and lines up.
+ */
+LazyLord._psr_sequence = function (ctx, source) {
+  var box = null;
+  for (var i = 0; i < source.frames.length; i++) {
+    var b = LazyLord._psr_box(source.frames[i]);
+    if (!b || b.width <= 0 || b.height <= 0) continue;
+    if (!box) { box = b; continue; }
+    var x2 = Math.max(box.x + box.width, b.x + b.width), y2 = Math.max(box.y + box.height, b.y + b.height);
+    box.x = Math.min(box.x, b.x);
+    box.y = Math.min(box.y, b.y);
+    box.width = x2 - box.x;
+    box.height = y2 - box.y;
+  }
+  if (!box) throw new Error("Every frame layer is empty, so there is nothing to send.");
+
+  var base = LazyLord._psr_safe(source.name);
+  var dir = LazyLord.join(ctx.outDir, base + "-frames-" + (ctx.imageIndex++));
+  var folder = new Folder(dir);
+  if (!folder.exists && !folder.create()) throw new Error("The folder for the frames could not be made.");
+
+  var frames = [];
+  for (var f = 0; f < source.frames.length; f++) {
+    var digits = String(f);
+    while (digits.length < 4) digits = "0" + digits;
+    var file = LazyLord.join(dir, base + "_" + digits + ".png");
+    try {
+      LazyLord._psr_export(ctx, source.frames[f], box, file, true);
+    } catch (e) {
+      throw new Error("Frame " + (f + 1) + " ('" + (source.frames[f].name || "Layer") + "') could not be exported — " + LazyLord._ps_msg(e));
+    }
+    frames.push(file);
+  }
+  return {
+    id: LazyLord._psr_id(ctx, source.owner) + (source.owner.typename === "LayerSet" ? "" : "-frames"),
+    name: source.name,
+    type: "image",
+    frame: { x: box.x, y: box.y, width: box.width, height: box.height, rotation: 0, opacity: 1 },
+    visible: true,
+    filePath: frames[0],
+    isOriginalFile: false,
+    pixelWidth: Math.round(box.width * ctx.scale),
+    pixelHeight: Math.round(box.height * ctx.scale),
+    sequence: { frames: frames }
+  };
+};
+
+LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame) {
   var src = ctx.doc;
   var res = LazyLord._pv(src.resolution) || 72;
   var w = Math.max(1, Math.ceil(box.width));
@@ -864,7 +932,13 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath) {
     // The duplicate keeps the source document's coordinates: bring its
     // top-left to the scratch document's origin.
     var b = copy.bounds;
-    copy.translate(-LazyLord._pv(b[0]), -LazyLord._pv(b[1]));
+    if (asFrame) {
+      // A frame keeps its place within the shared bounds, and shows even if it was hidden.
+      copy.translate(-box.x, -box.y);
+      try { copy.visible = true; } catch (eV) {}
+    } else {
+      copy.translate(-LazyLord._pv(b[0]), -LazyLord._pv(b[1]));
+    }
 
     if (ctx.scale !== 1) {
       tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);

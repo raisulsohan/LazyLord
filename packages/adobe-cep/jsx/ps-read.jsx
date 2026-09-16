@@ -331,6 +331,9 @@ LazyLord._psr_convert = function (ctx, lyr) {
   var kind = null;
   try { kind = lyr.kind; } catch (e2) {}
 
+  var adjusted = LazyLord._psr_adjustmentLayer(ctx, lyr, kind);
+  if (adjusted !== undefined) return adjusted ? LazyLord._psr_withMask(ctx, lyr, adjusted) : null;
+
   if (kind === LayerKind.TEXT) return LazyLord._psr_withMask(ctx, lyr, LazyLord._psr_text(ctx, lyr));
 
   if (kind === LayerKind.GRADIENTFILL) {
@@ -1407,6 +1410,212 @@ LazyLord._psr_mergeStops = function (colours, alphas) {
     stops.push({ position: at[i], color: { r: c.r, g: c.g, b: c.b, a: alpha } });
   }
   return stops;
+};
+
+/* -------------------------------------------------------------------------
+ * Adjustment layers
+ *
+ * An adjustment layer draws nothing: it changes what is beneath it. It used to
+ * be sent as a "flattened image" of itself, which has nothing in it. It is now
+ * read as an IR adjustment layer covering the canvas, carrying the settings of
+ * the kinds that have a counterpart elsewhere (After Effects has an effect for
+ * each), read through ActionManager from the layer's adjustment descriptor.
+ * Curves, gradient maps, channel mixers, selective colour and colour lookups
+ * have no scriptable counterpart and are reported, not sent.
+ * ---------------------------------------------------------------------- */
+
+/** The adjustment kinds read, by Photoshop's LayerKind name. */
+LazyLord._psr_ADJUST = {
+  BRIGHTNESSCONTRAST: "brightness-contrast", LEVELS: "levels", HUESATURATION: "hue-saturation",
+  EXPOSURE: "exposure", VIBRANCE: "vibrance", INVERSION: "invert", THRESHOLD: "threshold",
+  POSTERIZE: "posterize", BLACKANDWHITE: "black-white", PHOTOFILTER: "photo-filter", COLORBALANCE: "color-balance"
+};
+LazyLord._psr_UNADJUSTABLE = {
+  CURVES: "Curves", GRADIENTMAP: "Gradient Map", CHANNELMIXER: "Channel Mixer",
+  SELECTIVECOLOR: "Selective Color", COLORLOOKUP: "Color Lookup"
+};
+
+/** The IR kind for a Photoshop layer kind that is an adjustment, or null. */
+LazyLord._psr_adjustKind = function (kind) {
+  if (typeof LayerKind === "undefined" || !kind) return null;
+  for (var name in LazyLord._psr_ADJUST) {
+    if (LazyLord._psr_ADJUST.hasOwnProperty(name) && LayerKind[name] !== undefined && LayerKind[name] === kind) {
+      return LazyLord._psr_ADJUST[name];
+    }
+  }
+  for (var other in LazyLord._psr_UNADJUSTABLE) {
+    if (LazyLord._psr_UNADJUSTABLE.hasOwnProperty(other) && LayerKind[other] !== undefined && LayerKind[other] === kind) {
+      return "unsupported:" + LazyLord._psr_UNADJUSTABLE[other];
+    }
+  }
+  return null;
+};
+
+/**
+ * An adjustment layer as IR, or undefined when `kind` is not an adjustment (the
+ * caller carries on), or null when it is one that cannot be sent (reported).
+ */
+LazyLord._psr_adjustmentLayer = function (ctx, lyr, kind) {
+  var irKind = LazyLord._psr_adjustKind(kind);
+  if (!irKind) return undefined;
+  var name = lyr.name || "Adjustment";
+  if (irKind.indexOf("unsupported:") === 0) {
+    LazyLord.warn(name, "A " + irKind.substr(12) + " adjustment has no counterpart elsewhere, so it is not sent", "skipped");
+    return null;
+  }
+
+  var d;
+  try {
+    var ref = new ActionReference();
+    ref.putIdentifier(LazyLord._ps_cid("Lyr "), lyr.id);
+    var desc = executeActionGet(ref);
+    d = desc.getList(LazyLord._ps_sid("adjustment")).getObjectValue(0);
+  } catch (e) {
+    LazyLord.warn(name, "Its adjustment settings could not be read, so it is not sent", "skipped");
+    return null;
+  }
+
+  var adjustment;
+  try {
+    adjustment = LazyLord._psr_readAdjustment(d, irKind, name);
+  } catch (e2) {
+    adjustment = null;
+  }
+  if (!adjustment) {
+    LazyLord.warn(name, "Its adjustment settings could not be read, so it is not sent", "skipped");
+    return null;
+  }
+
+  var w = LazyLord._pv(ctx.doc.width), h = LazyLord._pv(ctx.doc.height);
+  var opacity = 1;
+  try { opacity = (lyr.opacity === undefined || lyr.opacity === null) ? 1 : lyr.opacity / 100; } catch (eO) {}
+  return {
+    id: LazyLord._psr_id(ctx, lyr),
+    name: name,
+    type: "adjustment",
+    frame: { x: 0, y: 0, width: w, height: h, rotation: 0, opacity: opacity },
+    adjustment: adjustment
+  };
+};
+
+LazyLord._psr_readAdjustment = function (d, kind, name) {
+  var cid = LazyLord._ps_cid, sid = LazyLord._ps_sid;
+  function num(id, fallback) {
+    try {
+      if (!d.hasKey(id)) return fallback;
+      try { return d.getDouble(id); } catch (eD) { return d.getInteger(id); }
+    } catch (e) { return fallback; }
+  }
+  function bool(id, fallback) {
+    try { return d.hasKey(id) ? d.getBoolean(id) === true : fallback; } catch (e) { return fallback; }
+  }
+  var trio = function (id) {
+    try {
+      var l = d.getList(id);
+      return [l.getInteger(0), l.getInteger(1), l.getInteger(2)];
+    } catch (e) { return [0, 0, 0]; }
+  };
+
+  if (kind === "brightness-contrast") {
+    return { kind: kind, brightness: num(cid("Brgh"), 0), contrast: num(cid("Cntr"), 0), legacy: bool(sid("useLegacy"), false) };
+  }
+  if (kind === "exposure") {
+    return { kind: kind, exposure: num(sid("exposure"), 0), offset: num(cid("Ofst"), 0), gamma: num(sid("gammaCorrection"), 1) };
+  }
+  if (kind === "vibrance") return { kind: kind, vibrance: num(sid("vibrance"), 0), saturation: num(cid("Strt"), 0) };
+  if (kind === "invert") return { kind: kind };
+  if (kind === "threshold") return { kind: kind, level: num(cid("Lvl "), 128) };
+  if (kind === "posterize") return { kind: kind, levels: num(cid("Lvls"), 4) };
+  if (kind === "black-white") {
+    if (bool(sid("useTint"), false)) LazyLord.warn(name, "Its Black & White tint is not carried, only the conversion to grey", "approximated");
+    return { kind: kind };
+  }
+  if (kind === "levels") return LazyLord._psr_levels(d, name);
+  if (kind === "hue-saturation") return LazyLord._psr_hueSaturation(d, name);
+  if (kind === "photo-filter") {
+    var c = null;
+    try { c = LazyLord._psr_anyColour(d.getObjectValue(cid("Clr "))); } catch (eC) {}
+    if (!c) return null;
+    return { kind: kind, color: { r: c.r, g: c.g, b: c.b, a: 1 }, density: num(cid("Dnst"), 25), preserveLuminosity: bool(cid("PrsL"), true) };
+  }
+  if (kind === "color-balance") {
+    return { kind: kind, shadows: trio(cid("ShdL")), midtones: trio(cid("MdtL")), highlights: trio(cid("HghL")),
+             preserveLuminosity: bool(cid("PrsL"), true) };
+  }
+  return null;
+};
+
+/** Levels: the composite channel's settings; per-channel ones are reported. */
+LazyLord._psr_levels = function (d, name) {
+  var cid = LazyLord._ps_cid;
+  var out = { kind: "levels", inputBlack: 0, inputWhite: 255, gamma: 1, outputBlack: 0, outputWhite: 255 };
+  if (!d.hasKey(cid("Adjs"))) return out;
+  var list = d.getList(cid("Adjs"));
+  var others = 0;
+  for (var i = 0; i < list.count; i++) {
+    var e = list.getObjectValue(i);
+    var composite = true;
+    try {
+      if (e.hasKey(cid("Chnl"))) composite = typeIDToCharID(e.getReference(cid("Chnl")).getEnumeratedValue()) === "Cmps";
+    } catch (eR) {}
+    if (!composite) { others++; continue; }
+    try { var inpt = e.getList(cid("Inpt")); out.inputBlack = inpt.getInteger(0); out.inputWhite = inpt.getInteger(1); } catch (eI) {}
+    try { var otpt = e.getList(cid("Otpt")); out.outputBlack = otpt.getInteger(0); out.outputWhite = otpt.getInteger(1); } catch (eO) {}
+    try { if (e.hasKey(cid("Gmm "))) out.gamma = e.getDouble(cid("Gmm ")); } catch (eG) {}
+  }
+  if (others) LazyLord.warn(name, "Its Levels on single colour channels are not carried, only the RGB channel's", "approximated");
+  return out;
+};
+
+/** Hue/Saturation: the master range, or the colorize settings; single colour ranges are reported. */
+LazyLord._psr_hueSaturation = function (d, name) {
+  var cid = LazyLord._ps_cid;
+  var out = { kind: "hue-saturation", hue: 0, saturation: 0, lightness: 0, colorize: false };
+  try { if (d.hasKey(cid("Clrz"))) out.colorize = d.getBoolean(cid("Clrz")) === true; } catch (eZ) {}
+  if (!d.hasKey(cid("Adjs"))) return out;
+  var list = d.getList(cid("Adjs"));
+  var ranges = 0, master = false;
+  for (var i = 0; i < list.count; i++) {
+    var e = list.getObjectValue(i);
+    if (e.hasKey(cid("LclR"))) { ranges++; continue; }
+    if (master) continue;
+    master = true;
+    try { out.hue = e.getInteger(cid("H   ")); } catch (eH) {}
+    try { out.saturation = e.getInteger(cid("Strt")); } catch (eS) {}
+    try { out.lightness = e.getInteger(cid("Lght")); } catch (eL) {}
+  }
+  if (ranges) LazyLord.warn(name, "Its Hue/Saturation on single colour ranges is not carried, only the Master's", "approximated");
+  return out;
+};
+
+/** An RGB, grey or Lab colour descriptor as 0..1 { r, g, b }, or null. */
+LazyLord._psr_anyColour = function (d) {
+  var rgb = LazyLord._psr_readColour(d);
+  if (rgb) return rgb;
+  var cid = LazyLord._ps_cid;
+  try {
+    if (d.hasKey(cid("Lmnc"))) return LazyLord._psr_labToRgb(d.getDouble(cid("Lmnc")), d.getDouble(cid("A   ")), d.getDouble(cid("B   ")));
+  } catch (e) {}
+  return null;
+};
+
+/** CIE L*a*b* (D50, as Photoshop keeps it) to sRGB 0..1, through XYZ with a Bradford move to D65. */
+LazyLord._psr_labToRgb = function (L, a, b) {
+  var fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200;
+  function f(t) { var t3 = t * t * t; return t3 > 0.008856 ? t3 : (t - 16 / 116) / 7.787; }
+  var X = 0.96422 * f(fx), Y = 1.0 * f(fy), Z = 0.82521 * f(fz);
+  // Bradford D50 -> D65.
+  var X2 = 0.9555766 * X - 0.0230393 * Y + 0.0631636 * Z;
+  var Y2 = -0.0282895 * X + 1.0099416 * Y + 0.0210077 * Z;
+  var Z2 = 0.0122982 * X - 0.0204830 * Y + 1.3299098 * Z;
+  var r = 3.2404542 * X2 - 1.5371385 * Y2 - 0.4985314 * Z2;
+  var g = -0.9692660 * X2 + 1.8760108 * Y2 + 0.0415560 * Z2;
+  var bl = 0.0556434 * X2 - 0.2040259 * Y2 + 1.0572252 * Z2;
+  function gam(c) {
+    c = c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+    return Math.max(0, Math.min(1, c));
+  }
+  return { r: gam(r), g: gam(g), b: gam(bl) };
 };
 
 /* -------------------------------------------------------------------------

@@ -319,7 +319,39 @@ export type GroupLayer = BaseLayer & {
   page?: { x: number; y: number; width: number; height: number };
 };
 
-export type Layer = VectorLayer | TextLayer | ImageLayer | GroupLayer;
+/**
+ * A Photoshop adjustment layer: it changes everything beneath it rather than
+ * drawing anything of its own. `frame` is the canvas it covers; a layer mask
+ * (`mask`) limits it, as in Photoshop. Values are Photoshop's own units.
+ */
+export type AdjustmentLayer = BaseLayer & {
+  type: "adjustment";
+  adjustment: Adjustment;
+};
+
+export type Adjustment =
+  | { kind: "brightness-contrast"; brightness: number; contrast: number; legacy?: boolean }
+  /** Master channel only; 0..255, gamma 0.1..9.99. */
+  | { kind: "levels"; inputBlack: number; inputWhite: number; gamma: number; outputBlack: number; outputWhite: number }
+  /** Master range. Hue in degrees, saturation and lightness -100..100 (colorize: hue 0..360, saturation 0..100). */
+  | { kind: "hue-saturation"; hue: number; saturation: number; lightness: number; colorize?: boolean }
+  | { kind: "exposure"; exposure: number; offset: number; gamma: number }
+  | { kind: "vibrance"; vibrance: number; saturation: number }
+  | { kind: "invert" }
+  | { kind: "threshold"; level: number }
+  | { kind: "posterize"; levels: number }
+  | { kind: "black-white" }
+  | { kind: "photo-filter"; color: RGBA; density: number; preserveLuminosity: boolean }
+  /** Cyan-red, magenta-green, yellow-blue for each tonal range, -100..100. */
+  | {
+      kind: "color-balance";
+      shadows: [number, number, number];
+      midtones: [number, number, number];
+      highlights: [number, number, number];
+      preserveLuminosity: boolean;
+    };
+
+export type Layer = VectorLayer | TextLayer | ImageLayer | GroupLayer | AdjustmentLayer;
 
 /** Which application produced an IR document. */
 export type SourceApp = "figma" | "illustrator" | "photoshop" | "aftereffects";

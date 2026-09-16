@@ -147,15 +147,24 @@ Figma Community-তে লাগে:
 - **আইকন** — ১২৮×১২৮ PNG
 - **কভার আর্ট** — ১৯২০×৯৬০ PNG
 
-দুটোর নকশা রেডি আছে: `assets/icon.svg` আর `assets/banner.svg`। Figma-তে ফাইল
-দুটো টেনে এনে ফ্রেম বেছে **Export → PNG → 1x**
-করলেই ঠিক মাপে বেরোবে। পছন্দ না হলে নিজের মতো বদলে নিন।
+দুটোই **বানানো আছে**, ঠিক মাপে: `assets/icon.png` (১২৮×১২৮) আর
+`assets/cover.png` (১৯২০×৯৬০)। সরাসরি আপলোড করে দিন।
+
+নকশা বদলাতে চাইলে `assets/icon.svg` বা `assets/banner.svg` বদলে চালান:
+
+```bash
+node tools/render-art.mjs
+```
+
+এটা মেশিনে থাকা Edge বা Chrome দিয়ে SVG দুটো ঠিক মাপের PNG করে দেয়, তাই হাতে
+এক্সপোর্ট করে রাখার দরকার নেই।
 
 ### ধাপ ৩: প্রকাশ
 
 1. Figma ডেস্কটপ অ্যাপে **Plugins → Development → LazyLord → Publish…**
    (অথবা Manage plugins in development থেকে)।
-2. যা চাইবে:
+2. যা চাইবে — **সবগুলোর লেখা তৈরি করে রেখেছি,
+   [docs/figma-listing.md](docs/figma-listing.md) থেকে কপি করে বসিয়ে দিলেই হবে**:
    - **Name** — LazyLord
    - **Tagline** — এক লাইন। যেমন: "Send vectors, live text and images to
      Photoshop, Illustrator and After Effects."
@@ -192,9 +201,9 @@ localhost ব্যবহার করলে Figma `reasoning` লেখা ব�
 
 ### দুটো কথা
 
-- **FigJam**: manifest-এ `"editorType": ["figma", "figjam"]` আছে। FigJam-এ
-  ভালো করে পরীক্ষা না করে থাকলে শুধু `["figma"]` রেখে দিন — যেটা কাজ করে না
-  সেটা তালিকায় থাকলে রিভিউয়ে ধরা পড়ে।
+- **FigJam বাদ দেওয়া হয়েছে।** manifest-এ এখন শুধু `"editorType": ["figma"]`।
+  FigJam-এ পরীক্ষা করা হয়নি, আর যেটা পরীক্ষা করা নেই সেটা তালিকায় থাকলে
+  রিভিউয়ে ধরা পড়ে। পরে পরীক্ষা করে যোগ করে দেওয়া যাবে।
 - **প্রাইভেট রাখা**: শুধু নিজের টিমের জন্য হলে Community-তে না দিয়ে
   organization-এ প্রাইভেট প্রকাশ করার সুযোগ আছে।
 

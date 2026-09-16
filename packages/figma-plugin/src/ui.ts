@@ -17,6 +17,8 @@ import type { Diagnostic, Document, Layer, Message, Role, TransferMessage, Trans
 // Figma's manifest only accepts host names in allowedDomains (an IP address is
 // rejected as "not a valid URL"), and the connection must match it.
 const BRIDGE_URL = `ws://localhost:${DEFAULT_BRIDGE_PORT}`;
+/** Where the other half of LazyLord — the Adobe panel — comes from. */
+const PANEL_URL = "https://github.com/raisulsohan/LazyLord/releases/latest";
 
 const SCALES = [1, 2, 3, 4];
 
@@ -244,7 +246,17 @@ function setConn(on: boolean, text: string) {
 function renderPeers() {
   const adobe = peers.filter((p) => p !== "unknown");
   if (adobe.length === 0) {
-    peersEl.textContent = "No Adobe app connected yet.";
+    /* Somebody who found this plugin on its own has no way of knowing the
+       other half exists, so say what to do rather than only what is wrong. */
+    peersEl.textContent = "";
+    peersEl.appendChild(document.createTextNode("No Adobe app connected yet. Open the LazyLord panel in Photoshop, Illustrator or After Effects — "));
+    const link = document.createElement("a");
+    link.href = PANEL_URL;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "get it here";
+    peersEl.appendChild(link);
+    peersEl.appendChild(document.createTextNode(" if you have not installed it."));
   } else {
     peersEl.textContent = "Listening: " + adobe.map(roleLabel).join(", ");
   }

@@ -1062,6 +1062,31 @@ ok("startup: default transfer options are Split + Flatten", posted.some((m) => m
   ok("document: survives JSON", JSON.stringify(JSON.parse(JSON.stringify(doc.raw))) === JSON.stringify(doc.raw));
 }
 
+// Components and instances name the component they draw.
+{
+  const mainKid = rectNode(80, 30, T(0, 0, 0), { fills: [solid(0, 0, 1)] });
+  const main = mk("COMPONENT", { name: "State=Default", width: 80, height: 30, fillGeometry: rectPath(80, 30), cornerRadius: 0, children: [mainKid] });
+  const set = mk("COMPONENT_SET", { name: "Button", width: 80, height: 30, fillGeometry: rectPath(80, 30), cornerRadius: 0, children: [main] });
+  const instKid = rectNode(80, 30, T(0, 0, 100), { fills: [solid(1, 0, 0)] });
+  const inst = mk("INSTANCE", { name: "Button", width: 80, height: 30, absoluteTransform: T(0, 0, 100), fillGeometry: rectPath(80, 30), cornerRadius: 0,
+    children: [instKid], getMainComponentAsync: async () => main });
+  const lost = mk("INSTANCE", { name: "Orphan", width: 80, height: 30, absoluteTransform: T(0, 0, 200), fillGeometry: rectPath(80, 30), cornerRadius: 0,
+    children: [rectNode(80, 30, T(0, 0, 200))], getMainComponentAsync: async () => { throw new Error("gone"); } });
+  const plain = mk("FRAME", { name: "Plain", width: 80, height: 30, absoluteTransform: T(0, 0, 300), fillGeometry: rectPath(80, 30), cornerRadius: 0,
+    children: [rectNode(80, 30, T(0, 0, 300))] });
+  const board = mk("FRAME", { name: "Board", width: 400, height: 400, absoluteTransform: T(0, 0, 100), fillGeometry: rectPath(400, 400), cornerRadius: 0,
+    children: [inst, lost, plain] });
+  const doc = await docFor([set, board], [board]);
+  const [gInst, gLost, gPlain] = (doc && doc.tree[0].children) || [];
+  ok("component: an instance names its main component, after its set", gInst && gInst.component && gInst.component.id === main.id &&
+    gInst.component.name === "Button (State=Default)", JSON.stringify(gInst && gInst.component));
+  ok("component: an instance without a main component is its own", gLost && gLost.component && gLost.component.id === lost.id);
+  ok("component: a plain frame is none", gPlain && !gPlain.component);
+  const doc2 = await docFor([set, board], [main]);
+  const gMain = doc2 && doc2.tree[0];
+  ok("component: the main component names itself", gMain && gMain.component && gMain.component.id === main.id, JSON.stringify(doc2 && doc2.tree));
+}
+
 // Nested clipping frames.
 {
   const child = rectNode(100, 50, T(0, 150, 10)); // reaches past the intersection's right edge (200)

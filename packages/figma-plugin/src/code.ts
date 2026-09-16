@@ -680,7 +680,38 @@ async function collectContainer(node: SceneNode, ctx: Ctx, out: Layer[]): Promis
   if (own.below) members.push(own.below);
   for (const layer of content) members.push(layer);
   if (own.above) members.push(own.above);
-  if (members.length) out.push(groupLayer(node, members, ctx));
+  if (!members.length) return;
+  const group = groupLayer(node, members, ctx);
+  const component = await componentOf(node);
+  if (component) group.component = component;
+  out.push(group);
+}
+
+/**
+ * The component a component or instance draws: its id, shared by every copy,
+ * and a readable name (a variant is named after its set as well). An instance
+ * whose main component cannot be found is its own component.
+ */
+async function componentOf(node: SceneNode): Promise<{ id: string; name: string } | null> {
+  if (node.type !== "COMPONENT" && node.type !== "INSTANCE") return null;
+  let main: ComponentNode | null = null;
+  if (node.type === "COMPONENT") main = node as ComponentNode;
+  else {
+    try {
+      main = await (node as InstanceNode).getMainComponentAsync();
+    } catch {
+      main = null;
+    }
+  }
+  if (!main) return { id: node.id, name: node.name };
+  let name = main.name;
+  try {
+    const set = main.parent;
+    if (set && set.type === "COMPONENT_SET") name = set.name + " (" + main.name + ")";
+  } catch {
+    // A remote component's parent can be out of reach; its own name will do.
+  }
+  return { id: main.id, name };
 }
 
 /**

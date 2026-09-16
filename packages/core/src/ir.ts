@@ -317,6 +317,13 @@ export type GroupLayer = BaseLayer & {
    * top-left, whatever they happen to cover.
    */
   page?: { x: number; y: number; width: number; height: number };
+  /**
+   * The group is a Figma component or an instance of one. Groups naming the
+   * same `id` draw the same thing, give or take their overrides, so a target
+   * that rebuilds pages (After Effects precomps) can build it once and share
+   * it, carrying the differences as properties of each copy.
+   */
+  component?: { id: string; name: string };
 };
 
 /**

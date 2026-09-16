@@ -552,6 +552,25 @@ function makeComp(name, w, h) {
             // A footage layer is named after its source until renamed, as in AE.
             l.name = footage.name || "";
             l.source = footage;
+            // A precomp layer's Essential Properties: one per property its comp exposes.
+            if (footage instanceof CompItem) {
+                var ov = new PNode("ADBE Layer Overrides", null);
+                ov.layer = l;
+                ov.property = function (key) {
+                    var src = footage.eg || [];
+                    for (var i = 0; i < this.children.length; i++) if (this.children[i].name === key) return this.children[i];
+                    for (var j = 0; j < src.length; j++) {
+                        if (src[j].name !== key) continue;
+                        var n = new PNode("ADBE Layer Override", this);
+                        n.name = key;
+                        this.children.push(n);
+                        renumber(this);
+                        return n;
+                    }
+                    return null;
+                };
+                l.groups["ADBE Layer Overrides"] = ov;
+            }
             return l;
         }
     };
@@ -692,6 +711,16 @@ function build(doc, opts) {
     mock.commands = [];
     mock.rejectStyles = !!opts.rejectStyles;
     mock.duplicates = [];
+    // Property.addToMotionGraphicsTemplateAs: After Effects 16.1 and newer.
+    if (opts.eg) {
+        PNode.prototype.addToMotionGraphicsTemplateAs = function (comp, name) {
+            stale(this);
+            (comp.eg = comp.eg || []).push({ name: name, prop: this });
+            return true;
+        };
+    } else {
+        delete PNode.prototype.addToMotionGraphicsTemplateAs;
+    }
     app.fonts = opts.fonts || undefined;
     // The tests below this harness were written against the Gradient Ramp;
     // real gradients are opted into with opts.gradients = "real".
@@ -2966,6 +2995,95 @@ function ctrl(l, effect, i) {
     var odd = build(adjustDoc({ kind: "curves" }));
     ok("adjust: an unknown kind is reported, no layer left", odd.comp.list.length === 0 &&
        diagsMatching(odd.diags, /no counterpart for a 'curves' adjustment/).length === 1, dump(odd.diags));
+})();
+
+// ---------------------------------------------------------------------------
+// CO) Components: one shared precomp, differences as Essential Properties
+// ---------------------------------------------------------------------------
+
+function compCopy(id, y, label, fill, opts) {
+    opts = opts || {};
+    var w = opts.width || 100;
+    var bg = vector("Bg", { x: 0, y: y, width: w, height: 30 }, { fills: [solid(fill[0], fill[1], fill[2])] });
+    bg.id = id + "/bg";
+    var t = textLayer("Label", { x: opts.tx !== undefined ? opts.tx : 30, y: y + 5, width: opts.tw || 40, height: 20 });
+    t.id = id + "/label";
+    t.characters = label;
+    t.textAlignHorizontal = "center";
+    if (opts.runs) t.runs = opts.runs;
+    var g = group(id, { x: 0, y: y, width: w, height: 30, opacity: 1 }, [bg, t]);
+    g.page = { x: 0, y: y, width: w, height: 30 };
+    g.component = { id: "1:2", name: "Button" };
+    return g;
+}
+function inList(list, n) {
+    for (var k = 0; list && k < list.length; k++) if (list[k].name === n) return list[k];
+    return null;
+}
+function egNames(comp) {
+    var out = [];
+    for (var i = 0; comp && comp.eg && i < comp.eg.length; i++) out.push(comp.eg[i].name);
+    return out.join(",");
+}
+function override(pl, name) {
+    var g = pl ? pl.property("ADBE Layer Overrides") : null;
+    var p = g ? g.property(name) : null;
+    return p && p.wasSet ? p.value : undefined;
+}
+
+(function () {
+    var a = compCopy("A", 0, "OK", [0, 0, 1]);
+    // A longer label, centred on the same point: still the same component drawing.
+    var b = compCopy("B", 40, "Cancel", [0, 0, 1], { tx: 20, tw: 60 });
+    var c = compCopy("C", 80, "OK", [1, 0, 0]);
+    var d = compCopy("D", 120, "OK", [0, 0, 1], { width: 140 });
+    var e = compCopy("E", 160, "Mixed", [0, 0, 1], { runs: [{ start: 0, end: 2, fontSize: 30 }] });
+    app.compObjects = [];
+    var r = build(irDoc([a, b, c, d, e], { options: { hierarchy: "precomps" } }), { eg: true });
+
+    var comps = [];
+    for (var i = 0; i < app.compsAdded.length; i++) comps.push(app.compsAdded[i].name + " " + app.compsAdded[i].width + "x" + app.compsAdded[i].height);
+    ok("component: one precomp per drawing, named after the component",
+       comps.join(", ") === "Button 100x30, Button 2 140x30, Button 3 100x30", comps.join(", "));
+    var shared = app.compObjects[0];
+    var pa = inList(r.comp.list, "A"), pb = inList(r.comp.list, "B"), pc = inList(r.comp.list, "C");
+    var pd = inList(r.comp.list, "D"), pe = inList(r.comp.list, "E");
+    ok("component: copies that match place the same precomp", pa && pb && pc && pa.source === shared && pb.source === shared &&
+       pc.source === shared && pd.source === app.compObjects[1] && pe.source === app.compObjects[2], names(r.comp.list));
+    ok("component: each copy sits where it was", pb && nearArr(tval(pb, "ADBE Position"), [50, 55]), pb && dump(tval(pb, "ADBE Position")));
+    ok("component: labels are Essential Graphics properties, a colour only where a copy needed one",
+       egNames(shared) === "Label,Bg Color", egNames(shared));
+    ok("component: the precomp is named in the Essential Graphics panel", shared.motionGraphicsTemplateName === "Button");
+    var tb = override(pb, "Label");
+    ok("component: a copy's own text is its override", tb && tb.text === "Cancel" && override(pb, "Bg Color") === undefined, dump(tb));
+    var cc = override(pc, "Bg Color");
+    ok("component: a copy's own fill colour is its override", cc && cc.join() === "1,0,0,1" && override(pc, "Label") === undefined, dump(cc));
+    ok("component: the copy it was built from overrides nothing", override(pa, "Label") === undefined && override(pa, "Bg Color") === undefined);
+    ok("component: the result says copies are shared", /2 component copies reuse a precomp/.test(r.res.message), r.res.message);
+    ok("component: nothing else to report", r.diags.length === 1 && diagsMatching(r.diags, /24.3 or newer/).length === 1, dump(r.diags));
+})();
+
+(function () {
+    // After Effects without Essential Graphics: copies that differ get their own; identical ones still share.
+    var a = compCopy("A", 0, "OK", [0, 0, 1]);
+    var b = compCopy("B", 40, "Cancel", [0, 0, 1]);
+    var f = compCopy("F", 80, "OK", [0, 0, 1]);
+    app.compObjects = [];
+    var r = build(irDoc([a, b, f], { options: { hierarchy: "precomps" } }), { eg: false });
+    var comps = [];
+    for (var i = 0; i < app.compsAdded.length; i++) comps.push(app.compsAdded[i].name);
+    ok("component, no EG: a differing copy has its own precomp", comps.join(", ") === "Button, Button 2", comps.join(", "));
+    var pf = inList(r.comp.list, "F");
+    ok("component, no EG: an identical copy still shares", pf && pf.source === app.compObjects[0]);
+    ok("component, no EG: reported once", diagsMatching(r.diags, /could not share one precomp/).length === 1 && r.diags.length === 1,
+       dump(r.diags));
+    ok("component, no EG: nothing left behind", r.comp.list.length === 3, names(r.comp.list));
+})();
+
+(function () {
+    // With hierarchy "groups", a component is a group like any other.
+    var r = build(irDoc([compCopy("A", 0, "OK", [0, 0, 1]), compCopy("B", 40, "No", [0, 0, 1])], { options: { hierarchy: "groups" } }), { eg: true });
+    ok("component: groups mode keeps nulls", app.compsAdded.length === 0 && nullsIn(r.comp) === 2, names(r.comp.list));
 })();
 
 WScript.Echo("");

@@ -1624,10 +1624,17 @@
       // and options reach the builder untouched (bar the malformed entries
       // dropped above, which no builder could walk).
       var usedNames = {};
+      // The same picture sent twice is written once: copies of one component
+      // then name the same file, and After Effects can share their precomp.
+      var written = {};
       eachLayer(doc.layers, function (layer) {
         if (layer.type === "image" && layer.pngBase64 && !layer.filePath) {
-          var pngPath = joinPath(dir, uniqueImageName(layer.id, usedNames));
-          writePngFromBase64(pngPath, layer.pngBase64);
+          var pngPath = written["#" + layer.pngBase64];
+          if (!pngPath) {
+            pngPath = joinPath(dir, uniqueImageName(layer.id, usedNames));
+            writePngFromBase64(pngPath, layer.pngBase64);
+            written["#" + layer.pngBase64] = pngPath;
+          }
           layer.filePath = pngPath;
           layer.isOriginalFile = false;
           delete layer.pngBase64;

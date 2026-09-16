@@ -1439,15 +1439,17 @@ run("live and delivery fixes", function () {
         lastEval().cb(JSON.stringify({ ok: true, layerCount: 1, irPath: "C:/tmp/fix/ir.json", message: "", diagnostics: [] }));
     }
 
-    // Photoshop cannot update, so Live would add a copy per change: refused.
+    // Photoshop updates what it drew now (layer XMP), so Live reaches it too.
     var store = new MemoryStorage();
     store.setItem("lazylord.prefs.illustrator", JSON.stringify({ target: "photoshop" }));
     var sock = boot("ILST", store);
     peersMsg(sock, "welcome", ["illustrator", "photoshop"]);
     els["push-live"].checked = true;
     els["push-live"].fire("change");
-    ok("live: refused for a destination that can only add", els["push-live"].checked === false &&
-       linesWith("can only add layers").length === 1, texts(els["log"].children));
+    ok("live: Photoshop can be kept in step", els["push-live"].checked === true &&
+       linesWith("Live: changes to the selection are sent to Photoshop").length === 1, texts(els["log"].children));
+    els["push-live"].checked = false;
+    els["push-live"].fire("change");
 
     // A failed live send is tried again at the next poll, with the flag the receiver reads.
     store = new MemoryStorage();

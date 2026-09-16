@@ -549,6 +549,13 @@ function makeNode(type, extra = {}) {
     strokes: [],
     strokeWeight: 1,
     removed: false,
+    _pluginData: {},
+    setPluginData(k, v) {
+      this._pluginData[k] = String(v);
+    },
+    getPluginData(k) {
+      return this._pluginData[k] || "";
+    },
     resize(w, h) {
       this.width = w;
       this.height = h;
@@ -602,6 +609,18 @@ page.insertChild = function (index, child) {
   detach(child);
   child.parent = page;
   page.children.splice(index, 0, child);
+};
+/** Depth-first, children in stack order (bottom first), as Figma walks them. */
+page.findAll = function (fn) {
+  const out = [];
+  const walk = (list) => {
+    for (const n of list || []) {
+      if (fn(n)) out.push(n);
+      if (n.children) walk(n.children);
+    }
+  };
+  walk(page.children);
+  return out;
 };
 
 Object.assign(globalThis.figma, {
@@ -1956,10 +1975,10 @@ await block("ui, live", async () => {
   const ui = await loadUi();
   const ws = ui.connect();
   const live = ui.$("#live");
-  // All apps (no target) would get a copy per change in Photoshop: refused.
+  // All apps (no one target) cannot be kept in step: refused.
   live.checked = true;
   live.fire("change");
-  ok("live ui: refused without one destination that can update", live.checked === false && /only After Effects and Illustrator/.test(ui.$("#status").textContent));
+  ok("live ui: refused without one destination", live.checked === false && /rather than All apps/.test(ui.$("#status").textContent));
   ui.fromPlugin({ type: "prefs", target: "illustrator" });
   live.checked = true;
   live.fire("change");
@@ -2074,6 +2093,75 @@ await block("review (figma)", async () => {
   const sent = await send([inner1, inner2], 2, "frame");
   ok("review: nested frames go as one document", sent && sent.type === "ir" && sent.documents.length === 1,
     sent && (sent.documents ? sent.documents.length : sent.message));
+});
+
+// Updating into Figma: tags in plugin data, rebuilt in place, conflicts noticed.
+await block("figma update", async () => {
+  const B = await import(pathToFileURL(join(figmaEsm, "build.ts")).href);
+  const vec = (id, x, y, fill = { r: 1, g: 0, b: 0, a: 1 }) => ({
+    id, name: id, type: "vector", frame: { x, y, width: 20, height: 10, rotation: 0, opacity: 1 },
+    subpaths: G.rectToSubPaths({ x: 0, y: 0, width: 20, height: 10 }),
+    fills: [{ type: "solid", color: fill }], strokes: [], windingRule: "nonzero",
+  });
+  const doc = (layers, options = {}) => ({ version: "1.0", source: "illustrator", sourceKey: "doc-U", name: "Art",
+    bounds: { x: 0, y: 0, width: 200, height: 100 }, originSpace: "canvas", layers, options });
+  const update = (extra = {}) => ({ existing: "update", ...extra });
+
+  resetPage();
+  const first = await B.buildDocument(doc([vec("A", 0, 0), vec("B", 50, 0)]));
+  const [a, b] = page.children;
+  ok("figma tag: each built node carries its source in plugin data", a.getPluginData("lazylord.tag") === "illustrator|doc-U|A" &&
+    b.getPluginData("lazylord.tag") === "illustrator|doc-U|B", a.getPluginData("lazylord.tag"));
+  ok("figma tag: and a fingerprint of how it was built", a.getPluginData("lazylord.fp") === B.nodePrint(a));
+  ok("figma tag: nothing updated on a first send", first.layersUpdated === 0 && first.layersCreated === 2);
+
+  // B moves in the source: updated in place, A untouched in the stack below it.
+  const r = await B.buildDocument(doc([vec("B", 70, 5), vec("C", 0, 40)], update()));
+  const nb = page.children[1];
+  ok("figma update: the matched layer is rebuilt where it stood", page.children.length === 3 && page.children[0] === a &&
+    nb !== b && nb.getPluginData("lazylord.tag") === "illustrator|doc-U|B" && near(nb.x, 70) && near(nb.y, 5),
+    page.children.map((n) => n.name + "@" + n.x).join());
+  ok("figma update: the old node is gone", b.removed === true);
+  ok("figma update: a layer with no match is added", page.children[2].name === "C" && r.layersCreated === 1);
+  ok("figma update: counted and said", r.layersUpdated === 1 && /Updated 1 layer where they stood/.test(r.message), r.message);
+
+  // The user recolours A in Figma; the source sends A again.
+  a.fills = [{ type: "SOLID", color: { r: 0, g: 1, b: 0 }, opacity: 1 }];
+  const kept = await B.buildDocument(doc([vec("A", 5, 5)], update({ conflict: "keep" })));
+  ok("figma conflict: kept as the user made it, and said", page.children[0] === a && a.removed === false &&
+    kept.diagnostics.some((d) => /changed in Figma since it was last sent, so it was left as you made it/.test(d.reason)) &&
+    /left as you made them/.test(kept.message), kept.message);
+  const over = await B.buildDocument(doc([vec("A", 5, 5)], update()));
+  ok("figma conflict: overwritten by default, and said", a.removed === true && page.children[0].getPluginData("lazylord.tag") === "illustrator|doc-U|A" &&
+    over.diagnostics.some((d) => /the update replaced it/.test(d.reason)), JSON.stringify(over.diagnostics));
+  const clean = await B.buildDocument(doc([vec("A", 9, 9)], update()));
+  ok("figma conflict: once replaced, the next update is clean", !clean.diagnostics.some((d) => /since it was last sent/.test(d.reason)));
+
+  // A node the user moved into a group stays in that group when updated.
+  resetPage();
+  await B.buildDocument(doc([vec("A", 0, 0)]));
+  const grp = withChildren(makeNode("GROUP"));
+  page.appendChild(grp);
+  grp.appendChild(page.children[0]);
+  await B.buildDocument(doc([vec("A", 30, 0)], update()));
+  ok("figma update: a node moved into a group is updated inside it", grp.children.length === 1 &&
+    grp.children[0].getPluginData("lazylord.tag") === "illustrator|doc-U|A" && page.children.length === 1);
+
+  // A duplicate (Ctrl+D copies plugin data) lands above: the original, below, is the one updated.
+  resetPage();
+  await B.buildDocument(doc([vec("A", 0, 0)]));
+  const orig = page.children[0];
+  const dup = makeNode("VECTOR", { name: "A copy" });
+  dup.setPluginData("lazylord.tag", orig.getPluginData("lazylord.tag"));
+  page.appendChild(dup);
+  await B.buildDocument(doc([vec("A", 40, 0)], update()));
+  ok("figma update: of a node and its duplicate, the original is updated", orig.removed === true && dup.removed === false);
+
+  // Another file's layer with the same id never matches.
+  resetPage();
+  await B.buildDocument(doc([vec("A", 0, 0)]));
+  const other = await B.buildDocument({ ...doc([vec("A", 60, 0)], update()), sourceKey: "doc-V" });
+  ok("figma update: another file's layer is added, not matched", page.children.length === 2 && other.layersUpdated === 0);
 });
 
 await block("review (figma ui)", async () => {

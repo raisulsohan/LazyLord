@@ -1269,7 +1269,7 @@
 
   /** Only these rebuild what they built before; anywhere else Live would pile up copies. */
   function liveCanReach(target) {
-    return target === "aftereffects" || target === "illustrator";
+    return target === "aftereffects" || target === "illustrator" || target === "figma" || target === "photoshop";
   }
 
   function startLive() {

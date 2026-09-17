@@ -33,14 +33,14 @@ const VERSION = pkg.version;
  * no commit can change) and the pre-commit guard in tools/git-hooks.
  * LAZYLORD_KEY_DIR overrides where it is.
  *
- * The finished zip goes to "00 Install from here" (D:\GitHub\00 Install from
+ * The finished zip goes to "00. Install from here" (D:\GitHub\00. Install from
  * here), which holds only the newest LazyLord zip: the nearest folder of that
  * name beside the repository or beside any folder above it, so the repository
- * can sit inside a collection folder (D:\GitHub\LazySuite\LazyLord). Without
+ * can sit inside a collection folder (D:\GitHub\01. After Effects Tools\LazyLord). Without
  * one, it is made beside the repository. LAZYLORD_DOWNLOAD_DIR overrides it.
  */
 function downloadsFolder() {
-  const name = "00 Install from here";
+  const name = "00. Install from here";
   for (let dir = resolve(root, ".."); ; dir = dirname(dir)) {
     if (existsSync(join(dir, name))) return join(dir, name);
     if (dirname(dir) === dir) return resolve(root, "..", name);

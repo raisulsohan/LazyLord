@@ -244,6 +244,45 @@ WebSocket.prototype.close = function () { this.readyState = 3; };
 function setTimeout(fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; }
 function clearTimeout(id) {}
 
+/**
+ * Node's https, lent to the panel only inside withNode(): main.js asks for it
+ * when its browser request cannot connect, or when GitHub's API refuses.
+ * Every other module is missing, as it is under Windows Script Host.
+ */
+var require = undefined;
+var httpsCalls = [];
+var mockHttps = {
+    get: function (opts, cb) {
+        var call = { opts: opts, cb: cb, on: {}, aborted: false };
+        httpsCalls.push(call);
+        return {
+            on: function (ev, fn) { call.on[ev] = fn; },
+            setTimeout: function (ms, fn) { call.onTimeout = fn; },
+            abort: function () { call.aborted = true; }
+        };
+    }
+};
+function withNode(fn) {
+    httpsCalls = [];
+    require = function (name) {
+        if (name === "https") return mockHttps;
+        throw new Error("Cannot find module '" + name + "'");
+    };
+    try { fn(); } finally { require = undefined; }
+}
+/** Answer a mocked https request with a status, headers and a body. */
+function httpsRespond(call, status, headers, body) {
+    var handlers = {};
+    var res = {
+        statusCode: status, headers: headers || {},
+        setEncoding: function () {}, resume: function () {},
+        on: function (ev, fn) { handlers[ev] = fn; }
+    };
+    call.cb(res);
+    if (handlers.data && body !== undefined) handlers.data(typeof body === "string" ? body : JSON.stringify(body));
+    if (handlers.end) handlers.end();
+}
+
 /** The panel's requests to GitHub, answered by the test with respond(). */
 var requests = [], opened = [];
 function XMLHttpRequest() { this.headers = {}; this.readyState = 0; requests.push(this); }
@@ -2241,6 +2280,61 @@ run("updates: nothing new, and failures", function () {
     fireTimer(UPDATE_DELAY);
     requests[0].respond(200, release("v" + bumped(2), { body: "Just words, no points." }));
     ok("updates: notes without points leave the list out", els["update-card"].hidden === false && els["update-notes"].hidden === true);
+});
+
+run("updates: other ways to GitHub", function () {
+    withNode(function () {
+        var tagUrl = "https://github.com/raisulsohan/LazyLord/releases/tag/v" + bumped(1);
+
+        boot("ILST", new MemoryStorage());
+        fireTimer(UPDATE_DELAY);
+        requests[0].respond(403, { message: "API rate limit exceeded" });
+        ok("updates: a refused API falls back to the release page", httpsCalls.length === 1 &&
+           httpsCalls[0].opts.hostname === "github.com" && httpsCalls[0].opts.path === "/raisulsohan/LazyLord/releases/latest",
+           httpsCalls.length ? httpsCalls[0].opts.hostname + httpsCalls[0].opts.path : "no request");
+        httpsRespond(httpsCalls[0], 302, { location: tagUrl });
+        ok("updates: whose redirect names the version", els["update-card"].hidden === false &&
+           els["update-title"].textContent === "LazyLord " + bumped(1) + " is out" && els["update-notes"].hidden === true,
+           els["update-title"].textContent);
+        els["update-download"].fire("click");
+        ok("updates: and Download opens that release", opened.length === 1 && opened[0] === tagUrl, opened.join("|"));
+
+        httpsCalls = [];
+        boot("ILST", new MemoryStorage());
+        els["ver"].fire("click");
+        requests[0].respond(0, "");
+        ok("updates: a browser that cannot connect hands over to Node", httpsCalls.length === 1 &&
+           httpsCalls[0].opts.hostname === "api.github.com" && httpsCalls[0].opts.path === "/repos/raisulsohan/LazyLord/releases/latest");
+        httpsRespond(httpsCalls[0], 200, {}, release("v" + bumped(1)));
+        ok("updates: which brings the notes too", els["update-card"].hidden === false &&
+           noteTexts() === "The logo spells the name.|Plain point with a link and code", noteTexts());
+
+        httpsCalls = [];
+        boot("ILST", new MemoryStorage());
+        els["ver"].fire("click");
+        requests[0].respond(0, "");
+        httpsCalls[0].on.error({ message: "getaddrinfo ENOTFOUND api.github.com" });
+        ok("updates: Node failing too still tries the release page", httpsCalls.length === 2 && httpsCalls[1].opts.hostname === "github.com");
+        httpsRespond(httpsCalls[1], 302, { location: tagUrl });
+        ok("updates: ... and finds the version there", els["update-card"].hidden === false);
+
+        httpsCalls = [];
+        boot("ILST", new MemoryStorage());
+        els["ver"].fire("click");
+        requests[0].respond(403, "limit");
+        httpsRespond(httpsCalls[0], 404, {});
+        ok("updates: when both refuse, the user hears the API's answer",
+           has(lastLog().text, "Could not check for updates: GitHub answered 403.") && lastLog().kind === "warn", lastLog().text);
+
+        httpsCalls = [];
+        boot("ILST", new MemoryStorage());
+        els["ver"].fire("click");
+        requests[0].respond(403, "limit");
+        httpsRespond(httpsCalls[0], 302, { location: "https://example.com/raisulsohan/LazyLord/releases/tag/v99.0.0" });
+        ok("updates: a redirect anywhere but LazyLord's releases is not believed",
+           els["update-card"].hidden === true && has(lastLog().text, "Could not check for updates"), lastLog().text);
+    });
+    ok("updates: Node is only lent inside these tests", require === undefined);
 });
 
 run("updates: switched off", function () {

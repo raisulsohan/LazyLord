@@ -2237,30 +2237,65 @@
     try { st.setItem(UPDATE_KEY, JSON.stringify(state)); } catch (e) {}
   }
 
+  function nodeHttps() {
+    try { return require("https"); } catch (e) { return null; }
+  }
+
   /**
-   * GET the latest release as JSON; calls back once with (problem, data).
-   * The panel's own browser goes first, as it uses the system's proxy
-   * settings. If it cannot connect at all (offline, or a host that blocks the
-   * request), Node's https tries once more on its own.
+   * The latest release as GitHub's API describes it; calls back once with
+   * (problem, data). Three ways in, each tried only when the one before fails:
+   *   1. the panel's own browser, which uses the system's proxy settings;
+   *   2. Node's https, when the browser cannot connect at all (offline, or a
+   *      host that blocks the request);
+   *   3. the release page, when the API refuses. The API allows 60 requests an
+   *      hour per internet address, shared by everyone behind it (common where
+   *      a whole ISP shares a few addresses), but the release page is not
+   *      limited that way and redirects to the latest tag. That gives the
+   *      version without its notes, which is enough to say an update is out.
    */
   function fetchLatestRelease(done) {
-    var finished = false, triedNode = false;
+    var finished = false, triedNode = false, triedPage = false;
     function finish(problem, data) {
       if (finished) return;
       finished = true;
       done(problem, data);
     }
-    function parse(status, text) {
-      if (status !== 200) { finish("GitHub answered " + status); return; }
+    function answer(status, text) {
+      if (status !== 200) { viaReleasePage("GitHub answered " + status); return; }
       var data;
-      try { data = JSON.parse(text); } catch (e) { finish("GitHub's answer was unreadable"); return; }
+      try { data = JSON.parse(text); } catch (e) { viaReleasePage("GitHub's answer was unreadable"); return; }
       finish(null, data);
+    }
+    function viaReleasePage(problem) {
+      if (finished || triedPage) return;
+      triedPage = true;
+      var https = nodeHttps();
+      if (!https) { finish(problem); return; }
+      try {
+        var req = https.get({
+          hostname: "github.com",
+          path: RELEASES_PAGE.replace(/^https:\/\/github\.com/, ""),
+          headers: { "User-Agent": "LazyLord/" + PANEL_VERSION }
+        }, function (res) {
+          if (res.resume) res.resume();
+          var where = String((res.headers && res.headers.location) || "");
+          var tag = /^https:\/\/github\.com\/raisulsohan\/LazyLord\/releases\/tag\/([^\/?#]+)$/.exec(where);
+          if (res.statusCode >= 300 && res.statusCode < 400 && tag) {
+            finish(null, { tag_name: decodeURIComponent(tag[1]), html_url: where, body: "" });
+          } else {
+            finish(problem);
+          }
+        });
+        req.on("error", function () { finish(problem); });
+        req.setTimeout(UPDATE_TIMEOUT_MS, function () { req.abort(); finish(problem); });
+      } catch (e) {
+        finish(problem);
+      }
     }
     function viaNode(problem) {
       if (finished || triedNode) return;
       triedNode = true;
-      var https = null;
-      try { https = require("https"); } catch (e) {}
+      var https = nodeHttps();
       if (!https) { finish(problem); return; }
       try {
         var req = https.get({
@@ -2271,12 +2306,12 @@
           var text = "";
           res.setEncoding("utf8");
           res.on("data", function (chunk) { text += chunk; });
-          res.on("end", function () { parse(res.statusCode, text); });
+          res.on("end", function () { answer(res.statusCode, text); });
         });
-        req.on("error", function (err) { finish(err.message || problem); });
+        req.on("error", function (err) { viaReleasePage(err.message || problem); });
         req.setTimeout(UPDATE_TIMEOUT_MS, function () { req.abort(); finish("no answer in time"); });
-      } catch (e2) {
-        finish(e2.message || String(e2));
+      } catch (e) {
+        finish(e.message || String(e));
       }
     }
     if (typeof XMLHttpRequest === "undefined") { viaNode("this panel cannot reach the internet"); return; }
@@ -2290,11 +2325,11 @@
       xhr.onreadystatechange = function () {
         if (xhr.readyState !== 4) return;
         if (xhr.status === 0) viaNode("no connection");
-        else parse(xhr.status, xhr.responseText);
+        else answer(xhr.status, xhr.responseText);
       };
       xhr.send(null);
-    } catch (e3) {
-      viaNode(e3.message || "no connection");
+    } catch (e) {
+      viaNode(e.message || "no connection");
     }
   }
 

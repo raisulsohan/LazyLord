@@ -215,7 +215,13 @@ export function startRelay(opts: RelayOptions = {}): Promise<Relay> {
           // client that can display a result.
           for (const c of clients) if (c !== client) send(c.socket, msg);
         }
-        transferOrigins.delete(msg.id);
+        // A staged ack is not the last word: keep the way back for the one that follows.
+        if (msg.staged) {
+          const kept = transferOrigins.get(msg.id);
+          if (kept) kept.at = Date.now();
+        } else {
+          transferOrigins.delete(msg.id);
+        }
         log(`ack ${msg.id} from ${roleLabel(msg.from)}: ${msg.ok ? "ok" : "failed"}${msg.message ? " — " + msg.message : ""}`);
         break;
       }

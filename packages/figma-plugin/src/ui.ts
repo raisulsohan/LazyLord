@@ -88,7 +88,19 @@ const incoming = new Map<string, { peer: string; name: string; live?: boolean }>
  * artwork but never place it: each one reaches the canvas only when Place is
  * pressed here, and Decline answers the sender without touching the file.
  */
-type Staged = { id: string; document: Document; peer: string; name: string; layers: number; update: boolean; live: boolean };
+type Staged = {
+  id: string;
+  document: Document;
+  peer: string;
+  name: string;
+  layers: number;
+  update: boolean;
+  live: boolean;
+  /** Which app and file it came from: Live changes from one of them share a card. */
+  source: string;
+  /** Live changes this card has taken in; it always holds the newest. */
+  changes: number;
+};
 const staged: Staged[] = [];
 /** The staged transfer being placed right now, if any. */
 let placing: string | null = null;
@@ -255,7 +267,35 @@ function stageIncoming(id: string, doc: Document | undefined) {
     layers: countLeaves(doc.layers),
     update: options.existing === "update" || !!options.live,
     live: !!options.live,
+    source: `${doc.source || ""}|${doc.sourceKey || ""}`,
+    changes: 1,
   };
+  if (s.live) {
+    // A Live change replaces the one waiting from the same app and file, so the
+    // card always holds the newest state; it is written only on Update.
+    const waiting = staged.find((x) => x.live && x.source === s.source && x.id !== placing);
+    if (waiting) {
+      s.changes = waiting.changes + 1;
+      staged[staged.indexOf(waiting)] = s;
+    } else {
+      staged.push(s);
+    }
+    // The sender goes on watching: it hears the change is held, not built.
+    send({
+      type: "ack",
+      id,
+      from: "figma",
+      ok: true,
+      staged: true,
+      message: "Waiting in Figma until Update on canvas is pressed.",
+      layersCreated: 0,
+      layersUpdated: 0,
+      diagnostics: [],
+    } as Message);
+    renderIncoming();
+    setStatus(`Live changes from ${s.peer} are waiting: press Update on canvas to apply them.`, "");
+    return;
+  }
   staged.push(s);
   renderIncoming();
   setStatus(`${s.peer} sent ${s.layers} layer${s.layers === 1 ? "" : "s"}: place or decline ${s.layers === 1 ? "it" : "them"} above.`, "");
@@ -268,13 +308,20 @@ function renderIncoming() {
   if (!s) return;
   const what = `${s.layers} layer${s.layers === 1 ? "" : "s"}`;
   const named = s.name ? ` from “${s.name}”` : "";
-  incomingText.textContent = s.update
-    ? `${s.peer} wants to update ${what}${named} on this page, replacing the ones it placed before.`
-    : `${s.peer} wants to place ${what}${named} on this page.`;
+  if (s.live) {
+    const changes = s.changes === 1 ? "A Live change" : `${s.changes} Live changes`;
+    incomingText.textContent = `${changes} from ${s.peer}${named} ${s.changes === 1 ? "is" : "are"} waiting: ` +
+      `the newest state of ${what}, applied on this page when you press Update.`;
+  } else {
+    incomingText.textContent = s.update
+      ? `${s.peer} wants to update ${what}${named} on this page, replacing the ones it placed before.`
+      : `${s.peer} wants to place ${what}${named} on this page.`;
+  }
   incomingCount.textContent = staged.length > 1 ? `1 of ${staged.length}` : "";
   placeBtn.disabled = placing !== null;
   declineBtn.disabled = placing !== null;
   placeBtn.textContent = placing !== null ? "Placing…" : s.update ? "Update on canvas" : "Place on canvas";
+  declineBtn.textContent = s.live ? "Discard" : "Decline";
 }
 
 /** The user pressed Place: only now does the main thread build it. */
@@ -289,11 +336,17 @@ function placeIncoming() {
   parent.postMessage({ pluginMessage: { type: "receive", id: s.id, document: s.document, confirmed: true } }, "*");
 }
 
-/** The user pressed Decline: the sender hears so, and nothing is built. */
+/** The user pressed Decline (Discard, for Live changes): nothing is built. */
 function declineIncoming() {
   const s = staged[0];
   if (!s || placing !== null) return;
   staged.shift();
+  if (s.live) {
+    // Its sender already heard it was held; the next change waits here again.
+    setStatus(`Discarded the waiting Live changes from ${s.peer}. New changes will wait here again.`, "");
+    renderIncoming();
+    return;
+  }
   send({
     type: "ack",
     id: s.id,

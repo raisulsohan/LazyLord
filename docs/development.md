@@ -25,6 +25,8 @@ Everything runs on your machine — **no data leaves localhost.** The one reques
 that goes further is the panel's update check: about twice a day it GETs
 `api.github.com/repos/raisulsohan/LazyLord/releases/latest` and compares the
 tag with its own version (the "Updates" section of `packages/adobe-cep/js/main.js`).
+The API answers 60 requests an hour per internet address, so when it refuses,
+the panel reads the version from where `github.com/…/releases/latest` redirects.
 It sends nothing about the user, and "Check for updates" in the panel turns it off.
 
 ---

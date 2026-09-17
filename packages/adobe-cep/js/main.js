@@ -11,7 +11,7 @@
   var BRIDGE_URL = "ws://127.0.0.1:" + DEFAULT_PORT;
   var PROTOCOL_VERSION = 1;
   /** Kept in step with package.json by tools/package-zxp.mjs. */
-  var PANEL_VERSION = "1.1.4";
+  var PANEL_VERSION = "1.1.5";
   var AUTHOR_URL = "https://raisulsohan.com/";
 
   /** Hosts that ship a reader module and can therefore originate a transfer. */

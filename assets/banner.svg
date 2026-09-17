@@ -1,5 +1,5 @@
 <!--
-  README banner — 1920 x 960, animated: the logo builds itself, then a transfer runs along the wire. CSS only, so it plays on GitHub.
+  README banner — 1920 x 960, animated on an 8-second loop: the logo builds itself, then a transfer runs along the wire. CSS only, so it plays on GitHub.
   Rendered to PNG by `node tools/render-art.mjs` where a PNG is needed, so edit this rather than the PNG.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="960" viewBox="0 0 1920 960" fill="none">
@@ -23,33 +23,35 @@
     </linearGradient>
   </defs>
   <style>
-#bn-stem{animation:bn-stem 3.2s cubic-bezier(.2,.8,.2,1) 0s 1 both}
-#bn-foot{animation:bn-foot 3.2s cubic-bezier(.2,.8,.2,1) 0s 1 both}
-#bn-bridge{transform-box:fill-box;transform-origin:center;animation:bn-bridge 3.2s cubic-bezier(.3,1.4,.4,1) 0s 1 both}
-#bn-pulse{opacity:0;animation:bn-pulse 3.2s ease-in-out 0s 1 both}
-#bn-shine{opacity:0;animation:bn-shine 3.2s linear 0s 1 both}
-#bn-back{opacity:0;animation:bn-back 3.2s ease-in-out 0s 1 both}
-#bn-wipe{transform-box:fill-box;transform-origin:left center;animation:bn-wipe 3.2s linear 0s 1 both}
-#bn-word{animation:bn-word 3.2s linear 0s 1 both}
-@keyframes bn-stem{0%{opacity:0;transform:translateY(1.5px)}9.375%{opacity:1;transform:none}100%{opacity:1;transform:none}}
-@keyframes bn-foot{0%,4.687%{opacity:0;transform:translateX(2.5px)}14.063%{opacity:1;transform:translateX(2.5px)}34.375%{opacity:1;transform:none}100%{opacity:1;transform:none}}
-@keyframes bn-pulse{0%,15.625%{opacity:0;transform:translateX(-3px)}20.313%{opacity:1}34.375%{opacity:1;transform:none}39.063%{opacity:0;transform:none}100%{opacity:0;transform:none}}
-@keyframes bn-bridge{0%,31.25%{opacity:0;transform:scaleX(0)}40.625%{opacity:1;transform:scaleX(1)}100%{opacity:1;transform:scaleX(1)}}
-@keyframes bn-shine{0%,45.312%{opacity:0;transform:translateX(-2px)}46.875%{opacity:.9}54.688%{opacity:.9;transform:translateX(14px)}81.25%{opacity:.9;transform:translateX(107.67px)}83.75%{opacity:0;transform:translateX(107.67px)}100%{opacity:0;transform:translateX(107.67px)}}
-@keyframes bn-back{0%,84.375%{opacity:0;transform:translateX(106.67px)}86.875%{opacity:.6}97.5%{opacity:.6;transform:translateX(-1px)}100%{opacity:0;transform:translateX(-1px)}}
-@keyframes bn-wipe{0%,54.688%{transform:scaleX(0)}81.25%{transform:scaleX(1)}100%{transform:scaleX(1)}}
-@keyframes bn-word{0%,54.688%{transform:translateX(-1.5px)}81.25%{transform:none}100%{transform:none}}
+#bn-stem{animation:bn-stem 8s cubic-bezier(.2,.8,.2,1) 0s infinite both}
+#bn-foot{animation:bn-foot 8s cubic-bezier(.2,.8,.2,1) 0s infinite both}
+#bn-bridge{transform-box:fill-box;transform-origin:center;animation:bn-bridge 8s cubic-bezier(.3,1.4,.4,1) 0s infinite both}
+#bn-pulse{opacity:0;animation:bn-pulse 8s ease-in-out 0s infinite both}
+#bn-shine{opacity:0;animation:bn-shine 8s linear 0s infinite both}
+#bn-back{opacity:0;animation:bn-back 8s ease-in-out 0s infinite both}
+#bn-wipe{transform-box:fill-box;transform-origin:left center;animation:bn-wipe 8s linear 0s infinite both}
+#bn-word{animation:bn-word 8s linear 0s infinite both}
+#bn-all{animation:bn-all 8s linear 0s infinite both}
+@keyframes bn-stem{0%{opacity:0;transform:translateY(1.5px)}3.75%{opacity:1;transform:none}100%{opacity:1;transform:none}}
+@keyframes bn-foot{0%,1.875%{opacity:0;transform:translateX(2.5px)}5.625%{opacity:1;transform:translateX(2.5px)}13.75%{opacity:1;transform:none}100%{opacity:1;transform:none}}
+@keyframes bn-pulse{0%,6.25%{opacity:0;transform:translateX(-3px)}8.125%{opacity:1}13.75%{opacity:1;transform:none}15.625%{opacity:0;transform:none}100%{opacity:0;transform:none}}
+@keyframes bn-bridge{0%,12.5%{opacity:0;transform:scaleX(0)}16.25%{opacity:1;transform:scaleX(1)}100%{opacity:1;transform:scaleX(1)}}
+@keyframes bn-shine{0%,18.125%{opacity:0;transform:translateX(-2px)}18.75%{opacity:.9}21.875%{opacity:.9;transform:translateX(14px)}32.5%{opacity:.9;transform:translateX(107.67px)}33.5%{opacity:0;transform:translateX(107.67px)}100%{opacity:0;transform:translateX(107.67px)}}
+@keyframes bn-back{0%,33.75%{opacity:0;transform:translateX(106.67px)}34.75%{opacity:.6}39%{opacity:.6;transform:translateX(-1px)}40%{opacity:0;transform:translateX(-1px)}100%{opacity:0;transform:translateX(-1px)}}
+@keyframes bn-wipe{0%,21.875%{transform:scaleX(0)}32.5%{transform:scaleX(1)}100%{transform:scaleX(1)}}
+@keyframes bn-word{0%,21.875%{transform:translateX(-1.5px)}32.5%{transform:none}100%{transform:none}}
+@keyframes bn-all{0%{opacity:1}93.75%{opacity:1}100%{opacity:0}}
 @media (prefers-reduced-motion:reduce){#bn-stem,#bn-foot,#bn-bridge,#bn-wipe,#bn-word,#bn-all{animation:none}#bn-pulse,#bn-shine,#bn-back{animation:none;opacity:0}}
-#bn-spark{opacity:0;animation:bn-spark 4s linear 3.2s infinite both}
-@keyframes bn-spark{0%{opacity:0;transform:none}3%{opacity:1}60%{opacity:1;transform:translateX(1200px)}66%,100%{opacity:0;transform:translateX(1200px)}}
-.bn-hit0{opacity:0;animation:bn-hit0 4s ease-out 3.2s infinite both}
-@keyframes bn-hit0{0%,0%{opacity:0}2.5%{opacity:1}15.5%,100%{opacity:0}}
-.bn-hit1{opacity:0;animation:bn-hit1 4s ease-out 3.2s infinite both}
-@keyframes bn-hit1{0%,18.5%{opacity:0}21%{opacity:1}34%,100%{opacity:0}}
-.bn-hit2{opacity:0;animation:bn-hit2 4s ease-out 3.2s infinite both}
-@keyframes bn-hit2{0%,38.5%{opacity:0}41%{opacity:1}54%,100%{opacity:0}}
-.bn-hit3{opacity:0;animation:bn-hit3 4s ease-out 3.2s infinite both}
-@keyframes bn-hit3{0%,58.5%{opacity:0}61%{opacity:1}74%,100%{opacity:0}}
+#bn-spark{opacity:0;animation:bn-spark 8s linear 0s infinite both}
+@keyframes bn-spark{0%,41.25%{opacity:0;transform:none}42.75%{opacity:1}71.25%{opacity:1;transform:translateX(1200px)}74.375%,100%{opacity:0;transform:translateX(1200px)}}
+.bn-hit0{opacity:0;animation:bn-hit0 8s ease-out 0s infinite both}
+@keyframes bn-hit0{0%,40%{opacity:0}42.25%{opacity:1}50%,100%{opacity:0}}
+.bn-hit1{opacity:0;animation:bn-hit1 8s ease-out 0s infinite both}
+@keyframes bn-hit1{0%,50%{opacity:0}52.25%{opacity:1}60%,100%{opacity:0}}
+.bn-hit2{opacity:0;animation:bn-hit2 8s ease-out 0s infinite both}
+@keyframes bn-hit2{0%,60%{opacity:0}62.25%{opacity:1}70%,100%{opacity:0}}
+.bn-hit3{opacity:0;animation:bn-hit3 8s ease-out 0s infinite both}
+@keyframes bn-hit3{0%,70%{opacity:0}72.25%{opacity:1}80%,100%{opacity:0}}
 @media (prefers-reduced-motion:reduce){#bn-spark,.bn-hit0,.bn-hit1,.bn-hit2,.bn-hit3{animation:none;opacity:0}}
   </style>
 

@@ -7,7 +7,7 @@
 
 if (typeof LazyLord === "undefined") { var LazyLord = {}; }
 
-LazyLord.VERSION = "1.1.8";
+LazyLord.VERSION = "1.1.9";
 
 /** Read a UTF-8 text file and return its contents. */
 LazyLord.readFile = function (path) {

@@ -4,10 +4,10 @@
   Photoshop (PHXS/PHSP), Illustrator (ILST) and After Effects (AEFT).
 -->
 <ExtensionManifest Version="9.0" ExtensionBundleId="com.lazylord.panel"
-    ExtensionBundleVersion="1.1.8" ExtensionBundleName="LazyLord"
+    ExtensionBundleVersion="1.1.9" ExtensionBundleName="LazyLord"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.lazylord.panel" Version="1.1.8" />
+    <Extension Id="com.lazylord.panel" Version="1.1.9" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

@@ -2156,10 +2156,18 @@
   // needs one for its bridge too). About twice a day the panel asks GitHub which
   // release is the latest: one plain request that carries nothing about the user
   // or their work. When that release is newer than this panel, a card says what
-  // changed and offers the download. "Later" puts that version away; the version
-  // in the header stays marked and brings the card back when clicked, and when
-  // nothing is waiting, clicking it checks at once. Unticking "Check for
-  // updates" stops the requests.
+  // changed and offers the download.
+  //
+  // A user hears about updates at most once a fortnight, however often releases
+  // come out. The card first shows for the newest release and stays until
+  // Download or Later is pressed; after that nothing appears unasked for
+  // fourteen days from when it first showed, and then the card comes back only
+  // if a newer release than the panel is out by then — the newest one. The
+  // fortnight is kept in one file for every app's panel, so three apps do not
+  // mean three notices. While an update the user has already heard about is
+  // waiting, the version in the header stays marked and brings the card back
+  // when clicked; when nothing is known, clicking it checks at once. Unticking
+  // "Check for updates" stops the requests.
 
   var RELEASES_HOST = "api.github.com";
   var RELEASES_PATH = "/repos/raisulsohan/LazyLord/releases/latest";
@@ -2168,6 +2176,8 @@
   /** The first check waits until the panel has connected and loaded its scripts. */
   var UPDATE_FIRST_DELAY_MS = 6000;
   var UPDATE_EVERY_MS = 12 * 60 * 60 * 1000;
+  /** The least time between two update notices. */
+  var UPDATE_QUIET_MS = 14 * 24 * 60 * 60 * 1000;
   var UPDATE_TIMEOUT_MS = 15000;
   var UPDATE_NOTES_MAX = 4;
 
@@ -2223,18 +2233,61 @@
     return /^https:\/\/github\.com\/raisulsohan\/LazyLord\//.test(String(url || "")) ? String(url) : RELEASES_PAGE;
   }
 
+  /**
+   * What the panels know about updates, and when the user last heard:
+   *   checkedAt   when GitHub last answered
+   *   latest      { version, url, notes } of the newest release then
+   *   noticedAt   when the current notice first showed
+   *   noticed     the newest version that notice has shown
+   *   settled     Download or Later has been pressed since
+   * Kept in the user's app-data folder (LazyLord/update.json), which every
+   * app's panel shares, with a copy in this panel's storage in case the file
+   * cannot be written.
+   */
+  function updateStatePath() {
+    try {
+      var sep = nodePath ? nodePath.sep : "/";
+      return cs.getSystemPath(SystemPath.USER_DATA) + sep + "LazyLord" + sep + "update.json";
+    } catch (e) {
+      return "";
+    }
+  }
+
   function loadUpdateState() {
-    var st = prefsStore(), parsed = null;
-    if (st) {
-      try { parsed = JSON.parse(st.getItem(UPDATE_KEY) || "null"); } catch (e) {}
+    var parsed = null, path = updateStatePath();
+    if (path) {
+      try { parsed = JSON.parse(readText(path)); } catch (e) { parsed = null; }
+    }
+    if (!parsed || typeof parsed !== "object") {
+      var st = prefsStore();
+      if (st) {
+        try { parsed = JSON.parse(st.getItem(UPDATE_KEY) || "null"); } catch (e2) { parsed = null; }
+      }
     }
     return parsed && typeof parsed === "object" ? parsed : {};
   }
 
   function saveUpdateState(state) {
+    var text = JSON.stringify(state), path = updateStatePath();
+    if (path) {
+      var dir = path.slice(0, path.length - "update.json".length - 1);
+      try {
+        if (fs) fs.mkdirSync(dir, { recursive: true });
+        else if (window.cep && window.cep.fs) window.cep.fs.makedir(dir);
+      } catch (e) {}
+      try { writeText(path, text); } catch (e2) {}
+    }
     var st = prefsStore();
-    if (!st) return;
-    try { st.setItem(UPDATE_KEY, JSON.stringify(state)); } catch (e) {}
+    if (st) {
+      try { st.setItem(UPDATE_KEY, text); } catch (e3) {}
+    }
+  }
+
+  /** Whether the notice that showed at `noticedAt` is less than a fortnight old. */
+  function inQuietTime(state, now) {
+    if (typeof state.noticedAt !== "number") return false;
+    var since = now - state.noticedAt;
+    return since >= 0 && since < UPDATE_QUIET_MS;
   }
 
   function nodeHttps() {
@@ -2340,17 +2393,20 @@
 
   /**
    * Ask GitHub for the latest release. On its own schedule a check is skipped
-   * when switched off, or answered from the last one while that is recent;
-   * a check the user asked for always goes out and always reports.
+   * when switched off, answered from the last one while that is recent, and
+   * not made at all while the user has heard about an update and put it away
+   * within the fortnight (there is nothing to tell them until it ends). A
+   * check the user asked for always goes out and always reports.
    */
   function checkForUpdates(asked) {
     if (updateChecking) return;
     if (!asked && checkUpdatesEl && !checkUpdatesEl.checked) return;
     var state = loadUpdateState();
-    var age = new Date().getTime() - (typeof state.checkedAt === "number" ? state.checkedAt : 0);
-    if (!asked && age >= 0 && age < UPDATE_EVERY_MS) {
+    var now = new Date().getTime();
+    var age = now - (typeof state.checkedAt === "number" ? state.checkedAt : 0);
+    if (!asked && ((state.settled === true && inQuietTime(state, now)) || (age >= 0 && age < UPDATE_EVERY_MS))) {
       showUpdate(state.latest, false);
-      scheduleUpdateCheck(UPDATE_EVERY_MS - age);
+      scheduleUpdateCheck(age >= 0 && age < UPDATE_EVERY_MS ? UPDATE_EVERY_MS - age : UPDATE_EVERY_MS);
       return;
     }
     updateChecking = true;
@@ -2401,32 +2457,73 @@
     updateCard.hidden = false;
   }
 
-  /** What a check found: a newer release is shown, unless it was put away with Later. */
+  /** Start a fortnight's notice now, unless one is already running. */
+  function beginNotice(state, now) {
+    if (inQuietTime(state, now)) return false;
+    state.noticedAt = now;
+    state.settled = false;
+    return true;
+  }
+
+  /**
+   * What a check found. A release newer than this panel is shown when the
+   * user asked, or when no notice has shown in the last fortnight, or while
+   * the notice that did is still waiting for Download or Later. Otherwise it
+   * waits for the fortnight to end — marked in the header only if the user
+   * has already heard about an update.
+   */
   function showUpdate(latest, asked) {
     var newer = !!(latest && isNewerVersion(latest.version, PANEL_VERSION));
-    updateInfo = newer ? { version: String(latest.version), url: releaseUrl(latest.url), notes: latest.notes } : null;
-    renderVersion();
+    var state = loadUpdateState(), now = new Date().getTime();
     if (!newer) {
+      updateInfo = null;
+      renderVersion();
       if (updateCard) updateCard.hidden = true;
       if (asked) log("This is the latest LazyLord (" + PANEL_VERSION + ").", "ok");
+      // Updated while a notice was still open: it has done its job, and the
+      // fortnight stands.
+      if (latest && inQuietTime(state, now) && state.settled !== true) {
+        state.settled = true;
+        saveUpdateState(state);
+      }
       return;
     }
+    var quiet = inQuietTime(state, now);
+    var show = asked || !quiet || state.settled !== true;
+    // Told of an update this panel still lacks: the header may keep saying so.
+    var heard = quiet && isNewerVersion(state.noticed, PANEL_VERSION);
+    updateInfo = show || heard ? { version: String(latest.version), url: releaseUrl(latest.url), notes: latest.notes } : null;
+    renderVersion();
+    if (!show) {
+      if (updateCard) updateCard.hidden = true;
+      return;
+    }
+    beginNotice(state, now);
+    if (state.noticed !== updateInfo.version) state.noticed = updateInfo.version;
+    saveUpdateState(state);
     if (updateAnnounced !== updateInfo.version) {
       updateAnnounced = updateInfo.version;
       log("LazyLord " + updateInfo.version + " is available (this panel is " + PANEL_VERSION + ").");
     }
-    if (asked || loadUpdateState().dismissed !== updateInfo.version) showUpdateCard(updateInfo);
+    showUpdateCard(updateInfo);
+  }
+
+  /** Download or Later: the notice has been seen, so the fortnight's quiet begins. */
+  function settleNotice() {
+    var state = loadUpdateState(), now = new Date().getTime();
+    beginNotice(state, now);
+    state.settled = true;
+    state.noticed = updateInfo.version;
+    saveUpdateState(state);
   }
 
   if (updateDownload) updateDownload.addEventListener("click", function () {
     openInBrowser(updateInfo ? updateInfo.url : RELEASES_PAGE);
+    if (updateInfo) settleNotice();
   });
   if (updateLater) updateLater.addEventListener("click", function () {
     if (updateCard) updateCard.hidden = true;
-    if (!updateInfo) return;
-    var state = loadUpdateState();
-    state.dismissed = updateInfo.version;
-    saveUpdateState(state);
+    if (updateInfo) settleNotice();
   });
   if (verEl) verEl.addEventListener("click", function () {
     if (updateInfo) showUpdateCard(updateInfo);

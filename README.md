@@ -109,8 +109,9 @@ the LazyLord panel on your own machine. Nothing goes anywhere else.
 ### Updating
 
 The panel tells you when a new LazyLord is out: a card at the top says what
-changed and has a **Download** button, and the version number beside the logo
-is marked. Click that version number any time to check for yourself.
+changed and has a **Download** button. It does so at most once every two weeks,
+however often new versions come out, and always for the newest one. Click the
+version number beside the logo any time to check for yourself.
 
 Download the new zip, close the Adobe apps and run `1 - Install LazyLord` again.
 It replaces the old panel. If you added the Figma plugin from the download, run

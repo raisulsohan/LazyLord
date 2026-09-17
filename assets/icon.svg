@@ -1,18 +1,11 @@
 <!--
-  Figma Community plugin icon — 128 x 128.
-  Export as PNG at 1x from Figma (File > Place image, then Export), or from any
-  vector editor. Figma shows it wherever the plugin is listed.
+  LazyLord app icon — 128 x 128, for Figma Community and anywhere a square icon
+  is wanted. The symbol: a geometric L broken at the corner and bridged again.
+  Rendered to PNG by `node tools/render-art.mjs`.
 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7b5cff"/>
-      <stop offset="1" stop-color="#5a3be0"/>
-    </linearGradient>
-  </defs>
-  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
-  <!-- The panel's own mark: a diamond, sent and received. -->
-  <path d="M64 24 L104 64 L64 104 L24 64 Z" fill="#fff" fill-opacity=".14"/>
-  <path d="M64 38 L90 64 L64 90 L38 64 Z" fill="#fff"/>
-  <circle cx="64" cy="64" r="9" fill="#5a3be0"/>
+  <defs><linearGradient id="mark" x1="3" y1="3" x2="18" y2="21" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#00C2FF"/><stop offset="1" stop-color="#6C63FF"/></linearGradient></defs>
+  <rect width="128" height="128" rx="28" fill="#0E0E14"/>
+  <rect x=".5" y=".5" width="127" height="127" rx="27.5" stroke="#FFFFFF" stroke-opacity=".08"/>
+  <g transform="translate(20.25 14) scale(4.167)"><path d="M3.6 3 H5.4 Q6 3 6 3.6 V18 C6.8 19.25 7.6 19.25 8.4 18 H17.4 Q18 18 18 18.6 V20.4 Q18 21 17.4 21 H8.4 C7.6 19.75 6.8 19.75 6 21 H3.6 Q3 21 3 20.4 V3.6 Q3 3 3.6 3 Z" fill="url(#mark)"/></g>
 </svg>

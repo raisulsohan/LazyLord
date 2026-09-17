@@ -68,6 +68,21 @@
     </header>
 
     <main class="a-body">
+      <!--
+        A newer LazyLord, found on GitHub. It stays until it is installed or put
+        away with Later; the version in the header stays marked either way.
+      -->
+      <section class="a-block a-incoming" id="update-card" hidden>
+        <label class="a-label">Update</label>
+        <p class="a-update-title" id="update-title"></p>
+        <ul class="a-notes" id="update-notes" hidden></ul>
+        <p class="a-peers">Download it, close Photoshop, Illustrator and After Effects, and run <b>1 - Install LazyLord</b> again. If you use Figma, run <b>2 - Add the Figma plugin</b> too.</p>
+        <div class="a-row">
+          <button id="update-download" class="a-send">Download</button>
+          <button id="update-later" class="a-ghost">Later</button>
+        </div>
+      </section>
+
       <section class="a-block">
         <div class="a-host">
           <span class="a-host-name" id="host">Detecting host…</span>
@@ -188,6 +203,9 @@
             <input type="checkbox" id="auto" checked /> Auto-receive
           </label>
           <button id="reconnect" class="a-ghost">Reconnect</button>
+        </div>
+        <div class="a-row" title="About twice a day, ask GitHub whether a newer LazyLord is out, and say so here. Nothing about you or your work is sent.">
+          <label class="a-check"><input type="checkbox" id="check-updates" checked /> Check for updates</label>
         </div>
         <div class="a-row" id="image-folder-row" title="Where After Effects keeps the images a transfer brings in. By default they go in a 'LazyLord Assets' folder beside the saved project." hidden>
           <span class="a-peers a-path" id="image-folder">Images: beside the project</span>

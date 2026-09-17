@@ -22,6 +22,10 @@
  * left out of ir.json with a "skipped" diagnostic that also reaches the sender,
  * and the written ir.json is walked with the real host helpers from
  * lazylord.jsx (applyOrigin / eachLayer / flattenLayers), as every builder does.
+ * Updates: the latest release is asked of GitHub (a mocked XMLHttpRequest) a
+ * few seconds after opening, a newer one shows its card and marks the header
+ * version, Later and the "Check for updates" switch are remembered, a recent
+ * answer is reused, and failures stay quiet unless the user asked.
  */
 var fso = new ActiveXObject("Scripting.FileSystemObject");
 
@@ -175,7 +179,8 @@ var IDS = ["conn", "conn-text", "host", "host-sub", "log", "auto", "push-card",
            "push-preset-delete", "history", "history-list", "history-count", "history-clear",
            "ae-tools", "ae-precompose", "ae-decompose", "ae-import-psd", "push-only-changed", "push-only-changed-row",
            "push-conflict", "push-conflict-row", "push-live", "ver", "log-card", "log-last", "author",
-           "image-folder-row", "image-folder", "image-folder-choose", "image-folder-reset", "push-sequence", "push-sequence-row"];
+           "image-folder-row", "image-folder", "image-folder-choose", "image-folder-reset", "push-sequence", "push-sequence-row",
+           "update-card", "update-title", "update-notes", "update-download", "update-later", "check-updates"];
 var LIVE_POLL = 1500;
 var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "push-preset": "select", "push-preset-name": "input", "push-preset-save": "button",
@@ -184,7 +189,8 @@ var TAGS = { "auto": "input", "push": "button", "reconnect": "button",
              "diag-list": "ul", "push-options": "details", "log-card": "details",
              "push-layout": "select", "push-hierarchy": "select",
              "push-existing": "select", "push-keyframes": "select", "push-conflict": "select",
-             "push-destination": "select", "image-folder-choose": "button", "image-folder-reset": "button", "push-sequence": "input" };
+             "push-destination": "select", "image-folder-choose": "button", "image-folder-reset": "button", "push-sequence": "input",
+             "update-notes": "ul", "update-download": "button", "update-later": "button", "check-updates": "input" };
 
 /** Fill a mock chip row the way index.html does, with one chip active. */
 function addChips(row, key, values, active) {
@@ -238,6 +244,19 @@ WebSocket.prototype.close = function () { this.readyState = 3; };
 function setTimeout(fn, ms) { timers.push({ fn: fn, ms: ms }); return timers.length; }
 function clearTimeout(id) {}
 
+/** The panel's requests to GitHub, answered by the test with respond(). */
+var requests = [], opened = [];
+function XMLHttpRequest() { this.headers = {}; this.readyState = 0; requests.push(this); }
+XMLHttpRequest.prototype.open = function (method, url, async) { this.method = method; this.url = url; this.async = async; };
+XMLHttpRequest.prototype.setRequestHeader = function (k, v) { this.headers[k] = v; };
+XMLHttpRequest.prototype.send = function () { this.sent = true; };
+XMLHttpRequest.prototype.respond = function (status, body) {
+    this.status = status;
+    this.responseText = typeof body === "string" ? body : JSON.stringify(body);
+    this.readyState = 4;
+    this.onreadystatechange();
+};
+
 function MemoryStorage() { this.data = {}; }
 MemoryStorage.prototype.getItem = function (k) {
     return Object.prototype.hasOwnProperty.call(this.data, k) ? this.data[k] : null;
@@ -269,8 +288,11 @@ function boot(appName, storage) {
     addOptions(els["push-destination"], DESTINATION_VALUES);
     addChips(els["push-scales"], "scale", SCALE_VALUES, "2"); // index.html default
     els["push-keyframes-row"].hidden = true;
+    els["update-card"].hidden = true; // index.html default
+    els["update-notes"].hidden = true;
+    els["check-updates"].checked = true;
 
-    sockets = []; evalCalls = []; files = {}; timers = [];
+    sockets = []; evalCalls = []; files = {}; timers = []; requests = []; opened = [];
     currentApp = appName;
 
     document = {
@@ -288,7 +310,8 @@ function boot(appName, storage) {
                     return files[path] ? { err: 0, data: files[path].data } : { err: 3, data: "" };
                 }
             },
-            encoding: { Base64: "Base64", UTF8: "UTF-8" }
+            encoding: { Base64: "Base64", UTF8: "UTF-8" },
+            util: { openURLInDefaultBrowser: function (url) { opened.push(url); } }
         }
     };
 
@@ -2083,6 +2106,171 @@ run("frames", function () {
 
     boot("AEFT", new MemoryStorage());
     ok("frames: not offered elsewhere", els["push-sequence-row"].hidden === true);
+});
+
+// Updates: the latest release on GitHub, announced in the panel.
+var UPDATE_DELAY = 6000;
+var CURRENT_VERSION = /var PANEL_VERSION = "([^"]+)"/.exec(MAIN_SRC)[1];
+/** This panel's version with one part (0 major, 1 minor, 2 patch) moved on. */
+function bumped(part) {
+    var v = CURRENT_VERSION.split(".");
+    for (var i = 0; i < 3; i++) v[i] = Number(v[i] || 0);
+    v[part] += 1;
+    for (var j = part + 1; j < 3; j++) v[j] = 0;
+    return v.join(".");
+}
+/** A release as GitHub's API describes it, notes written the way releases are. */
+function release(tag, extra) {
+    var r = {
+        tag_name: tag,
+        html_url: "https://github.com/raisulsohan/LazyLord/releases/tag/" + tag,
+        body: "**Download `LazyLord.zip` below**, unzip it, and run `1 - Install LazyLord.bat`.\r\n\r\n## A refined look\r\n\r\n" +
+              "- **The logo spells the name.** The L symbol is now the first letter of LazyLord.\r\n" +
+              "- Plain point with [a link](https://example.com) and `code`\r\n\r\nMade by [Raisul Sohan](http://raisulsohan.com/)."
+    };
+    for (var k in extra) r[k] = extra[k];
+    return r;
+}
+function noteTexts() { return texts(els["update-notes"].children); }
+function updateState(st) { return JSON.parse(st.getItem("lazylord.update")); }
+
+run("updates", function () {
+    var st = new MemoryStorage();
+    var newer = bumped(1);
+    boot("ILST", st);
+    ok("updates: nothing is asked while the panel starts", requests.length === 0);
+    ok("updates: the version offers a check", els["ver"].textContent === "v" + CURRENT_VERSION &&
+       els["ver"].title === "Check for updates", els["ver"].textContent + " / " + els["ver"].title);
+    ok("updates: the first check is scheduled", fireTimer(UPDATE_DELAY));
+    var req = requests[0];
+    ok("updates: GitHub is asked for the latest release", requests.length === 1 && req.method === "GET" && req.async === true &&
+       req.url === "https://api.github.com/repos/raisulsohan/LazyLord/releases/latest", req && req.url);
+    req.respond(200, release("v" + newer));
+    ok("updates: a newer release shows the card", els["update-card"].hidden === false &&
+       els["update-title"].textContent === "LazyLord " + newer + " is out", els["update-title"].textContent);
+    ok("updates: with its points in a few words", els["update-notes"].hidden === false &&
+       noteTexts() === "The logo spells the name.|Plain point with a link and code", noteTexts());
+    ok("updates: the header version is marked", els["ver"].textContent === "v" + CURRENT_VERSION + DOT + "update" &&
+       has(els["ver"].className, "has-update") && els["ver"].title === "LazyLord " + newer + " is available", els["ver"].textContent);
+    ok("updates: logged once, quietly", linesWith("is available").length === 1 && lastLog().kind === "" && els["log-card"].open !== true);
+    ok("updates: the answer is kept", updateState(st).latest.version === newer && typeof updateState(st).checkedAt === "number");
+    els["update-download"].fire("click");
+    ok("updates: Download opens the release page", opened.length === 1 && opened[0] === release("v" + newer).html_url, opened.join("|"));
+    ok("updates: the card stays after Download", els["update-card"].hidden === false);
+    els["update-later"].fire("click");
+    ok("updates: Later puts the card away", els["update-card"].hidden === true && updateState(st).dismissed === newer);
+    ok("updates: the header still says so", has(els["ver"].className, "has-update"));
+
+    // Another app's panel soon after: no second request, and the card stays away.
+    boot("AEFT", st);
+    fireTimer(UPDATE_DELAY);
+    ok("updates: a recent answer is reused", requests.length === 0);
+    ok("updates: a version put away stays away", els["update-card"].hidden === true && has(els["ver"].className, "has-update"));
+    els["ver"].fire("click");
+    ok("updates: the marked version brings the card back", els["update-card"].hidden === false && requests.length === 0);
+
+    // Half a day on, a release after the one put away.
+    var state = updateState(st);
+    state.checkedAt = 0;
+    st.setItem("lazylord.update", JSON.stringify(state));
+    boot("ILST", st);
+    fireTimer(UPDATE_DELAY);
+    ok("updates: an old answer is asked again", requests.length === 1);
+    requests[0].respond(200, release("v" + bumped(0)));
+    ok("updates: a later version than the one put away shows", els["update-card"].hidden === false &&
+       els["update-title"].textContent === "LazyLord " + bumped(0) + " is out", els["update-title"].textContent);
+});
+
+run("updates: nothing new, and failures", function () {
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, release("v" + CURRENT_VERSION));
+    ok("updates: the same version shows nothing", els["update-card"].hidden === true &&
+       !has(els["ver"].className, "has-update") && linesWith("available").length === 0);
+    els["ver"].fire("click");
+    ok("updates: clicking the version checks at once", requests.length === 2 && linesWith("Checking for a newer LazyLord").length === 1);
+    requests[1].respond(200, release("v" + CURRENT_VERSION));
+    ok("updates: and says this is the latest", lastLog().text.indexOf("This is the latest LazyLord (" + CURRENT_VERSION + ").") > 0 &&
+       lastLog().kind === "ok", lastLog().text);
+
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, release("v0.9.0"));
+    ok("updates: an older release shows nothing", els["update-card"].hidden === true && !has(els["ver"].className, "has-update"));
+
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    var before = logLines().length;
+    requests[0].respond(500, "oops");
+    ok("updates: a scheduled check that fails stays quiet", logLines().length === before && els["update-card"].hidden === true);
+    els["ver"].fire("click");
+    requests[1].onerror();
+    ok("updates: a check the user asked for says why it failed",
+       has(lastLog().text, "Could not check for updates: no connection.") && lastLog().kind === "warn", lastLog().text);
+
+    boot("PHXS", new MemoryStorage());
+    els["ver"].fire("click");
+    requests[0].onerror();
+    requests[0].respond(0, "");
+    ok("updates: a request that cannot connect is reported once",
+       linesWith("Could not check for updates: no connection.").length === 1, texts(els["log"].children));
+    els["ver"].fire("click");
+    requests[1].respond(404, "Not Found");
+    ok("updates: GitHub's refusal is named", has(lastLog().text, "Could not check for updates: GitHub answered 404."), lastLog().text);
+
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, "<html>not json</html>");
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, { name: "no tag" });
+    ok("updates: an answer without a version shows nothing", els["update-card"].hidden === true && linesWith("available").length === 0);
+
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    var bullets = "";
+    for (var i = 1; i <= 6; i++) bullets += "* Point " + i + (i === 2 ? " " + new Array(40).join("long ") : "") + "\n";
+    requests[0].respond(200, release("v" + bumped(2), { html_url: "https://example.com/not-github", body: bullets }));
+    var notes = els["update-notes"].children;
+    ok("updates: at most four points, long ones cut short", notes.length === 4 && notes[0].textContent === "Point 1" &&
+       notes[1].textContent.length <= 90 && notes[1].textContent.slice(-1) === ELLIPSIS, noteTexts());
+    els["update-download"].fire("click");
+    ok("updates: a link off GitHub is not followed", opened.length === 1 && opened[0] === "https://github.com/raisulsohan/LazyLord/releases/latest", opened.join("|"));
+
+    boot("PHXS", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, release("v" + bumped(2), { body: "Just words, no points." }));
+    ok("updates: notes without points leave the list out", els["update-card"].hidden === false && els["update-notes"].hidden === true);
+});
+
+run("updates: switched off", function () {
+    var st = new MemoryStorage();
+    boot("ILST", st);
+    els["check-updates"].checked = false;
+    els["check-updates"].fire("change");
+    ok("updates: the choice is remembered", JSON.parse(st.getItem("lazylord.prefs.illustrator")).checkUpdates === false);
+    fireTimer(UPDATE_DELAY);
+    ok("updates: off means no request", requests.length === 0);
+
+    boot("ILST", st);
+    ok("updates: restored off, nothing scheduled", els["check-updates"].checked === false && !fireTimer(UPDATE_DELAY) && requests.length === 0);
+    els["ver"].fire("click");
+    ok("updates: a check the user asks for still goes", requests.length === 1);
+    requests[0].respond(200, release("v" + bumped(1)));
+    ok("updates: and shows what it found", els["update-card"].hidden === false);
+    els["check-updates"].checked = true;
+    els["check-updates"].fire("change");
+    ok("updates: switched on, a recent answer is used", requests.length === 1 && els["update-card"].hidden === false);
+    els["check-updates"].checked = false;
+    els["check-updates"].fire("change");
+    ok("updates: switched off, the card and the mark go", els["update-card"].hidden === true && !has(els["ver"].className, "has-update"));
+
+    boot("AEFT", new MemoryStorage());
+    fireTimer(UPDATE_DELAY);
+    els["check-updates"].checked = false;
+    els["check-updates"].fire("change");
+    requests[0].respond(200, release("v" + bumped(1)));
+    ok("updates: switched off while GitHub answers, nothing shows", els["update-card"].hidden === true && !has(els["ver"].className, "has-update"));
 });
 
 WScript.Echo(passed + " passed, " + failed + " failed.");

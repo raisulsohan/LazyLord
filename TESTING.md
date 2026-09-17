@@ -317,6 +317,12 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] একই জিনিস Photoshop-এ। ⚠ লেয়ারটা smart object হয়ে **Gaussian Blur** smart filter পায়, আর Layer Style-এ Drop Shadow ও Inner Shadow ঠিক কোণ/দূরত্ব/মাপে আসে?
 - [ ] রঙিন (লাল) shadow Illustrator-এ কালো হয়ে আসে আর সেটা রিপোর্ট হয়?
 
+**Figma-তে আসা ট্রান্সফার (Figma রিভিউয়ের জন্য)**
+- [ ] Illustrator থেকে Figma-তে পাঠান। ক্যানভাসে কিছু না বসে প্লাগিনে **Incoming** কার্ড আসে (কোন অ্যাপ, কত লেয়ার)?
+- [ ] **Place on canvas** চাপলে তবেই বসে, আর Illustrator-এর প্যানেলে ফল দেখায়?
+- [ ] আবার পাঠিয়ে **Decline** চাপুন: কিছু বসে না, Illustrator-এ "Declined in Figma" দেখায়?
+- [ ] Adobe প্যানেলে টার্গেট Figma রেখে Live টিক দিন: Live চালু না হয়ে কারণ দেখায়?
+
 **After Effects: সেভ না করা প্রজেক্ট**
 - [ ] নতুন, **সেভ না করা** AE প্রজেক্টে Photoshop থেকে একটা pixel layer (ছবি) পাঠান। কিছুই যোগ না হয়ে বার্তা আসে **"Save the After Effects project first…"**?
 - [ ] প্রজেক্ট সেভ করে আবার পাঠান — ছবি প্রজেক্টের পাশে **LazyLord Assets** ফোল্ডারে যায়, আর AE-তে সেখান থেকেই link হয়?

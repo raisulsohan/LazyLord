@@ -153,6 +153,11 @@ so it holds for every later send; untick it to send those layers as layers again
 
 Every panel has a **Send selection** card. It lists every other app that is connected, and the button says where the transfer is going — **Send to After Effects**, **Send to Figma**, and so on.
 
+**Sending to Figma asks first.** Nothing another app sends goes onto a Figma canvas by itself: the
+LazyLord plugin shows it under **Incoming** — which app, how many layers, whether it adds or
+updates — and it is placed only when you press **Place on canvas** (or **Update on canvas**).
+**Decline** tells the sending app nothing was placed. Keep the plugin open in Figma while you send.
+
 > Earlier versions labelled these **Push** and **Pull**, following Overlord. Those words name a
 > direction through a workflow rather than what the button does — After Effects' button said
 > "Pull" while sending artwork *out* — and they stop meaning anything once every app talks to
@@ -235,7 +240,7 @@ Notes worth knowing:
 
 - **Smart diff.** Every leaf sent is fingerprinted from its IR. After a successful send the fingerprints are kept per destination app and source document (the Adobe panels in their local storage, the Figma plugin while it is open), and an update leaves out every leaf whose fingerprint has not changed. The paths of images LazyLord generated are not part of it, since they change on every read. An update never deletes, so after deleting a layer in the destination, untick **Only what changed** once to send everything again.
 - **Conflicts.** When a build or an update finishes, After Effects and Illustrator add a fingerprint of what LazyLord wrote to the tag — `[[LazyLord figma|0:1|1:42~k3f9.2a]]` — and the next update compares it with the layer as it is now. After Effects reads the transform, outline, paint, text and footage (an animated property by its keys, a still one by its value before expressions, so neither the playhead nor an expression counts as an edit); Illustrator the geometry, points, paint, text and linked file of the items made from one layer. **On conflict** decides what happens to a layer that differs. Tags written before fingerprints never conflict and gain one on their next update.
-- **Live needs one destination**: any single app — After Effects, Illustrator, Photoshop or Figma — but not "All apps", whose apps can each hold something different.
+- **Live needs one destination**: After Effects, Illustrator or Photoshop — not "All apps", whose apps can each hold something different, and not Figma, which places each transfer only when you press Place. Live *from* Figma to an Adobe app works as before.
 - **Live.** Tick **Live — send changes as you work** under the Send button. In Figma, the objects selected at that moment are watched (the page's `nodechange` event, debounced by 600 ms) and exported again when anything inside them changes. In the Adobe panels, a cheap stamp of the selection (`LazyLord.liveStamp`: AE's selected layers and their fingerprints, Illustrator's selected items, Photoshop's history state and selected layers) is polled every 1.5 s. Each change goes as an update of only what changed, into the open document; a change made while a send is under way waits for it. Live sends are logged but kept out of the history. It stops by itself when what it watches is gone, or the bridge or destination disconnects.
 
 After every transfer the panel prints a one-line summary (layers, images — originals vs. generated — and fallbacks by kind), and lists anything that needed a fallback, naming the object and the reason, sorted skipped → rasterized → approximated.
@@ -401,7 +406,7 @@ Worth knowing:
 - **Figma cannot read a file**, so anything sent there travels as bytes rather than as a path — the panel reads the file and embeds it. A transfer that reaches Figma with only a path (from a host that could not read it) reports the image rather than dropping it silently.
 - **Photoshop can only read its selection through ActionManager.** If that call fails, only the active layer is sent, reported. Its shape layers also need both a vector mask and a readable fill colour; without either, the layer is rasterised instead.
 - **Not yet implemented:** sending Illustrator's own live effects out of Illustrator.
-- **Updating into Figma** searches only the current page, and does not roll a failed build back.
+- **Updating into Figma** searches only the current page, and does not roll a failed build back. Every transfer into Figma waits for **Place on canvas** in the plugin, so Live cannot send to Figma.
 - **Live in the Adobe panels polls.** CEP gives a panel no change events, so the selection is stamped every 1.5 s. Illustrator reads at most 500 selected items and a few thousand path points per poll (bounds past that); After Effects does not treat a playhead move as a change, so values that only change by scrubbing are not re-sent.
 - **Version 1.0 is new.** Sending, receiving, updating in place, conflict detection and Live have all been run by hand in the real apps — including the case everything rests on, where the file is saved, closed, reopened, and an update still finds the layers it made rather than adding a second copy. Over two thousand automated checks run against mocked hosts on top of that. The features new in 1.1 — real gradients, components as precomps, Photoshop masks, layer styles, adjustment layers and frame sequences, kerning, the image folder and browser Figma — pass the automated checks but have not yet been run by hand in the real apps. Adobe scripting also differs between app versions, so something can behave differently on yours: the panel's **Log** usually says why, and [telling me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) is how it gets fixed. What has been reasoned out rather than exercised is listed in [docs/development.md](docs/development.md).
 

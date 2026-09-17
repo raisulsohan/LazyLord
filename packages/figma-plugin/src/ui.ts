@@ -82,6 +82,21 @@ let history: HistoryEntry[] = [];
 const sentNames = new Map<string, string>();
 /** incoming transfer id -> who sent what, for the line written once it is built. */
 const incoming = new Map<string, { peer: string; name: string; live?: boolean }>();
+
+/**
+ * Transfers from other apps, waiting for the user. Another app can offer
+ * artwork but never place it: each one reaches the canvas only when Place is
+ * pressed here, and Decline answers the sender without touching the file.
+ */
+type Staged = { id: string; document: Document; peer: string; name: string; layers: number; update: boolean; live: boolean };
+const staged: Staged[] = [];
+/** The staged transfer being placed right now, if any. */
+let placing: string | null = null;
+const incomingBlock = $("#incoming-block");
+const incomingText = $("#incoming-text");
+const incomingCount = $("#incoming-count");
+const placeBtn = $<HTMLButtonElement>("#incoming-place");
+const declineBtn = $<HTMLButtonElement>("#incoming-decline");
 const presetSel = $<HTMLSelectElement>("#preset");
 const presetName = $<HTMLInputElement>("#preset-name");
 const presetSave = $<HTMLButtonElement>("#preset-save");
@@ -218,22 +233,86 @@ function onMessage(msg: Message) {
       break;
     }
     case "transfer": {
-      // Another app is sending us artwork: the main thread rebuilds it.
-      addDiagnostics(roleLabel((msg.document && msg.document.source) as Role), msg.document && msg.document.diagnostics);
-      const n = countLeaves(msg.document && msg.document.layers);
-      setStatus(`Receiving ${n} layer${n === 1 ? "" : "s"} from ${roleLabel((msg.document && msg.document.source) as Role)}…`, "");
-      incoming.set(msg.id, {
-        peer: roleLabel((msg.document && msg.document.source) as Role),
-        name: (msg.document && msg.document.name) || "",
-        live: !!(msg.document && msg.document.options && msg.document.options.live),
-      });
-      parent.postMessage({ pluginMessage: { type: "receive", id: msg.id, document: msg.document } }, "*");
+      // Another app offers artwork: it waits for the user to place or decline it.
+      stageIncoming(msg.id, msg.document);
       break;
     }
     default:
       break;
   }
 }
+
+// --- Incoming transfers: placed only when the user says so ------------------
+
+function stageIncoming(id: string, doc: Document | undefined) {
+  if (!id || !doc || staged.some((s) => s.id === id)) return;
+  const options = doc.options || ({} as TransferOptions);
+  const s: Staged = {
+    id,
+    document: doc,
+    peer: roleLabel(doc.source as Role),
+    name: doc.name || "",
+    layers: countLeaves(doc.layers),
+    update: options.existing === "update" || !!options.live,
+    live: !!options.live,
+  };
+  staged.push(s);
+  renderIncoming();
+  setStatus(`${s.peer} sent ${s.layers} layer${s.layers === 1 ? "" : "s"}: place or decline ${s.layers === 1 ? "it" : "them"} above.`, "");
+}
+
+function renderIncoming() {
+  if (!incomingBlock) return;
+  const s = staged[0];
+  incomingBlock.hidden = !s;
+  if (!s) return;
+  const what = `${s.layers} layer${s.layers === 1 ? "" : "s"}`;
+  const named = s.name ? ` from “${s.name}”` : "";
+  incomingText.textContent = s.update
+    ? `${s.peer} wants to update ${what}${named} on this page, replacing the ones it placed before.`
+    : `${s.peer} wants to place ${what}${named} on this page.`;
+  incomingCount.textContent = staged.length > 1 ? `1 of ${staged.length}` : "";
+  placeBtn.disabled = placing !== null;
+  declineBtn.disabled = placing !== null;
+  placeBtn.textContent = placing !== null ? "Placing…" : s.update ? "Update on canvas" : "Place on canvas";
+}
+
+/** The user pressed Place: only now does the main thread build it. */
+function placeIncoming() {
+  const s = staged[0];
+  if (!s || placing !== null) return;
+  placing = s.id;
+  addDiagnostics(s.peer, s.document.diagnostics);
+  incoming.set(s.id, { peer: s.peer, name: s.name, live: s.live });
+  setStatus(`Placing ${s.layers} layer${s.layers === 1 ? "" : "s"} from ${s.peer}…`, "");
+  renderIncoming();
+  parent.postMessage({ pluginMessage: { type: "receive", id: s.id, document: s.document, confirmed: true } }, "*");
+}
+
+/** The user pressed Decline: the sender hears so, and nothing is built. */
+function declineIncoming() {
+  const s = staged[0];
+  if (!s || placing !== null) return;
+  staged.shift();
+  send({
+    type: "ack",
+    id: s.id,
+    from: "figma",
+    ok: false,
+    message: "Declined in Figma, so nothing was placed.",
+    layersCreated: 0,
+    layersUpdated: 0,
+    diagnostics: [],
+  } as Message);
+  if (!s.live) {
+    recordHistory({ dir: "in", peer: s.peer, name: s.name, ok: false, layers: 0, updated: 0, fallbacks: 0, message: "Declined" });
+  }
+  setStatus(`Declined ${s.layers} layer${s.layers === 1 ? "" : "s"} from ${s.peer}.`, "");
+  renderIncoming();
+}
+
+if (placeBtn) placeBtn.addEventListener("click", placeIncoming);
+if (declineBtn) declineBtn.addEventListener("click", declineIncoming);
 
 // --- UI rendering ---------------------------------------------------------
 
@@ -731,6 +810,11 @@ window.onmessage = (event: MessageEvent) => {
     addDiagnostics("Figma", r.diagnostics);
     const from = incoming.get(msg.id) || { peer: "Another app", name: "", live: false };
     incoming.delete(msg.id);
+    // The placed transfer leaves the queue; the next one, if any, is shown.
+    if (placing === msg.id) placing = null;
+    const at = staged.findIndex((s) => s.id === msg.id);
+    if (at >= 0) staged.splice(at, 1);
+    renderIncoming();
     // A live update is one of many: it stays out of the history, as on the sending side.
     if (!from.live) {
       recordHistory({

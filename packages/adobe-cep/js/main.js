@@ -1371,13 +1371,25 @@
 
   /** Only these rebuild what they built before; anywhere else Live would pile up copies. */
   function liveCanReach(target) {
-    return target === "aftereffects" || target === "illustrator" || target === "figma" || target === "photoshop";
+    return target === "aftereffects" || target === "illustrator" || target === "photoshop";
   }
+
+  /**
+   * Figma places what it receives only when someone presses Place in the
+   * plugin, one transfer at a time, so a stream of Live updates has nowhere
+   * to go there.
+   */
+  var LIVE_FIGMA = "Figma asks you to place every transfer yourself, so Live cannot send to it; " +
+    "use Send, then Place in the LazyLord plugin in Figma";
 
   function startLive() {
     var target = currentTarget();
     if (!target) {
       stopLive("no destination app is connected");
+      return;
+    }
+    if (target === "figma") {
+      stopLive(LIVE_FIGMA);
       return;
     }
     if (!liveCanReach(target)) {
@@ -1414,6 +1426,7 @@
     setTimeout(function () { livePoll(gen); }, LIVE_POLL_MS);
     var target = currentTarget();
     if (!target) { stopLive("the destination app disconnected"); return; }
+    if (target === "figma") { stopLive(LIVE_FIGMA); return; }
     if (!liveCanReach(target)) { stopLive(roleLabel(target) + " can only add layers, not update them"); return; }
     if (pushBusy || livePolling || !jsxReady) return;
     livePolling = true;
@@ -1549,6 +1562,8 @@
       var note = optionsNote(options);
       log((live ? "Live: sent " : "Sent ") + layerPhrase(doc.layers) + " to " + roleLabel(target) +
         (note && !live ? " · " + note : "") + "…");
+      // Figma places nothing until someone says so there.
+      if (target === "figma") log("Waiting for Place to be pressed in the LazyLord plugin in Figma.");
 
       setTimeout(function () {
         if (pendingPush !== id) return;
@@ -1558,8 +1573,12 @@
         lateAcks[id] = { info: pendingPushInfo, at: new Date().getTime() };
         pendingPush = null;
         pendingPushInfo = null;
-        log("No response from " + roleLabel(target) + " after " + (PUSH_TIMEOUT_MS / 1000) +
-          " s. Its result will still be shown here if it arrives.", "warn");
+        if (target === "figma") {
+          log("Figma has not placed it yet: press Place in the LazyLord plugin there. The result will still be shown here.", "warn");
+        } else {
+          log("No response from " + roleLabel(target) + " after " + (PUSH_TIMEOUT_MS / 1000) +
+            " s. Its result will still be shown here if it arrives.", "warn");
+        }
         setPushBusy(false);
         if (live) liveFailed();
       }, PUSH_TIMEOUT_MS);

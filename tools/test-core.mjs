@@ -1966,6 +1966,53 @@ const groupedDoc = () => ({
   ],
 });
 
+// Figma review: nothing another app sends reaches the canvas without a click here.
+await block("ui, incoming needs confirmation", async () => {
+  const ui = await loadUi();
+  const ws = ui.connect();
+  const doc = (name, extra) => Object.assign({ version: "1.0", source: "aftereffects", name, bounds: { x: 0, y: 0, width: 10, height: 10 },
+    layers: [{ id: "a", name: "A", type: "vector", frame: { x: 0, y: 0, width: 5, height: 5 }, subpaths: [], fills: [], strokes: [] }] }, extra || {});
+  const block = ui.$("#incoming-block");
+  ok("incoming: nothing waiting, nothing shown", block.hidden === true);
+
+  ui.toPlugin.length = 0;
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "in-1", document: doc("Comp 1") }) });
+  ok("incoming: a transfer is held, not built", !ui.toPlugin.some((m) => m.type === "receive"), JSON.stringify(ui.toPlugin));
+  ok("incoming: and shown, saying where it is from", block.hidden === false &&
+    /After Effects wants to place 1 layer from “Comp 1”/.test(ui.$("#incoming-text").textContent), ui.$("#incoming-text").textContent);
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "in-2", document: doc("Comp 2", { options: { existing: "update" } }) }) });
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "in-2", document: doc("Comp 2", { options: { existing: "update" } }) }) });
+  ok("incoming: later ones queue, a repeat is not queued twice", ui.$("#incoming-count").textContent === "1 of 2", ui.$("#incoming-count").textContent);
+
+  const sentBefore = ws.sent.length;
+  ui.$("#incoming-place").fire("click");
+  const receive = ui.toPlugin.find((m) => m.type === "receive");
+  ok("incoming: Place builds it, marked as confirmed", receive && receive.id === "in-1" && receive.confirmed === true, JSON.stringify(receive));
+  ok("incoming: no second click while it is placed", ui.$("#incoming-place").disabled === true && ui.$("#incoming-decline").disabled === true);
+  ui.fromPlugin({ type: "built", id: "in-1", result: { ok: true, layersCreated: 1, layersUpdated: 0, message: "", diagnostics: [] } });
+  const ack1 = ws.sent.slice(sentBefore).find((m) => m.type === "ack");
+  ok("incoming: the sender hears the result", ack1 && ack1.id === "in-1" && ack1.ok === true);
+  ok("incoming: then the next one is shown, as an update", block.hidden === false && ui.$("#incoming-count").textContent === "" &&
+    /wants to update 1 layer/.test(ui.$("#incoming-text").textContent) && ui.$("#incoming-place").textContent === "Update on canvas",
+    ui.$("#incoming-text").textContent);
+
+  ui.toPlugin.length = 0;
+  ui.$("#incoming-decline").fire("click");
+  const ack2 = ws.sent.filter((m) => m.type === "ack").pop();
+  ok("incoming: Decline answers the sender and builds nothing", ack2 && ack2.id === "in-2" && ack2.ok === false &&
+    /Declined in Figma/.test(ack2.message) && !ui.toPlugin.some((m) => m.type === "receive"), JSON.stringify(ack2));
+  ok("incoming: and the card goes", block.hidden === true);
+});
+
+// The main thread builds a transfer only when the UI says it was confirmed.
+{
+  posted.length = 0;
+  resetPage();
+  await figma.ui.onmessage({ type: "receive", id: "x-1", document: { version: "1.0", source: "illustrator", name: "X", bounds: { x: 0, y: 0, width: 5, height: 5 },
+    layers: [{ id: "v", name: "V", type: "vector", frame: { x: 0, y: 0, width: 5, height: 5 }, subpaths: [], fills: [], strokes: [] }] } });
+  ok("receive: unconfirmed, nothing is built", !posted.some((m) => m.type === "built") && page.children.length === 0);
+}
+
 // Live sync, the plugin half: watch what was selected, export again on a change.
 await block("live (plugin)", async () => {
   const timers = [];

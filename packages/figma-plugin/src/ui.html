@@ -9,6 +9,19 @@
   </header>
 
   <main class="a-body">
+    <!--
+      Artwork another app sends waits here. Nothing reaches the canvas until
+      it is placed with the button below; declining tells the sender.
+    -->
+    <section id="incoming-block" class="a-block a-incoming" hidden>
+      <label class="a-label">Incoming <span id="incoming-count" class="a-count"></span></label>
+      <p id="incoming-text" class="a-peers"></p>
+      <div class="a-row">
+        <button id="incoming-place" class="a-send">Place on canvas</button>
+        <button id="incoming-decline" class="a-ghost">Decline</button>
+      </div>
+    </section>
+
     <section class="a-block">
       <label class="a-label">Send to</label>
       <div id="targets" class="a-targets">

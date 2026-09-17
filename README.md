@@ -11,6 +11,8 @@ Everything you would buy Overlord for, with nothing to pay, today or later.
 Select something. Press **Send**. It arrives in the other app as *real* artwork —
 editable paths, live text, proper layers — not a flattened screenshot.
 
+<img src="assets/demo.gif" alt="LazyLord in action: layers selected in Figma arrive in Illustrator, Photoshop and After Effects as real layers, then travel between the apps in every direction" width="820">
+
 [![Download LazyLord](https://img.shields.io/github/v/release/raisulsohan/LazyLord?label=Download&style=for-the-badge&color=6c63ff&labelColor=1a1a1a)](../../releases/latest)
 [![Licence: MIT](https://img.shields.io/badge/Licence-MIT-2ea043?style=for-the-badge&labelColor=1a1a1a)](LICENSE)
 [![Windows and macOS](https://img.shields.io/badge/Windows-%C2%B7%20macOS-444?style=for-the-badge&labelColor=1a1a1a)](#what-you-need)

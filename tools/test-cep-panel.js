@@ -2196,8 +2196,9 @@ run("updates", function () {
     els["update-download"].fire("click");
     ok("updates: Download opens the release page", opened.length === 1 && opened[0] === release("v" + newer).html_url, opened.join("|"));
     ok("updates: the card stays after Download", els["update-card"].hidden === false);
+    ok("updates: Download counts as heard", updateState(st).settled === true && typeof updateState(st).noticedAt === "number");
     els["update-later"].fire("click");
-    ok("updates: Later puts the card away", els["update-card"].hidden === true && updateState(st).dismissed === newer);
+    ok("updates: Later puts the card away", els["update-card"].hidden === true && updateState(st).settled === true);
     ok("updates: the header still says so", has(els["ver"].className, "has-update"));
 
     // Another app's panel soon after: no second request, and the card stays away.
@@ -2208,16 +2209,80 @@ run("updates", function () {
     els["ver"].fire("click");
     ok("updates: the marked version brings the card back", els["update-card"].hidden === false && requests.length === 0);
 
-    // Half a day on, a release after the one put away.
-    var state = updateState(st);
-    state.checkedAt = 0;
-    st.setItem("lazylord.update", JSON.stringify(state));
+});
+
+var DAY = 24 * 60 * 60 * 1000;
+/** Where every app's panel keeps what it knows about updates (USER_DATA is "C:/data" here). */
+var UPDATE_FILE = "C:/data/LazyLord/update.json";
+function setUpdateState(st, change) {
+    var s = updateState(st) || {};
+    for (var k in change) s[k] = change[k];
+    st.setItem("lazylord.update", JSON.stringify(s));
+}
+function cardShown() { return els["update-card"].hidden === false; }
+function versionMarked() { return has(els["ver"].className, "has-update"); }
+
+run("updates: a fortnight between notices", function () {
+    var st = new MemoryStorage();
     boot("ILST", st);
     fireTimer(UPDATE_DELAY);
-    ok("updates: an old answer is asked again", requests.length === 1);
+    requests[0].respond(200, release("v" + bumped(2)));
+    ok("fortnight: the first notice shows at once", cardShown());
+    ok("fortnight: kept in the app-data file every panel shares", !!files[UPDATE_FILE] &&
+       JSON.parse(files[UPDATE_FILE].data).latest.version === bumped(2) && typeof JSON.parse(files[UPDATE_FILE].data).noticedAt === "number",
+       dumpKeys(files));
+
+    boot("ILST", st);
+    fireTimer(UPDATE_DELAY);
+    ok("fortnight: a notice not yet answered is there when the panel opens again", cardShown() && requests.length === 0);
+    els["update-later"].fire("click");
+
+    // Three days later a newer release is out: nothing unasked, and GitHub is not even asked.
+    setUpdateState(st, { noticedAt: new Date().getTime() - 3 * DAY, checkedAt: 0 });
+    boot("PHXS", st);
+    fireTimer(UPDATE_DELAY);
+    ok("fortnight: inside it, no request and no card", requests.length === 0 && !cardShown());
+    ok("fortnight: the header keeps the update already heard of", versionMarked());
+    els["ver"].fire("click");
+    ok("fortnight: clicking the version still shows it", cardShown() && requests.length === 0);
+
+    // Another app's panel, knowing only the shared file, keeps the same quiet.
+    var shared = st.getItem("lazylord.update");
+    boot("AEFT", new MemoryStorage());
+    files[UPDATE_FILE] = { data: shared, enc: "" };
+    fireTimer(UPDATE_DELAY);
+    ok("fortnight: shared by every app's panel", requests.length === 0 && !cardShown() && versionMarked());
+
+    // Fifteen days on: the newest release, once.
+    setUpdateState(st, { noticedAt: new Date().getTime() - 15 * DAY, checkedAt: 0 });
+    boot("ILST", st);
+    fireTimer(UPDATE_DELAY);
+    ok("fortnight: after it, GitHub is asked again", requests.length === 1);
+    requests[0].respond(200, release("v" + bumped(1)));
+    ok("fortnight: and the newest release shows", cardShown() &&
+       els["update-title"].textContent === "LazyLord " + bumped(1) + " is out", els["update-title"].textContent);
+    ok("fortnight: a new fortnight begins", updateState(st).settled === false &&
+       new Date().getTime() - updateState(st).noticedAt < DAY);
+
+    // Updated some other way while that notice was open: it counts as answered...
+    // (This panel stands for the updated one, so the notice was for its version.)
+    setUpdateState(st, { checkedAt: 0, noticed: CURRENT_VERSION });
+    boot("ILST", st);
+    fireTimer(UPDATE_DELAY);
+    requests[0].respond(200, release("v" + CURRENT_VERSION));
+    ok("fortnight: installing the update answers the open notice", updateState(st).settled === true && !cardShown() && !versionMarked());
+    // ...so a release a few days later still waits for the fortnight.
+    setUpdateState(st, { checkedAt: 0, latest: { version: bumped(0), url: release("v" + bumped(0)).html_url, notes: [] } });
+    boot("ILST", st);
+    fireTimer(UPDATE_DELAY);
+    ok("fortnight: the next release waits its turn", requests.length === 0 && !cardShown());
+    ok("fortnight: without even a mark, as the user has not heard of it", !versionMarked(), els["ver"].textContent);
+    els["ver"].fire("click");
+    ok("fortnight: a click asks at once", requests.length === 1);
     requests[0].respond(200, release("v" + bumped(0)));
-    ok("updates: a later version than the one put away shows", els["update-card"].hidden === false &&
+    ok("fortnight: and shows what is out, fortnight or not", cardShown() &&
        els["update-title"].textContent === "LazyLord " + bumped(0) + " is out", els["update-title"].textContent);
+    ok("fortnight: without starting a new one", updateState(st).settled === true);
 });
 
 run("updates: nothing new, and failures", function () {

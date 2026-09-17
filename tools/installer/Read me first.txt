@@ -63,10 +63,10 @@ USING IT
 
 UPDATING
 --------
-  The panel tells you when a new LazyLord is out: a card at the top says what
-  changed and has a Download button. Download the new zip, close Photoshop,
-  Illustrator and After Effects, and run step 1 again (and step 2 if you use
-  Figma). It replaces the old version.
+  The panel tells you when a new LazyLord is out, at most once every two
+  weeks: a card at the top says what changed and has a Download button.
+  Download the new zip, close Photoshop, Illustrator and After Effects, and
+  run step 1 again (and step 2 if you use Figma). It replaces the old version.
 
   Click the version number beside the LazyLord logo to check at any time.
   The check only asks GitHub which version is the newest; nothing about you

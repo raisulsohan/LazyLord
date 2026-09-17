@@ -1,6 +1,6 @@
 {
   "name": "@lazylord/figma-plugin",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "description": "LazyLord Figma plugin — serialises the current selection and sends it to Adobe apps via the LazyLord bridge.",
   "license": "MIT",
   "scripts": {
@@ -9,7 +9,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@lazylord/core": "1.1.7"
+    "@lazylord/core": "1.1.8"
   },
   "devDependencies": {
     "@figma/plugin-typings": "^1.100.2",

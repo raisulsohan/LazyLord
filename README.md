@@ -108,7 +108,13 @@ the LazyLord panel on your own machine. Nothing goes anywhere else.
 
 ### Updating
 
-Download the new zip and run the installer again. It replaces the old panel.
+The panel tells you when a new LazyLord is out: a card at the top says what
+changed and has a **Download** button, and the version number beside the logo
+is marked. Click that version number any time to check for yourself.
+
+Download the new zip, close the Adobe apps and run `1 - Install LazyLord` again.
+It replaces the old panel. If you added the Figma plugin from the download, run
+`2 - Add the Figma plugin` again too.
 
 ### Removing it
 
@@ -445,6 +451,11 @@ Yes. MIT licensed — free to use, at work too, and free to change.
 No. The apps talk to each other over your own machine's loopback address, the
 same way a local preview server works. There is no server, no account, and no
 telemetry. Unplug the internet and it still works.
+
+The one thing the panel fetches from the internet is the number of the newest
+LazyLord release on GitHub, about twice a day, so it can tell you about
+updates. Nothing about you or your work goes with it, and unticking **Check
+for updates** in an app's panel stops it there.
 
 **Do I need Overlord, Node.js, or an extension manager?**
 No. The download is self-contained.

@@ -108,7 +108,9 @@ PRIVACY
 
 Nothing is uploaded. The apps talk to each other over your own computer's
 loopback address — there is no server, no account and no analytics, and it
-works with the internet unplugged.
+works with the internet unplugged. The only thing the panel looks up online is
+whether a newer LazyLord is out, so it can tell you; switch that off with
+"Check for updates" in each app's panel.
 
 
 NEED HELP?
@@ -146,7 +148,7 @@ Any one of Photoshop, Illustrator or After Effects, 2021 or newer, is enough to 
 **Does my work get uploaded anywhere?**
 
 ```
-No. The apps talk to each other directly on your own computer. There is no server, no account and no analytics, and it works with the internet unplugged.
+No. The apps talk to each other directly on your own computer. There is no server, no account and no analytics, and it works with the internet unplugged. The only thing the panel looks up online is whether a newer LazyLord is out, so it can tell you — nothing about you or your work is sent, and "Check for updates" in each app's panel turns it off.
 ```
 
 **Will it change or overwrite my existing layers?**

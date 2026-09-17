@@ -147,15 +147,18 @@
 
   /* A panel is a browser with nowhere to go: a plain link would load the site
      inside it, with no way back. CEP hands the URL to the real browser. */
+  function openInBrowser(url) {
+    try {
+      window.cep.util.openURLInDefaultBrowser(url);
+    } catch (err) {
+      log("Could not open " + url + " — " + (err.message || err), "warn");
+    }
+  }
   var authorEl = document.getElementById("author");
   if (authorEl) {
     authorEl.onclick = function (e) {
       if (e && e.preventDefault) e.preventDefault();
-      try {
-        window.cep.util.openURLInDefaultBrowser(AUTHOR_URL);
-      } catch (err) {
-        log("Could not open " + AUTHOR_URL + " — " + (err.message || err), "warn");
-      }
+      openInBrowser(AUTHOR_URL);
       return false;
     };
   }
@@ -271,6 +274,7 @@
   function restorePrefs() {
     prefs = loadPrefs();
     if (typeof prefs.autoReceive === "boolean") autoEl.checked = prefs.autoReceive;
+    if (checkUpdatesEl && typeof prefs.checkUpdates === "boolean") checkUpdatesEl.checked = prefs.checkUpdates;
     if (layoutSel && contains(LAYOUTS, prefs.layout)) layoutSel.value = prefs.layout;
     if (hierarchySel && contains(HIERARCHIES, prefs.hierarchy)) hierarchySel.value = prefs.hierarchy;
     if (existingSel && contains(EXISTING, prefs.existing)) existingSel.value = prefs.existing;
@@ -2147,12 +2151,273 @@
     renderHistory();
   });
 
+  // --- Updates ---------------------------------------------------------------
+  // A new LazyLord is announced here, in the panel every user keeps open (Figma
+  // needs one for its bridge too). About twice a day the panel asks GitHub which
+  // release is the latest: one plain request that carries nothing about the user
+  // or their work. When that release is newer than this panel, a card says what
+  // changed and offers the download. "Later" puts that version away; the version
+  // in the header stays marked and brings the card back when clicked, and when
+  // nothing is waiting, clicking it checks at once. Unticking "Check for
+  // updates" stops the requests.
+
+  var RELEASES_HOST = "api.github.com";
+  var RELEASES_PATH = "/repos/raisulsohan/LazyLord/releases/latest";
+  var RELEASES_PAGE = "https://github.com/raisulsohan/LazyLord/releases/latest";
+  var UPDATE_KEY = "lazylord.update";
+  /** The first check waits until the panel has connected and loaded its scripts. */
+  var UPDATE_FIRST_DELAY_MS = 6000;
+  var UPDATE_EVERY_MS = 12 * 60 * 60 * 1000;
+  var UPDATE_TIMEOUT_MS = 15000;
+  var UPDATE_NOTES_MAX = 4;
+
+  var updateCard = document.getElementById("update-card");
+  var updateTitle = document.getElementById("update-title");
+  var updateNotes = document.getElementById("update-notes");
+  var updateDownload = document.getElementById("update-download");
+  var updateLater = document.getElementById("update-later");
+  var checkUpdatesEl = document.getElementById("check-updates");
+  /** The newer release, once one is known: { version, url, notes }. */
+  var updateInfo = null;
+  var updateChecking = false;
+  var updateTimer = null;
+  var updateAnnounced = "";
+
+  /** "v1.10.2" -> [1, 10, 2]; null when it is not a version. */
+  function versionParts(v) {
+    var m = /^\s*v?(\d+)\.(\d+)(?:\.(\d+))?\s*$/.exec(String(v === undefined || v === null ? "" : v));
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3] || 0)] : null;
+  }
+
+  /** Whether version `a` comes after version `b`. */
+  function isNewerVersion(a, b) {
+    var x = versionParts(a), y = versionParts(b);
+    if (!x || !y) return false;
+    for (var i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] > y[i];
+    return false;
+  }
+
+  /**
+   * The points of a release's notes, a few words each: the bold lead of every
+   * bullet ("- **The logo spells the name.** The L symbol…" gives "The logo
+   * spells the name."), or the start of a bullet without one. The download
+   * instructions and sign-off are not bullets, so they stay out.
+   */
+  function releaseHighlights(body) {
+    var lines = String(body || "").split(/\r?\n/), out = [];
+    for (var i = 0; i < lines.length && out.length < UPDATE_NOTES_MAX; i++) {
+      var point = /^\s*[-*]\s+(.+)$/.exec(lines[i]);
+      if (!point) continue;
+      var lead = /^\*\*(.+?)\*\*/.exec(point[1]);
+      var text = trimText((lead ? lead[1] : point[1])
+        .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+        .replace(/[*_`]+/g, ""));
+      if (text.length > 90) text = trimText(text.slice(0, 88)) + "…";
+      if (text) out.push(text);
+    }
+    return out;
+  }
+
+  /** A release page to send the user to: GitHub's own, or the latest-release page. */
+  function releaseUrl(url) {
+    return /^https:\/\/github\.com\/raisulsohan\/LazyLord\//.test(String(url || "")) ? String(url) : RELEASES_PAGE;
+  }
+
+  function loadUpdateState() {
+    var st = prefsStore(), parsed = null;
+    if (st) {
+      try { parsed = JSON.parse(st.getItem(UPDATE_KEY) || "null"); } catch (e) {}
+    }
+    return parsed && typeof parsed === "object" ? parsed : {};
+  }
+
+  function saveUpdateState(state) {
+    var st = prefsStore();
+    if (!st) return;
+    try { st.setItem(UPDATE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  /**
+   * GET the latest release as JSON; calls back once with (problem, data).
+   * The panel's own browser goes first, as it uses the system's proxy
+   * settings. If it cannot connect at all (offline, or a host that blocks the
+   * request), Node's https tries once more on its own.
+   */
+  function fetchLatestRelease(done) {
+    var finished = false, triedNode = false;
+    function finish(problem, data) {
+      if (finished) return;
+      finished = true;
+      done(problem, data);
+    }
+    function parse(status, text) {
+      if (status !== 200) { finish("GitHub answered " + status); return; }
+      var data;
+      try { data = JSON.parse(text); } catch (e) { finish("GitHub's answer was unreadable"); return; }
+      finish(null, data);
+    }
+    function viaNode(problem) {
+      if (finished || triedNode) return;
+      triedNode = true;
+      var https = null;
+      try { https = require("https"); } catch (e) {}
+      if (!https) { finish(problem); return; }
+      try {
+        var req = https.get({
+          hostname: RELEASES_HOST,
+          path: RELEASES_PATH,
+          headers: { "User-Agent": "LazyLord/" + PANEL_VERSION, "Accept": "application/vnd.github+json" }
+        }, function (res) {
+          var text = "";
+          res.setEncoding("utf8");
+          res.on("data", function (chunk) { text += chunk; });
+          res.on("end", function () { parse(res.statusCode, text); });
+        });
+        req.on("error", function (err) { finish(err.message || problem); });
+        req.setTimeout(UPDATE_TIMEOUT_MS, function () { req.abort(); finish("no answer in time"); });
+      } catch (e2) {
+        finish(e2.message || String(e2));
+      }
+    }
+    if (typeof XMLHttpRequest === "undefined") { viaNode("this panel cannot reach the internet"); return; }
+    try {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", "https://" + RELEASES_HOST + RELEASES_PATH, true);
+      xhr.setRequestHeader("Accept", "application/vnd.github+json");
+      xhr.timeout = UPDATE_TIMEOUT_MS;
+      xhr.ontimeout = function () { finish("no answer in time"); };
+      xhr.onerror = function () { viaNode("no connection"); };
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState !== 4) return;
+        if (xhr.status === 0) viaNode("no connection");
+        else parse(xhr.status, xhr.responseText);
+      };
+      xhr.send(null);
+    } catch (e3) {
+      viaNode(e3.message || "no connection");
+    }
+  }
+
+  function scheduleUpdateCheck(ms) {
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = setTimeout(function () { updateTimer = null; checkForUpdates(false); }, ms);
+  }
+
+  /**
+   * Ask GitHub for the latest release. On its own schedule a check is skipped
+   * when switched off, or answered from the last one while that is recent;
+   * a check the user asked for always goes out and always reports.
+   */
+  function checkForUpdates(asked) {
+    if (updateChecking) return;
+    if (!asked && checkUpdatesEl && !checkUpdatesEl.checked) return;
+    var state = loadUpdateState();
+    var age = new Date().getTime() - (typeof state.checkedAt === "number" ? state.checkedAt : 0);
+    if (!asked && age >= 0 && age < UPDATE_EVERY_MS) {
+      showUpdate(state.latest, false);
+      scheduleUpdateCheck(UPDATE_EVERY_MS - age);
+      return;
+    }
+    updateChecking = true;
+    if (asked) log("Checking for a newer LazyLord…");
+    fetchLatestRelease(function (problem, data) {
+      updateChecking = false;
+      scheduleUpdateCheck(UPDATE_EVERY_MS);
+      if (!problem && (!data || !versionParts(data.tag_name))) problem = "GitHub named no version";
+      if (problem) {
+        if (asked) log("Could not check for updates: " + problem + ".", "warn");
+        return;
+      }
+      // Switched off while GitHub was answering.
+      if (!asked && checkUpdatesEl && !checkUpdatesEl.checked) return;
+      var latest = {
+        version: String(data.tag_name).replace(/^\s*v/, "").replace(/\s+$/, ""),
+        url: releaseUrl(data.html_url),
+        notes: releaseHighlights(data.body)
+      };
+      var saved = loadUpdateState();
+      saved.checkedAt = new Date().getTime();
+      saved.latest = latest;
+      saveUpdateState(saved);
+      showUpdate(latest, asked);
+    });
+  }
+
+  function renderVersion() {
+    if (!verEl) return;
+    verEl.textContent = "v" + PANEL_VERSION + (updateInfo ? " · update" : "");
+    verEl.className = "a-ver" + (updateInfo ? " has-update" : "");
+    verEl.title = updateInfo ? "LazyLord " + updateInfo.version + " is available" : "Check for updates";
+  }
+
+  function showUpdateCard(latest) {
+    if (!updateCard) return;
+    if (updateTitle) updateTitle.textContent = "LazyLord " + latest.version + " is out";
+    if (updateNotes) {
+      clearChildren(updateNotes);
+      var notes = isArray(latest.notes) ? latest.notes : [];
+      for (var i = 0; i < notes.length && i < UPDATE_NOTES_MAX; i++) {
+        var item = document.createElement("li");
+        item.textContent = String(notes[i]);
+        updateNotes.appendChild(item);
+      }
+      updateNotes.hidden = !updateNotes.firstChild;
+    }
+    updateCard.hidden = false;
+  }
+
+  /** What a check found: a newer release is shown, unless it was put away with Later. */
+  function showUpdate(latest, asked) {
+    var newer = !!(latest && isNewerVersion(latest.version, PANEL_VERSION));
+    updateInfo = newer ? { version: String(latest.version), url: releaseUrl(latest.url), notes: latest.notes } : null;
+    renderVersion();
+    if (!newer) {
+      if (updateCard) updateCard.hidden = true;
+      if (asked) log("This is the latest LazyLord (" + PANEL_VERSION + ").", "ok");
+      return;
+    }
+    if (updateAnnounced !== updateInfo.version) {
+      updateAnnounced = updateInfo.version;
+      log("LazyLord " + updateInfo.version + " is available (this panel is " + PANEL_VERSION + ").");
+    }
+    if (asked || loadUpdateState().dismissed !== updateInfo.version) showUpdateCard(updateInfo);
+  }
+
+  if (updateDownload) updateDownload.addEventListener("click", function () {
+    openInBrowser(updateInfo ? updateInfo.url : RELEASES_PAGE);
+  });
+  if (updateLater) updateLater.addEventListener("click", function () {
+    if (updateCard) updateCard.hidden = true;
+    if (!updateInfo) return;
+    var state = loadUpdateState();
+    state.dismissed = updateInfo.version;
+    saveUpdateState(state);
+  });
+  if (verEl) verEl.addEventListener("click", function () {
+    if (updateInfo) showUpdateCard(updateInfo);
+    else checkForUpdates(true);
+  });
+  if (checkUpdatesEl) checkUpdatesEl.addEventListener("change", function () {
+    savePref("checkUpdates", !!checkUpdatesEl.checked);
+    if (checkUpdatesEl.checked) {
+      checkForUpdates(false);
+      return;
+    }
+    if (updateTimer) clearTimeout(updateTimer);
+    updateTimer = null;
+    updateInfo = null;
+    if (updateCard) updateCard.hidden = true;
+    renderVersion();
+  });
+
   restorePrefs();
   renderPresets("");
   renderHistory();
   cleanTempFiles();
   loadJsx();
   connect();
+  renderVersion();
+  if (!checkUpdatesEl || checkUpdatesEl.checked) scheduleUpdateCheck(UPDATE_FIRST_DELAY_MS);
   // Closing the panel (or quitting the app) frees the port for another panel.
   try { window.addEventListener("beforeunload", stopBridge); } catch (eU) {}
 

@@ -61,6 +61,19 @@ USING IT
     Live         Keeps one app updating as you work.
 
 
+UPDATING
+--------
+  The panel tells you when a new LazyLord is out: a card at the top says what
+  changed and has a Download button. Download the new zip, close Photoshop,
+  Illustrator and After Effects, and run step 1 again (and step 2 if you use
+  Figma). It replaces the old version.
+
+  Click the version number beside the LazyLord logo to check at any time.
+  The check only asks GitHub which version is the newest; nothing about you
+  or your work is sent. Untick "Check for updates" in an app's panel to stop
+  it there.
+
+
 IF SOMETHING IS WRONG
 ---------------------
   The panel is not in the Window menu

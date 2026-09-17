@@ -112,8 +112,11 @@ body {
 /* The logo: the symbol is its L; the rest of the name takes the text colour. */
 .a-wordmark { display: block; flex: none; height: 15px; width: auto; color: var(--fg); }
 .a-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
-/* Only the Adobe panel fills this in; the Figma plugin carries no element. */
-.a-ver { font-size: 9.5px; color: var(--faint); letter-spacing: .01em; }
+/* Only the Adobe panel fills this in; the Figma plugin carries no element.
+   Clicking it checks for a newer LazyLord, or shows the one already found. */
+.a-ver { font-size: 9.5px; color: var(--faint); letter-spacing: .01em; cursor: pointer; white-space: nowrap; transition: color var(--ease); }
+.a-ver:hover { color: var(--muted); }
+.a-ver.has-update { color: var(--accent); font-weight: 600; }
 
 .a-conn { display: flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; color: var(--muted); white-space: nowrap; }
 .a-conn .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); flex: none; transition: background var(--ease), box-shadow var(--ease); }
@@ -157,6 +160,11 @@ body {
 
 /* A transfer waiting to be placed: the one thing on screen asking for a decision. */
 .a-incoming { padding: 10px; border: 1px solid var(--accent); border-radius: 8px; }
+
+/* A newer LazyLord: which one, then what changed, a few words a point. */
+.a-update-title { margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -.01em; color: var(--fg); }
+.a-notes { margin: 0; padding-left: 16px; color: var(--fg-2); font-size: 11px; line-height: 1.5; }
+.a-notes[hidden] { display: none; }
 
 .a-label {
   font-size: 10px;

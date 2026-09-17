@@ -21,7 +21,11 @@ Figma plugins can only reach `localhost`, and Adobe apps script through CEP/Exte
 3. **Adobe CEP panel** (one panel, three hosts) rebuilds incoming IR natively, and serialises its own selection to send out. `packages/adobe-cep`
 4. **Core** holds the shared IR types, the transfer protocol, the SVG-path → bezier math and the pure geometry (transform baking, gradient handles, artboard detection) used by every side. `packages/core`
 
-Everything runs on your machine — **no data leaves localhost.**
+Everything runs on your machine — **no data leaves localhost.** The one request
+that goes further is the panel's update check: about twice a day it GETs
+`api.github.com/repos/raisulsohan/LazyLord/releases/latest` and compares the
+tag with its own version (the "Updates" section of `packages/adobe-cep/js/main.js`).
+It sends nothing about the user, and "Check for updates" in the panel turns it off.
 
 ---
 

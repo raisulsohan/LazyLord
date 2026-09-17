@@ -222,13 +222,14 @@ without a confirmation in Figma. From 1.1.4 every inbound write is staged:
   **Place on canvas** is pressed, one transfer per press, and ignores any
   `receive` not marked as confirmed.
 - **Decline** answers the sender and changes nothing.
-- The Adobe panels no longer offer Live into Figma, since each update would
-  need its own confirmation.
+- Live changes from an Adobe app are held the same way: they collect on one
+  card that always holds the newest state, the sender is told they are held,
+  and nothing is written until **Update on canvas** is pressed.
 
 Note for the reviewer (paste into the resubmission):
 
 ```
-Thanks for the review. LazyLord no longer writes anything to the canvas on its own. Every transfer that arrives from another app is staged in the plugin window under "Incoming", showing which app sent it, how many layers it holds and whether it adds or updates layers. Nothing is created or changed until the user presses "Place on canvas" for that transfer; "Decline" discards it without touching the file. Each press places exactly one transfer, and the main thread ignores any build request that does not come from that button. Continuous "Live" updates into Figma have been removed for the same reason. Outgoing sends from Figma are unchanged and always start from the user's own Send click.
+Thanks for the review. LazyLord no longer writes anything to the canvas on its own. Every transfer that arrives from another app is staged in the plugin window under "Incoming", showing which app sent it, how many layers it holds and whether it adds or updates layers. Nothing is created or changed until the user presses "Place on canvas" for that transfer; "Decline" discards it without touching the file. Each press places exactly one transfer, and the main thread ignores any build request that does not come from that button. Live changes sent from an Adobe app are held the same way: they collect on a single "Incoming" card showing the newest state, and nothing is written until the user presses "Update on canvas"; "Discard" drops them. Outgoing sends from Figma are unchanged and always start from the user's own Send click.
 ```
 
 ## What a reviewer will see with no Adobe app installed

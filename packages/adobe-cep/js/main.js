@@ -1371,25 +1371,24 @@
 
   /** Only these rebuild what they built before; anywhere else Live would pile up copies. */
   function liveCanReach(target) {
-    return target === "aftereffects" || target === "illustrator" || target === "photoshop";
+    return target === "aftereffects" || target === "illustrator" || target === "figma" || target === "photoshop";
   }
 
-  /**
-   * Figma places what it receives only when someone presses Place in the
-   * plugin, one transfer at a time, so a stream of Live updates has nowhere
-   * to go there.
+  /*
+   * Live into Figma. Figma writes nothing until Update on canvas is pressed
+   * there, so it answers each Live change with a staged ack (held, not built)
+   * and keeps only the newest. Nothing is remembered as sent until the ack
+   * that follows the Update, so every change until then carries all that
+   * changed since Figma last applied one.
    */
-  var LIVE_FIGMA = "Figma asks you to place every transfer yourself, so Live cannot send to it; " +
-    "use Send, then Place in the LazyLord plugin in Figma";
+  var figmaStaged = {};   // transfer id -> what was sent, while Figma holds it
+  var figmaWaiting = {};  // sent key -> the prints of the newest change Figma holds
+  var liveFigmaNoted = false;
 
   function startLive() {
     var target = currentTarget();
     if (!target) {
       stopLive("no destination app is connected");
-      return;
-    }
-    if (target === "figma") {
-      stopLive(LIVE_FIGMA);
       return;
     }
     if (!liveCanReach(target)) {
@@ -1403,6 +1402,7 @@
     livePolling = false;
     liveStarted = false;
     liveRetry = false;
+    liveFigmaNoted = false;
     log("Live: changes to the selection are sent to " + roleLabel(target) + " as you work.", "ok");
     livePoll(liveGen);
   }
@@ -1426,7 +1426,6 @@
     setTimeout(function () { livePoll(gen); }, LIVE_POLL_MS);
     var target = currentTarget();
     if (!target) { stopLive("the destination app disconnected"); return; }
-    if (target === "figma") { stopLive(LIVE_FIGMA); return; }
     if (!liveCanReach(target)) { stopLive(roleLabel(target) + " can only add layers, not update them"); return; }
     if (pushBusy || livePolling || !jsxReady) return;
     livePolling = true;
@@ -1534,6 +1533,11 @@
         setPushBusy(false);
         return;
       }
+      // The same state already waits in Figma: nothing new to hold.
+      if (live && target === "figma" && figmaWaiting[diff.key] === JSON.stringify(diff.prints)) {
+        setPushBusy(false);
+        return;
+      }
       if (diff.skipped && !live) log(plural(diff.skipped, "unchanged layer") + " not sent again.");
       if (target === "figma") embedImagesForFigma(doc);
 
@@ -1563,7 +1567,7 @@
       log((live ? "Live: sent " : "Sent ") + layerPhrase(doc.layers) + " to " + roleLabel(target) +
         (note && !live ? " · " + note : "") + "…");
       // Figma places nothing until someone says so there.
-      if (target === "figma") log("Waiting for Place to be pressed in the LazyLord plugin in Figma.");
+      if (target === "figma" && !live) log("Waiting for Place to be pressed in the LazyLord plugin in Figma.");
 
       setTimeout(function () {
         if (pendingPush !== id) return;
@@ -1594,6 +1598,23 @@
       reportAck(msg, info, false);
       return;
     }
+    if (Object.prototype.hasOwnProperty.call(figmaStaged, msg.id)) {
+      // Update on canvas was pressed: Figma now holds what that change carried.
+      var held = figmaStaged[msg.id];
+      delete figmaStaged[msg.id];
+      if (msg.ok && held.sentKey) {
+        rememberSent(held.sentKey, held.prints);
+        if (figmaWaiting[held.sentKey] === JSON.stringify(held.prints || {})) delete figmaWaiting[held.sentKey];
+      }
+      if (msg.ok) {
+        var every = (held.diagnostics || []).concat(msg.diagnostics || []);
+        log("Figma applied the Live changes: " + transferSummary(msg.layersCreated, held.images, every, msg.layersUpdated),
+          every.length ? "warn" : "ok");
+      } else {
+        log("Figma could not apply the Live changes: " + (msg.message || "the update failed."), "err");
+      }
+      return;
+    }
     var late = takeLateAck(msg.id);
     if (late) reportAck(msg, late.info, true);
     // Anything else is another panel's transfer; the bridge can relay those.
@@ -1601,6 +1622,21 @@
 
   function reportAck(msg, info, late) {
     if (!info) info = { images: imageStats(null), diagnostics: [] };
+    if (msg.staged) {
+      // Held in Figma, not built: remember nothing yet, and say so once.
+      if (info.sentKey) {
+        for (var old in figmaStaged) {
+          if (Object.prototype.hasOwnProperty.call(figmaStaged, old) && figmaStaged[old].sentKey === info.sentKey) delete figmaStaged[old];
+        }
+        figmaWaiting[info.sentKey] = JSON.stringify(info.prints || {});
+      }
+      figmaStaged[msg.id] = info;
+      if (!liveFigmaNoted) {
+        liveFigmaNoted = true;
+        log("Live: changes wait in Figma until Update on canvas is pressed in the LazyLord plugin there.", "ok");
+      }
+      return;
+    }
     var hostDiags = msg.diagnostics || [];
     // What the target now holds, for the next update's comparison.
     if (msg.ok && info.sentKey) rememberSent(info.sentKey, info.prints);

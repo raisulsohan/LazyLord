@@ -321,7 +321,9 @@ Figma প্লাগিন আর Adobe প্যানেল এখন **এ�
 - [ ] Illustrator থেকে Figma-তে পাঠান। ক্যানভাসে কিছু না বসে প্লাগিনে **Incoming** কার্ড আসে (কোন অ্যাপ, কত লেয়ার)?
 - [ ] **Place on canvas** চাপলে তবেই বসে, আর Illustrator-এর প্যানেলে ফল দেখায়?
 - [ ] আবার পাঠিয়ে **Decline** চাপুন: কিছু বসে না, Illustrator-এ "Declined in Figma" দেখায়?
-- [ ] Adobe প্যানেলে টার্গেট Figma রেখে Live টিক দিন: Live চালু না হয়ে কারণ দেখায়?
+- [ ] Adobe প্যানেলে টার্গেট Figma রেখে **Live** টিক দিন, তারপর লেয়ার কয়েকবার সরান। Figma-তে নিজে থেকে কিছু না বদলে **একটাই** কার্ড আসে ("3 Live changes…")?
+- [ ] **Update on canvas** চাপলে সর্বশেষ অবস্থাটা বসে, আর প্যানেলে "Figma applied the Live changes" দেখায়? এরপর আবার সরালে নতুন কার্ড আসে?
+- [ ] **Discard** চাপলে কিছু বসে না, আর পরের বদলে কার্ড আবার আসে?
 
 **After Effects: সেভ না করা প্রজেক্ট**
 - [ ] নতুন, **সেভ না করা** AE প্রজেক্টে Photoshop থেকে একটা pixel layer (ছবি) পাঠান। কিছুই যোগ না হয়ে বার্তা আসে **"Save the After Effects project first…"**?

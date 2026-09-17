@@ -58,6 +58,13 @@ export type AckMessage = {
   layersUpdated?: number;
   /** Objects the host could not rebuild natively. */
   diagnostics?: Diagnostic[];
+  /**
+   * Received but not built yet: it waits for the user in the receiving app
+   * (Figma, for a Live change, until Update on canvas is pressed). A second
+   * ack under the same id follows once it is built, and the bridge keeps the
+   * route open for it.
+   */
+  staged?: boolean;
 };
 
 /**

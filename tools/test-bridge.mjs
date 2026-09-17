@@ -69,6 +69,15 @@ ok("transfer: and nobody else", !took(ae, "transfer", (m) => m.id === "t1"));
 ai.send(JSON.stringify({ type: "ack", id: "t1", from: "illustrator", ok: true, layersCreated: 1 }));
 ok("ack: back to the sender only", !!(await waitFor(figma, "ack", (m) => m.id === "t1")) && !took(ae, "ack", (m) => m.id === "t1"));
 
+// A staged ack keeps the way back open: the ack that follows reaches the sender only.
+ai.send(JSON.stringify({ type: "transfer", id: "t-live", target: "figma", document: doc(9) }));
+await waitFor(figma, "transfer", (m) => m.id === "t-live");
+figma.send(JSON.stringify({ type: "ack", id: "t-live", from: "figma", ok: true, staged: true }));
+ok("staged ack: reaches the sender", !!(await waitFor(ai, "ack", (m) => m.id === "t-live" && m.staged === true)));
+figma.send(JSON.stringify({ type: "ack", id: "t-live", from: "figma", ok: true, layersUpdated: 1 }));
+ok("staged ack: the final one is routed to the sender too, not broadcast",
+  !!(await waitFor(ai, "ack", (m) => m.id === "t-live" && !m.staged)) && !took(ae, "ack", (m) => m.id === "t-live"));
+
 figma.send(JSON.stringify({ type: "transfer", id: "t2", target: "photoshop", document: doc(2) }));
 const nack = await waitFor(figma, "ack", (m) => m.id === "t2");
 ok("absent target: a failed ack with a reason", nack && nack.ok === false && /Photoshop/.test(nack.message), JSON.stringify(nack));

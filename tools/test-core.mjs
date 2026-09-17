@@ -2004,6 +2004,43 @@ await block("ui, incoming needs confirmation", async () => {
   ok("incoming: and the card goes", block.hidden === true);
 });
 
+// Live changes into Figma wait in one card, always the newest, applied on Update.
+await block("ui, live changes wait", async () => {
+  const ui = await loadUi();
+  const ws = ui.connect();
+  const live = (x) => ({ version: "1.0", source: "aftereffects", sourceKey: "proj-1", name: "Comp", bounds: { x: 0, y: 0, width: 10, height: 10 },
+    options: { existing: "update", live: true },
+    layers: [{ id: "a", name: "A", type: "vector", frame: { x, y: 0, width: 5, height: 5 }, subpaths: [], fills: [], strokes: [] }] });
+  ui.toPlugin.length = 0;
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "l-1", document: live(0) }) });
+  const staged1 = ws.sent.filter((m) => m.type === "ack" && m.id === "l-1");
+  ok("live in: held, and the sender told so at once", staged1.length === 1 && staged1[0].staged === true && staged1[0].ok === true &&
+    !ui.toPlugin.some((m) => m.type === "receive"), JSON.stringify(staged1));
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "l-2", document: live(3) }) });
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "l-3", document: live(6) }) });
+  ok("live in: one card for the app and file, counting the changes", ui.$("#incoming-count").textContent === "" &&
+    /3 Live changes from After Effects/.test(ui.$("#incoming-text").textContent) && ui.$("#incoming-decline").textContent === "Discard",
+    ui.$("#incoming-text").textContent);
+
+  ui.$("#incoming-place").fire("click");
+  const receive = ui.toPlugin.find((m) => m.type === "receive");
+  ok("live in: Update applies the newest state only", receive && receive.id === "l-3" && receive.confirmed === true &&
+    receive.document.layers[0].frame.x === 6, JSON.stringify(receive && receive.id));
+  // A change arriving while that is placed waits on its own card.
+  ws.onmessage({ data: JSON.stringify({ type: "transfer", id: "l-4", document: live(9) }) });
+  ui.fromPlugin({ type: "built", id: "l-3", result: { ok: true, layersCreated: 0, layersUpdated: 1, message: "", diagnostics: [] } });
+  const done = ws.sent.filter((m) => m.type === "ack" && m.id === "l-3" && !m.staged);
+  ok("live in: the sender hears the result once applied", done.length === 1 && done[0].layersUpdated === 1);
+  ok("live in: the change that came meanwhile is waiting", ui.$("#incoming-block").hidden === false &&
+    /A Live change from After Effects/.test(ui.$("#incoming-text").textContent), ui.$("#incoming-text").textContent);
+
+  const acksBefore = ws.sent.filter((m) => m.type === "ack").length;
+  ui.toPlugin.length = 0;
+  ui.$("#incoming-decline").fire("click");
+  ok("live in: Discard builds nothing and sends nothing more", ui.$("#incoming-block").hidden === true &&
+    ws.sent.filter((m) => m.type === "ack").length === acksBefore && !ui.toPlugin.some((m) => m.type === "receive"));
+});
+
 // The main thread builds a transfer only when the UI says it was confirmed.
 {
   posted.length = 0;

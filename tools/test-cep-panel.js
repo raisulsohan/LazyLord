@@ -1382,17 +1382,63 @@ run("smart diff", function () {
 });
 
 // 13c) Live: poll a stamp, send what changed as an update, stop cleanly.
-// Figma places every transfer by hand, so Live does not send to it.
+// Live into Figma: each change is held there until Update on canvas, then remembered.
 run("live to figma", function () {
     var store = new MemoryStorage();
     store.setItem("lazylord.prefs.illustrator", JSON.stringify({ target: "figma" }));
     var sock = boot("ILST", store);
     peersMsg(sock, "welcome", ["illustrator", "figma"]);
+    function art(boxX) {
+        return {
+            version: "1.0", source: "illustrator", sourceKey: "doc-F", name: "Art", originSpace: "document",
+            canvas: { width: 100, height: 100 }, bounds: { x: 0, y: 0, width: 50, height: 50 },
+            layers: [
+                { id: "a", name: "A", type: "vector", frame: frame(boxX, 0), subpaths: [square()], fills: [], strokes: [] },
+                { id: "b", name: "B", type: "vector", frame: frame(0, 20), subpaths: [square()], fills: [], strokes: [] }
+            ],
+            diagnostics: []
+        };
+    }
+    function stamp(st, doc) {
+        var call = lastEval();
+        if (!call || call.script !== "LazyLord.liveStamp()") return "no poll";
+        var before = sock.sent.length, evals = evalCalls.length;
+        call.cb(st);
+        if (doc && evalCalls.length > evals) {
+            files["C:/tmp/livef/ir.json"] = { data: JSON.stringify(doc), enc: "" };
+            lastEval().cb(JSON.stringify({ ok: true, layerCount: 2, irPath: "C:/tmp/livef/ir.json", message: "", diagnostics: [] }));
+        }
+        return sock.sent.length > before ? lastSent(sock) : null;
+    }
+    function sentMap() { return store.getItem("lazylord.sent.illustrator") || ""; }
+
     els["push-live"].checked = true;
     els["push-live"].fire("change");
-    ok("live to figma: refused, saying why", els["push-live"].checked === false &&
-       linesWith("Figma asks you to place every transfer yourself").length === 1, texts(els["log"].children));
-    ok("live to figma: nothing polled", lastEval() && lastEval().script !== "LazyLord.liveStamp()", lastEval() && lastEval().script);
+    ok("live to figma: allowed", els["push-live"].checked === true &&
+       linesWith("Live: changes to the selection are sent to Figma").length === 1, texts(els["log"].children));
+    var first = stamp("s1", art(0));
+    ok("live to figma: the first change goes", first && first.target === "figma" && first.document.layers.length === 2);
+    deliver(sock, { type: "ack", id: first.id, from: "figma", ok: true, staged: true, layersCreated: 0 });
+    ok("live to figma: held in Figma, said once, nothing remembered as sent",
+       linesWith("changes wait in Figma until Update on canvas").length === 1 && sentMap() === "", sentMap());
+
+    fireTimer(LIVE_POLL);
+    ok("live to figma: the same state is not held twice", stamp("s2", art(0)) === null);
+    fireTimer(LIVE_POLL);
+    var moved = stamp("s3", art(10));
+    ok("live to figma: a change carries all that Figma has not applied", moved && moved.document.layers.length === 2,
+       moved && JSON.stringify(moved.document.layers));
+    deliver(sock, { type: "ack", id: moved.id, from: "figma", ok: true, staged: true, layersCreated: 0 });
+    ok("live to figma: still said only once", linesWith("changes wait in Figma until Update on canvas").length === 1);
+
+    // Update on canvas pressed in Figma: its result comes under the same id.
+    deliver(sock, { type: "ack", id: moved.id, from: "figma", ok: true, layersCreated: 0, layersUpdated: 2 });
+    ok("live to figma: applied, reported, and now remembered", linesWith("Figma applied the Live changes").length === 1 &&
+       sentMap().indexOf("doc-F") >= 0, texts(els["log"].children));
+    fireTimer(LIVE_POLL);
+    var next = stamp("s4", art(20));
+    ok("live to figma: after that, only what changed goes", next && next.document.layers.length === 1 && next.document.layers[0].id === "a",
+       next && JSON.stringify(next.document.layers));
 });
 
 run("live", function () {

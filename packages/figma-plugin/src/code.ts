@@ -358,7 +358,9 @@ figma.ui.onmessage = async (msg: { type: string; [k: string]: any }) => {
     // The UI was still sending when a change came in: it asks again once free.
     await liveExport("change");
   } else if (msg.type === "receive") {
-    // A transfer from another app: rebuild it on the current page.
+    // A transfer from another app, rebuilt on the current page. The UI sends
+    // this only when the user pressed Place; anything else is ignored.
+    if (msg.confirmed !== true) return;
     try {
       const result = await buildFromIr(msg.document as Document);
       figma.ui.postMessage({ type: "built", id: msg.id, result });

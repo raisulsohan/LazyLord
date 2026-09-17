@@ -1382,6 +1382,19 @@ run("smart diff", function () {
 });
 
 // 13c) Live: poll a stamp, send what changed as an update, stop cleanly.
+// Figma places every transfer by hand, so Live does not send to it.
+run("live to figma", function () {
+    var store = new MemoryStorage();
+    store.setItem("lazylord.prefs.illustrator", JSON.stringify({ target: "figma" }));
+    var sock = boot("ILST", store);
+    peersMsg(sock, "welcome", ["illustrator", "figma"]);
+    els["push-live"].checked = true;
+    els["push-live"].fire("change");
+    ok("live to figma: refused, saying why", els["push-live"].checked === false &&
+       linesWith("Figma asks you to place every transfer yourself").length === 1, texts(els["log"].children));
+    ok("live to figma: nothing polled", lastEval() && lastEval().script !== "LazyLord.liveStamp()", lastEval() && lastEval().script);
+});
+
 run("live", function () {
     var store = new MemoryStorage();
     // Adding, to a new document: Live sends updates into the open one anyway.

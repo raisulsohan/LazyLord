@@ -34,6 +34,12 @@ Send again after a change and LazyLord updates what it built before, right
 where it stands — your position, your grouping, your edits kept. If you have
 edited one of those layers by hand it stops and asks which version to keep.
 
+YOU STAY IN CONTROL OF YOUR CANVAS
+Artwork sent from Photoshop, Illustrator or After Effects never lands in your
+file by itself. The plugin shows it under Incoming — which app sent it, how
+many layers, and whether it adds or updates — and places it only when you
+press Place on canvas. Decline, and nothing is touched.
+
 WHAT TRAVELS
 • Bézier and compound paths, rectangles and ellipses as live shapes
 • Live text, including per-character styling, with fonts matched by name
@@ -203,6 +209,27 @@ contacted, and with no panel open the plugin simply says so and does nothing.
 
 The panel it talks to is open source and downloadable from the repository
 above, so the whole path is inspectable.
+
+## Resubmitting after "unauthorized agentic canvas access"
+
+Figma rejected 1.1.3 because a transfer from another app reached the canvas
+without a confirmation in Figma. From 1.1.4 every inbound write is staged:
+
+- An incoming transfer is only held in the plugin UI. It is shown under
+  **Incoming** with the sending app, the layer count and whether it adds or
+  updates.
+- The main thread builds only on a `receive` message the UI sends when
+  **Place on canvas** is pressed, one transfer per press, and ignores any
+  `receive` not marked as confirmed.
+- **Decline** answers the sender and changes nothing.
+- The Adobe panels no longer offer Live into Figma, since each update would
+  need its own confirmation.
+
+Note for the reviewer (paste into the resubmission):
+
+```
+Thanks for the review. LazyLord no longer writes anything to the canvas on its own. Every transfer that arrives from another app is staged in the plugin window under "Incoming", showing which app sent it, how many layers it holds and whether it adds or updates layers. Nothing is created or changed until the user presses "Place on canvas" for that transfer; "Decline" discards it without touching the file. Each press places exactly one transfer, and the main thread ignores any build request that does not come from that button. Continuous "Live" updates into Figma have been removed for the same reason. Outgoing sends from Figma are unchanged and always start from the user's own Send click.
+```
 
 ## What a reviewer will see with no Adobe app installed
 

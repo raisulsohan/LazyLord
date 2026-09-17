@@ -146,6 +146,9 @@ body {
 .a-block { display: flex; flex-direction: column; gap: 6px; }
 .a-block[hidden] { display: none; }
 
+/* A transfer waiting to be placed: the one thing on screen asking for a decision. */
+.a-incoming { padding: 10px; border: 1px solid var(--accent); border-radius: 8px; }
+
 .a-label {
   font-size: 10px;
   font-weight: 600;

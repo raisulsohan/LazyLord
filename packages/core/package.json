@@ -1,6 +1,6 @@
 {
   "name": "@lazylord/core",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Shared intermediate representation, transfer protocol and SVG path math for LazyLord.",
   "license": "MIT",
   "main": "dist/index.js",

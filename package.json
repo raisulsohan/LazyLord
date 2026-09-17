@@ -1,6 +1,6 @@
 {
   "name": "lazylord",
-  "version": "1.1.7",
+  "version": "1.1.8",
   "private": true,
   "description": "LazyLord — transfer vectors, live text and images between Figma and Adobe Photoshop, Illustrator and After Effects. An open alternative to Battle Axe Overlord.",
   "license": "MIT",

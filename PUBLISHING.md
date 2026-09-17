@@ -25,7 +25,7 @@ npm run release:cert
 1. Adobe-র নিজের সাইনিং টুল `ZXPSignCmd` নামিয়ে `tools/vendor/`-এ রাখে
    (Adobe-CEP/CEP-Resources রিপো থেকে, ৪.৫ MB)।
 2. একটা self-signed সার্টিফিকেট বানায় আর তার পাসওয়ার্ড লিখে রাখে, মেয়াদ ১০ বছর।
-   দুটোই থাকে রিপোর ফোল্ডারের ভেতরে, `D:\GitHub\LazyLord\Signing key (do not share)\`
+   দুটোই থাকে রিপোর ফোল্ডারের ভেতরে, `D:\GitHub\LazySuite\LazyLord\Signing key (do not share)\`
    ফোল্ডারে, কিন্তু git-এর বাইরে (`LAZYLORD_KEY_DIR` দিয়ে জায়গা বদলানো যায়)।
 
 > **⚠ `Signing key (do not share)` ফোল্ডারটা ব্যাকআপ রাখুন — পেনড্রাইভে, বা যেখানে নিরাপদ।**
@@ -50,7 +50,7 @@ npm run release
 
 শেষে পাবেন **একটাই ফাইল** — `D:\GitHub\00 Install from here\LazyLord-<version>.zip`। মাঝপথের
 সব কিছু (staging, না-জিপ-করা ফোল্ডার) সিস্টেমের temp-এ হয় আর শেষে মুছে যায়, তাই
-ওই ফোল্ডারে শুধু সবচেয়ে নতুন LazyLord জিপটাই থাকে (পুরোনোটা নিজে থেকে সরে যায়; পুরোনো ভার্সন GitHub Releases-এ থাকে)। সাইনিং কী থাকে `D:\GitHub\LazyLord\Signing key (do not share)`-এ। জিপের ভেতরে:
+ওই ফোল্ডারে শুধু সবচেয়ে নতুন LazyLord জিপটাই থাকে (পুরোনোটা নিজে থেকে সরে যায়; পুরোনো ভার্সন GitHub Releases-এ থাকে)। সাইনিং কী থাকে `D:\GitHub\LazySuite\LazyLord\Signing key (do not share)`-এ। জিপের ভেতরে:
 
 ```
 Read me first.txt                      দুই ধাপের নির্দেশনা

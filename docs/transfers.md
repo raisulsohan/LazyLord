@@ -84,9 +84,10 @@ list are shown together, worst first.
 | **Photoshop** | ✅ | ✅ | ✅ | — |
 
 Every app both sends and receives. What each app can *describe* still
-differs — After Effects has no inner shadow, Illustrator has no timeline,
-Photoshop's own layer styles are not written on the way in — and every one of
-those gaps is reported on the transfer.
+differs — After Effects has no background blur, Illustrator has no timeline
+and no inner shadow, Photoshop rebuilds shadows and blurs but not the glows
+and overlays it can read — and every one of those gaps is reported on the
+transfer.
 
 ---
 
@@ -222,6 +223,8 @@ fails, only the active layer is sent, reported.
 | Photoshop clipping mask | An alpha track matte on the base layer |
 | Photoshop layer mask | A luma track matte from the mask |
 | Photoshop layer styles | The same **After Effects layer styles** — on shape, text, pixel and smart object layers alike |
+| Inner shadow, glow, stroke or overlay from any app | An After Effects **layer style** of the same name |
+| Drop shadow, layer blur | The stock Drop Shadow and Gaussian Blur effects (a shadow from Photoshop becomes a layer style instead, so it keeps its spread) |
 | Photoshop adjustment layer | An **adjustment layer** with the matching effect, opacity, blend mode and mask |
 | Clip path | Layer masks |
 
@@ -261,7 +264,10 @@ fails, only the active layer is sent, reported.
 | Group | A Figma group |
 | Clip path | A mask group |
 | Photoshop layer mask | A luminance mask |
-| Shadows, glows, stroke, colour overlay | The Figma effects that match |
+| Shadows and glows | Figma drop and inner shadows (a glow becomes the shadow that matches it) |
+| A layer style's stroke, and a colour overlay | A real Figma stroke, and a fill |
+| Layer and background blur | The Figma blur of that name |
+| Gradient overlay, satin, bevel & emboss | Reported |
 | Adjustment layers | Reported — Figma has none |
 
 ---
@@ -313,8 +319,9 @@ vocabulary.
 | --- | --- | --- | --- | --- |
 | **Blend modes** (all 16) | ✅ native | ✅ native | ✅ native | ✅ native |
 | **Drop shadow** | ✅ native | ✅ Drop Shadow effect | ✅ Drop Shadow live effect (black) | ✅ Drop Shadow layer style |
-| **Shadow spread** | ✅ native | reported | reported | ✅ the style's Spread |
-| **Inner shadow** | ✅ native | reported | reported | ✅ Inner Shadow layer style |
+| **Shadow spread** | ✅ native | ✅ on a layer style (a shadow from Photoshop); reported on the Drop Shadow effect | reported | ✅ the style's Spread |
+| **Inner shadow** | ✅ native | ✅ Inner Shadow **layer style** | reported | ✅ Inner Shadow layer style |
+| **Outer / inner glow** | ✅ as a shadow | ✅ Outer / Inner Glow **layer style** | reported | reported |
 | **Layer blur** | ✅ native | ✅ Gaussian Blur | ✅ Gaussian Blur live effect | ✅ Gaussian Blur smart filter |
 | **Background blur** | ✅ native | reported | reported | reported |
 | **Photoshop layer styles** | shadows, glows, stroke, colour overlay | ✅ as layer styles | reported | — |
@@ -322,9 +329,15 @@ vocabulary.
 Worth knowing:
 
 - **After Effects describes a shadow differently.** It has no x/y offset but a
-  direction dial and a distance, so the offset is converted into them. Its
-  Drop Shadow has no spread, so a shadow that uses one is rebuilt without it
-  and says so.
+  direction dial and a distance, so the offset is converted into them. A drop
+  shadow from anywhere but Photoshop becomes the stock **Drop Shadow effect**,
+  which has no spread, so a shadow that uses one is rebuilt without it and
+  says so; one from Photoshop becomes a **layer style**, which keeps it.
+- **Inner shadows, glows, strokes, overlays, satin and bevels become After
+  Effects layer styles**, whatever app they came from — editable in the
+  timeline under Layer Styles. Two things a script cannot set are left at
+  After Effects' own and reported: a style's blend mode, and a gradient
+  overlay's colours.
 - **A blur radius is not the same number everywhere.** Figma's radius is a
   standard deviation; After Effects' Blurriness is roughly twice it for the
   same look, and is converted.

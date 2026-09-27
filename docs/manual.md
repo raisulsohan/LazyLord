@@ -76,7 +76,7 @@ A few features ask for a newer host, and say so when they cannot run:
 | Kerned letter pairs in AE | After Effects 24.3 |
 | Track mattes set on the layer itself | After Effects 23 (older versions use the layer above) |
 | Guides added to a comp | After Effects 16.1 |
-| Component copies sharing one precomp with Essential Properties | After Effects 2019 (16.1) |
+| Component copies sharing one precomp with Essential Properties | After Effects 2019 or newer |
 
 ---
 
@@ -146,7 +146,9 @@ Figma plugin from the download, run `2 - Add the Figma plugin` again too.
    for its dot to turn green. Nothing else has to be running.
 2. In Figma, select some layers and run **Plugins → LazyLord**.
 3. Pick a target — one app, or **All apps** — and press **Send**.
-4. The layers appear natively in the Adobe document.
+4. The layers appear natively in the Adobe app — by default in a new document
+   or comp sized to what you sent. **Destination** decides that; choose **Open
+   document** to build into the one already open.
 
 If everything you selected sits inside one top-level frame, it arrives where
 it sits in that frame, and the new document or comp is that frame's size.
@@ -233,7 +235,7 @@ next send will do.
 | Option | Choice | What the receiving app builds |
 | --- | --- | --- |
 | **Layout** | **Split** (default) | One layer per shape. |
-| | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. Text, images, gradient-filled shapes and shapes with a different clip stay separate layers, and each is reported. Illustrator and Photoshop ignore it. |
+| | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. What cannot join it stays a layer of its own, and is reported: text, images, shapes whose clipping mask differs from the one most of them share, layers that need a track matte (anything clipped or masked from Photoshop), and gradient-filled shapes when After Effects has fallen back to Gradient Ramps, which colour a whole layer. Illustrator and Photoshop ignore the option. |
 | **Hierarchy** | **Flatten** (default) | Groups dissolve into their layers; a group's opacity is multiplied into its layers (reported where they could overlap). |
 | | **Groups** | Illustrator groups, Photoshop layer groups, After Effects parent **nulls** — or nested shape groups when combining. |
 | | **Precomps** | After Effects: each frame becomes a precomp its size, nested frames nesting. A component and all its instances share **one** precomp; each copy's own text and colours become **Essential Properties** on its layer. Every other app treats this as Groups. |
@@ -247,7 +249,7 @@ next send will do.
 | **Layers as frames** | Photoshop only, off | The selected layers — or the layers in one selected group, bottom first — become the frames of **one image sequence** in After Effects, all the same size. Hidden layers count, so a frame animation sends as it is. Other apps place the first frame and say so. |
 | **Include guides** | off | Also send the source page's ruler guides. |
 | **Include swatches** | off | Also send the source's named colours. |
-| **Preset** | — | The Destination, Image scale and the options above, saved under a name. Type a name and press **Save**; pick one from the list to apply it; **Delete** removes the one showing. |
+| **Preset** | — | The Destination, the Image scale and the options above — bar *Only what changed* and *Layers as frames* — saved under a name. Type a name and press **Save**; pick one from the list to apply it; **Delete** removes the one showing. |
 
 Split + Flatten + Add is what earlier versions produced.
 
@@ -330,8 +332,10 @@ the newest state, and it says how many changes it has taken in.
 
 ### Send to
 
-**All apps** or one app. Only connected apps can be chosen; the line
-underneath says who is listening.
+**All apps**, or one app. All four are always shown, whether or not that app
+is running: the line underneath says who is listening, and picking an app that
+is not there leaves the Send button reading *Open the LazyLord panel in
+Adobe*.
 
 ### Image scale, and sending a layer as a picture
 
@@ -367,10 +371,10 @@ receiving app obeys — they travel with the transfer as `document.options`.
 
 ### Send, Live and the status line
 
-The button says *Select something to send* until there is a selection. Under
-it, **Live** watches the objects selected at that moment. The status line
-under the button reports the result of the last transfer, and any fallbacks
-are listed below.
+The button says *Select something to send* until there is a selection, then
+*Send 3 layers* — it names how many go. Under it, **Live** watches the objects
+selected at that moment. The status line under the button reports the result
+of the last transfer, and any fallbacks are listed below.
 
 ### History, and the window
 
@@ -403,8 +407,8 @@ is taken back:
 
 - **After Effects** removes the new layers and project items, matched by id,
   so your own are never touched.
-- **Illustrator** removes new items by uuid, and closes unsaved a document the
-  transfer opened.
+- **Illustrator** removes new items by uuid, and a document the transfer
+  opened is closed without saving.
 - **Photoshop** steps the document back to its history state from before the
   build, so Redo can bring it back.
 
@@ -588,7 +592,7 @@ Only consulted while updating, and only by a host with a timeline.
 | Host | What happens to an image |
 | --- | --- |
 | **After Effects** | Footage has to live somewhere lasting, so images LazyLord generated are copied next to your saved project in `LazyLord Assets/` (never overwriting — `-1`, `-2`… is appended) and imported from there. **A project that has never been saved gets nothing:** a transfer carrying images stops before building and asks you to save the project first, so no footage is ever linked from a temporary folder. Shapes, text and your own linked files need no folder and go ahead. |
-| **After Effects, image sequences** | Copied into a folder of their own (`Walk frames/`), names kept, so After Effects reads them as one sequence. |
+| **After Effects, image sequences** | Copied into a folder of their own inside the same image folder, named after the layer (a layer called *Walk* gives `Walk frames/`), file names kept, so After Effects reads them as one sequence. |
 | **Illustrator** | Generated images are embedded; your own linked files stay linked. |
 | **Photoshop** | Images arrive as smart objects. |
 | **Figma** | Images arrive as bytes and become Figma image fills. |
@@ -629,9 +633,12 @@ swatches; Photoshop sends the document's guides.
 
 ## Presets, history and the log
 
-- **Presets** hold the Destination, the Image scale and every option under one
-  name. Type a name, press **Save**, and pick it from the list to bring it all
-  back. Saving under an existing name replaces it.
+- **Presets** hold the Destination, the Image scale, Layout, Hierarchy,
+  Existing, Keyframes, On conflict, Include guides and Include swatches under
+  one name. (*Only what changed* and *Layers as frames* are not part of a
+  preset; they stay as you last left them.) Type a name, press **Save**, and
+  pick it from the list to bring it all back. Saving under an existing name
+  replaces it.
 - **History** keeps the last 25 transfers each side sent or received, with the
   route, the document name, the layer counts and any fallbacks. Live changes
   stay out of it.
@@ -676,8 +683,8 @@ The one request that goes further is the update check:
   nothing appears unasked for fourteen days, and then only if a newer release
   is out by then. The fortnight is kept in one file every app's panel shares,
   so three apps do not mean three notices.
-- Clicking the version number always checks at once and always reports,
-  whatever the fortnight says.
+- Clicking the version number checks at once and always reports, whatever the
+  fortnight says — or brings the card back when an update is already known.
 - Unticking **Check for updates** stops the requests in that app.
 
 ---

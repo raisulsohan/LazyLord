@@ -145,8 +145,9 @@ Every app both sends and receives, so all twelve directions work:
 | **After Effects** | ✅ | ✅ | — | ✅ |
 | **Photoshop** | ✅ | ✅ | ✅ | — |
 
-What each app can *describe* still differs — After Effects has no inner shadow, Illustrator has
-no timeline, Photoshop's layer styles are not written — and every one of those gaps is
+What each app can *describe* still differs — After Effects has no background blur, Illustrator
+has no timeline and no inner shadow, Photoshop rebuilds shadows and blurs but not the glows and
+overlays it can read — and every one of those gaps is
 reported on the transfer rather than left to be discovered. The tables under
 [What transfers](#what-transfers) say which.
 
@@ -210,7 +211,7 @@ Transfers pushed from Illustrator or pulled from After Effects always go into th
 | Option | Choice | What the receiving app builds |
 | --- | --- | --- |
 | **Layout** | **Split** (default) | One layer per shape |
-| | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. Text, images, gradient-filled shapes and shapes with a different clip stay separate layers (reported). Illustrator and Photoshop ignore it. |
+| | **Combine** | After Effects: every eligible shape in **one** shape layer, one vector group each. Text, images, layers needing a track matte, shapes with a different clip — and gradient-filled shapes when a Gradient Ramp is used, since it colours a whole layer — stay separate layers (reported). Illustrator and Photoshop ignore it. |
 | **Hierarchy** | **Flatten** (default) | Groups dissolve into their layers; a group's opacity is multiplied into its layers (reported when they could overlap) |
 | | **Groups** | Illustrator groups, Photoshop layer groups, After Effects parent **nulls** — or nested shape groups when combining |
 | | **Precomps** | After Effects: each frame becomes a precomp its size. A component and all its instances share **one** precomp; each copy's own text and colours are set in its **Essential Properties** |
@@ -365,8 +366,8 @@ naming the layer and what was lost — it is never dropped quietly.
 | --- | --- | --- | --- | --- |
 | **Blend modes** (all 16) | ✅ native | ✅ native | ✅ native | ✅ native |
 | **Drop shadow** | ✅ native | ✅ Drop Shadow effect | ✅ Drop Shadow live effect (black) | ✅ Drop Shadow layer style |
-| **Shadow spread** | ✅ native | reported | reported | ✅ the style's Spread |
-| **Inner shadow** | ✅ native | reported | reported | ✅ Inner Shadow layer style |
+| **Shadow spread** | ✅ native | ✅ on a layer style (from Photoshop); reported on the Drop Shadow effect | reported | ✅ the style's Spread |
+| **Inner shadow** | ✅ native | ✅ Inner Shadow **layer style** | reported | ✅ Inner Shadow layer style |
 | **Layer blur** | ✅ native | ✅ Gaussian Blur | ✅ Gaussian Blur live effect | ✅ Gaussian Blur smart filter |
 | **Background blur** | ✅ native | reported | reported | reported |
 | **Photoshop layer styles** (from Photoshop) | shadows, glows, stroke, colour overlay | ✅ **as layer styles** | reported | — |
@@ -374,8 +375,13 @@ naming the layer and what was lost — it is never dropped quietly.
 Worth knowing:
 
 - **After Effects describes a shadow differently.** It has no x/y offset — it has a direction
-  dial and a distance — so the IR's offset is converted into them. Its Drop Shadow also has no
-  spread, so a shadow that uses one is rebuilt without it and says so.
+  dial and a distance — so the IR's offset is converted into them. A drop shadow from anywhere
+  but Photoshop becomes the stock **Drop Shadow effect**, which has no spread, so a shadow that
+  uses one is rebuilt without it and says so; one from Photoshop becomes a **layer style**
+  instead, which keeps its spread.
+- **Inner shadows, glows, strokes and overlays become After Effects layer styles**, whatever app
+  they came from — editable in the timeline under Layer Styles. A script cannot set a style's
+  blend mode or a gradient overlay's colours, so those keep After Effects' own and are reported.
 - **A blur radius is not the same number everywhere.** Figma's radius is a standard deviation;
   AE's Blurriness is roughly twice it for the same look, and is converted.
 - **Photoshop layer styles** are read and rebuilt as After Effects layer styles, which take the
@@ -411,7 +417,7 @@ Worth knowing:
 - **Photoshop gradients** longer than Photoshop's 150% scale limit are clamped (reported). Diagonal gradients on long, thin Figma shapes hit this.
 - **Font mapping** relies on family/style name matching; unusual fonts may fall back to the host default.
 - **Mixed-style text** travels as runs (font, size, colour, tracking per range) and is rebuilt as live text; After Effects needs 24.3 or newer for it (`TextDocument.characterRange`), and older versions take the first run's style, reported.
-- **Effects:** blend modes travel everywhere; drop shadows and layer blurs are rebuilt in After Effects, Illustrator and Photoshop, and inner shadows in Photoshop. A background blur is Figma's alone. Illustrator's own live effects are not read when sending from Illustrator, and AE path operators (Merge, Trim, Repeater…) are not transferred; both are reported.
+- **Effects:** blend modes travel everywhere; drop shadows and layer blurs are rebuilt in After Effects, Illustrator and Photoshop; inner shadows and glows in After Effects (as layer styles), Photoshop and Figma. A background blur is Figma's alone — After Effects, Illustrator and Photoshop report it. Illustrator's own live effects are not read when sending from Illustrator, and AE path operators (Merge, Trim, Repeater…) are not transferred; both are reported.
 - **Components share a precomp only with Precomps.** Copies that differ in size, layout, images or styled text get a precomp each ("Button 2"…). Essential Graphics needs After Effects 2019 or newer; without it, differing copies simply get their own precomp.
 - **Adjustment layers only rebuild in After Effects**, and only the kinds in the table above; Curves, Gradient Map, Channel Mixer and the like are reported, as are Levels and Hue/Saturation set per colour channel.
 - **Kerning** needs After Effects 24.0 (method) or 24.3 (kerned pairs). Photoshop's kerned pairs are not read, and Photoshop does not rebuild kerned pairs. Figma always uses the font's own kerning.

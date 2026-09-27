@@ -57,7 +57,7 @@ Four checks answer most problems:
 
 | What you see | What it means |
 | --- | --- |
-| **The dot stays grey, *Bridge offline*** | Nothing is serving port 7878, or something else is holding it. Close every panel, start one Adobe app, and open LazyLord there alone. Press **Reconnect** if it does not come back by itself. |
+| **The dot stays grey** (*Connecting…*, then *Bridge offline*) | Nothing is serving port 7878, or something else is holding it. Close every panel, start one Adobe app, and open LazyLord there alone. Press **Reconnect** if it does not come back by itself. |
 | **The dot was green and went grey** | The app that was hosting the bridge quit. Another panel takes the port over on its next attempt — a few seconds — or press **Reconnect**. |
 | **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first. In a browser, allow Figma to reach apps on this device if it asks. Safari never allows it: use Chrome, Edge, Firefox or the desktop app. |
 | **"The built-in bridge is missing (run install.bat again)"** | The panel was installed from an old build without `js/relay.js`. Install the current release again. A stand-alone bridge (`start-bridge.bat`) also works in the meantime. |
@@ -69,7 +69,7 @@ Four checks answer most problems:
 
 | What you see | What to do |
 | --- | --- |
-| **Send is greyed out** | No other app is connected, or a send is still running (the button says *Sending…*). |
+| **Send is greyed out** | No other app is connected, or a send is still running (the button says *Sending…*). In Figma it also waits for a selection — the button says which is missing. |
 | **"No response from … after 20 s"** | The receiving app is busy rebuilding, or showing a dialog. The panel frees the button but keeps waiting: a reply within five minutes is still reported, marked as a late reply. |
 | **Nothing arrived, and the sender says auto-receive is off** | Tick **Auto-receive** in the receiving app's panel and send again. |
 | **Nothing arrived in Figma** | Look at the plugin: the transfer is waiting under **Incoming**. Press **Place on canvas**. |
@@ -89,7 +89,7 @@ naming the object and what happened to it. Beyond that:
 | What you see | Why |
 | --- | --- |
 | **A shape arrived as a picture** | It could not be described natively: a Photoshop smart object or effect-laden layer, an Illustrator mesh or symbol, a Figma layer marked *Send the selected layers as images*, or a shape whose outline could not be read. The card says which. |
-| **A shape arrived unfilled in Illustrator or Figma** | It came from an After Effects shape layer with a gradient fill you made yourself; scripts cannot read those colours. LazyLord's own gradients do come back. |
+| **A shape arrived unfilled** | It came from an After Effects shape layer with a gradient fill you made yourself; scripts cannot read those colours. LazyLord's own gradients do come back. |
 | **Text arrived in the wrong font** | The font is not installed, or its style name does not match. The card names the font. |
 | **Text lost its mixed styles in After Effects** | Mixed character styles need After Effects 24.3 or newer. |
 | **A paragraph text box became point text** | Area and paragraph text are rebuilt as point text everywhere; the box is not carried over. |
@@ -143,7 +143,7 @@ A few lines from the log, and what they mean:
 | *Removed 3 transfer folders older than 7 days from the temp folder.* | Routine cleaning at start-up. Nothing depends on those folders by then. |
 | *Rebuilt in After Effects: 12 layers created · 3 images (1 original, 2 generated) · fallbacks: 2 approximated / 0 rasterized / 1 skipped* | The one-line summary of a finished transfer. "Original" images are your own files, used in place; "generated" ones LazyLord made. |
 | *LazyLord 1.2.0 is available (this panel is 1.1.10).* | The update check found a newer release. |
-| *Could not check for updates: GitHub answered 403.* | GitHub's API limit (60 requests an hour per internet address) was reached. The panel falls back to the release page, and tries again later. |
+| *Could not check for updates: GitHub answered 403.* | Shown only for a check you asked for, and only when the fallback failed too: GitHub's API limit (60 requests an hour per internet address) was reached *and* the release page could not be read either. Ordinarily the fallback answers and you see nothing. Try again later. |
 
 ---
 

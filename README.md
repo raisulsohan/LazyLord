@@ -108,6 +108,13 @@ path you need on the clipboard. Then:
 Figma asks whether the plugin may talk to `ws://localhost:7878`. That address is
 the LazyLord panel on your own machine. Nothing goes anywhere else.
 
+### The documentation
+
+Everything below is the tour. Everything in detail is in **[docs/](docs/)**:
+**[the manual](docs/manual.md)** (every control and option),
+**[what transfers](docs/transfers.md)** (what travels on each of the twelve
+routes) and **[troubleshooting](docs/troubleshooting.md)**.
+
 ### Updating
 
 The panel tells you when a new LazyLord is out: a card at the top says what
@@ -445,20 +452,6 @@ what happened in detail and I will solve it. The more you send, the faster that 
 
 More symptoms, the messages the panel prints and how to read them are in
 **[docs/troubleshooting.md](docs/troubleshooting.md)**.
-
----
-
-## The manual
-
-The pages above are the tour. Everything in detail is in **[docs/](docs/)**:
-
-- **[The manual](docs/manual.md)** — installing, then every control in the
-  panel and the plugin: destinations, options, update in place, conflicts,
-  Live, images, presets, privacy.
-- **[What transfers](docs/transfers.md)** — what travels on each of the twelve
-  routes, what is approximated, and what each app reports instead.
-- **[If something goes wrong](docs/troubleshooting.md)** — symptoms and fixes,
-  and what to send when you report a problem.
 
 ---
 

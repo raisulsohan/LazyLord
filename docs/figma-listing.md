@@ -73,8 +73,10 @@ Nothing is uploaded. The plugin connects to ws://localhost:7878 — the LazyLord
 panel running on your own machine — and nowhere else. There is no server, no
 account and no analytics, and it works with the internet unplugged.
 
-Free and open source (MIT). The code, the Adobe panel and the full
-documentation are at https://github.com/raisulsohan/LazyLord
+Free and open source (MIT). The code and the Adobe panel are at
+https://github.com/raisulsohan/LazyLord, and the full manual — every option,
+and what travels between each pair of apps — at
+https://github.com/raisulsohan/LazyLord/tree/main/docs
 
 Built by Raisul Sohan — https://raisulsohan.com/
 ```

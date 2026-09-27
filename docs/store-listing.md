@@ -120,6 +120,10 @@ a screenshot and the panel's Log — at lettertosohan@gmail.com, and I will
 solve it.
 
 
+The full manual — every option, what travels between each pair of apps, and
+what to do when something looks wrong:
+https://github.com/raisulsohan/LazyLord/tree/main/docs
+
 Open source, MIT licensed: https://github.com/raisulsohan/LazyLord
 Made by Raisul Sohan — https://raisulsohan.com/
 ```

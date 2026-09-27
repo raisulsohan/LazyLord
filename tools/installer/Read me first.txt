@@ -61,6 +61,14 @@ USING IT
     Live         Keeps one app updating as you work.
 
 
+THE FULL DOCUMENTATION
+----------------------
+  Every control and option, what travels between each pair of apps, and what
+  to do when something looks wrong:
+
+      https://github.com/raisulsohan/LazyLord/tree/main/docs
+
+
 UPDATING
 --------
   The panel tells you when a new LazyLord is out, at most once every two
@@ -95,7 +103,9 @@ IF SOMETHING IS WRONG
       Safari never allows it: use Chrome, Edge, Firefox or the desktop app.
 
   Anything else
-      The panel's Log says what happened. Copy it into an issue at
+      More symptoms and fixes, and what every message in the panel means:
+      https://github.com/raisulsohan/LazyLord/blob/main/docs/troubleshooting.md
+      Still stuck? The panel's Log says what happened. Copy it into an issue at
       https://github.com/raisulsohan/LazyLord/issues
 
 

@@ -32,7 +32,9 @@ flattened screenshot, and not an SVG you have to clean up.
 
 Send again after a change and LazyLord updates what it built before, right
 where it stands — your position, your grouping, your edits kept. If you have
-edited one of those layers by hand it stops and asks which version to keep.
+edited one of those layers by hand, it notices and says so, and the On
+conflict setting decides: overwrite your edit, or leave the layer as you made
+it.
 
 YOU STAY IN CONTROL OF YOUR CANVAS
 Artwork sent from Photoshop, Illustrator or After Effects never lands in your
@@ -46,7 +48,7 @@ WHAT TRAVELS
 • Images at 1x to 4x
 • Linear and radial gradients
 • Masks and clipping frames, groups and hierarchy
-• Blend modes, drop shadows and blurs
+• Blend modes, drop and inner shadows, and blurs
 • Anything an app cannot rebuild is listed on the transfer — never dropped
   silently
 
@@ -56,10 +58,11 @@ After Effects. Install that first, then come back:
 
   https://github.com/raisulsohan/LazyLord/releases/latest
 
-Download the zip, unzip it, run "Install LazyLord.bat" (macOS: the .command
-file), and open the panel with Window > Extensions (legacy) > LazyLord. It
-takes about a minute and needs nothing else — no Node.js, no extension
-manager, no account.
+Download the zip, unzip it, close the Adobe apps and run "1 - Install
+LazyLord.bat" (macOS: the matching .command file). Then open the panel:
+Window > Extensions > LazyLord in Illustrator and After Effects, and
+Window > Extensions (legacy) > LazyLord in Photoshop. It takes about a minute
+and needs nothing else — no Node.js, no extension manager, no account.
 
 Two more things worth knowing:
 • It works in the Figma desktop app and in Chrome, Edge or Firefox. If the
@@ -177,11 +180,20 @@ locally (eg. localStorage, figma.clientStorage, or node.setPluginData).*
 
 Two kinds, both local:
 
-- `setPluginData` on the nodes a transfer builds — a tag saying which object in
-  which document it came from, plus a fingerprint. That is what lets a later
-  send update the node in place instead of dropping a second copy beside it.
+- `setPluginData`, in four places. On each node a transfer builds:
+  `lazylord.tag`, saying which object in which document it came from, and
+  `lazylord.fp`, a fingerprint of what was written — together they let a later
+  send update that node in place instead of dropping a second copy beside it,
+  and let the plugin notice that the user has since edited it. On a frame a
+  transfer creates: `lazylord.root`, so a later update finds the same frame. On
+  a node the user ticks *Send the selected layers as images*:
+  `lazylord.raster`, so the choice holds for later sends. And on the document
+  root: `lazylord.sourceKey`, a random string that tells this file apart from
+  every other one (node ids repeat across files, and `fileKey` is not readable
+  by a public plugin).
 - `figma.clientStorage` for the user's own settings: the chosen target, image
-  scale, options, the recent-transfer list and saved presets.
+  scale, destination, transfer options, the plugin window's size, the
+  recent-transfer list and saved presets.
 
 Neither leaves the machine.
 

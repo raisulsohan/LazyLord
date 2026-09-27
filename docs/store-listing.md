@@ -63,12 +63,13 @@ WHAT YOU GET
 • All twelve routes — every app both sends and receives
 • Update in place — send again and it replaces the layers it made earlier,
   right where they sit, even after the file has been saved and reopened
-• It notices your edits — changed one of those layers by hand? It asks whether
-  to keep your version or overwrite it
+• It notices your edits — changed one of those layers by hand? It says so, and
+  the On conflict setting decides: keep your version, or overwrite it
 • Live — keep one app updating while you work in another
 • Figma components become one shared After Effects precomp, with each copy's
   own text and colours in Essential Graphics
-• Nothing to keep running — no console window, no separate bridge program
+• Nothing extra to run — no console window and no separate bridge program;
+  the LazyLord panel you keep open in one Adobe app is the bridge
 • Honest about gaps — anything an app cannot rebuild is listed on the transfer,
   never silently dropped
 
@@ -92,7 +93,9 @@ WHAT IS IN THE DOWNLOAD
 
 • The LazyLord panel for Photoshop, Illustrator and After Effects — signed
 • The LazyLord plugin for Figma
-• Two numbered installers: run 1, then 2
+• Two numbered installers for Windows and macOS: run 1, then 2
+• An uninstaller, a one-click fix for the blank panel some machines show, and
+  a read-me
 
 No Node.js, no extension manager, no account, no subscription.
 
@@ -101,7 +104,9 @@ REQUIREMENTS
 
 • Windows 10 or 11, or macOS
 • Photoshop, Illustrator or After Effects, 2021 or newer — any one is enough
-• If you use Figma: the desktop app, or Chrome, Edge or Firefox (not Safari)
+• If you use Figma: the desktop app for the plugin in this download, or
+  Chrome, Edge or Firefox once it is installed from Figma Community (Safari
+  cannot reach your own machine, so it never works there)
 
 
 PRIVACY
@@ -158,7 +163,7 @@ No. The apps talk to each other directly on your own computer. There is no serve
 **Will it change or overwrite my existing layers?**
 
 ```
-Only if you ask it to. "Add" always makes new layers. "Update" replaces only the layers LazyLord itself made earlier — and if you have edited one of those by hand, it asks whether to keep your version or overwrite it.
+Only if you ask it to. "Add" always makes new layers. "Update" replaces only the layers LazyLord itself made earlier — and it notices when you have edited one of those by hand: the "On conflict" setting decides whether your version is kept or overwritten, and either way the layer is listed on the transfer.
 ```
 
 **The panel does not show up, or opens blank. What do I do?**

@@ -49,7 +49,7 @@ uploaded, no account is needed, and it keeps working offline.
 | **Real artwork** | Bézier paths stay paths, text stays editable text, images stay images |
 | **Both directions** | All four apps send *and* receive — twelve routes in all |
 | **Update in place** | Send again and it replaces what it made before, where it sits |
-| **Notices your edits** | Changed that layer by hand? It asks before overwriting |
+| **Notices your edits** | Changed that layer by hand? It says so, and **On conflict** decides whether to keep it |
 | **Live** | Keep one app updating as you work in another |
 | **Honest** | Anything an app cannot rebuild is listed, not silently dropped |
 | **Private** | Everything runs on your machine, over your own loopback |
@@ -484,8 +484,10 @@ That is Adobe's own menu name for this kind of panel. Nothing is wrong.
 
 **Will it touch my existing layers?**
 Only if you ask. **Add** always makes new layers. **Update** replaces what
-LazyLord itself made earlier, and if you have edited one of those layers by
-hand it stops and asks which version to keep.
+LazyLord itself made earlier — and it notices when you have edited one of
+those layers by hand. It never prompts mid-transfer: you choose beforehand
+with **On conflict**, either *Overwrite* (the default) or *Keep my edits*, and
+either way the layer is named in the list of fallbacks.
 
 **Can I use it with Figma in the browser?**
 Yes, in Chrome, Edge or Firefox, once the plugin is installed from Figma

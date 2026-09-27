@@ -77,7 +77,7 @@ lazylord/
 
 ## Quick start
 
-**Windows, one step:** double-click `install.bat`. It checks Node.js (and offers to install it with winget), runs `npm install`, builds everything, links the Adobe panel into Photoshop, Illustrator and After Effects with CEP debug mode on, and walks you through the single Figma click (the manifest path is put on your clipboard). Then open the LazyLord panel in any Adobe app — it runs the bridge — and follow [TESTING.md](TESTING.md) for the live-app checklist. `install.bat /uninstall` removes the panel.
+**Windows, one step:** double-click `install.bat`. It checks Node.js (and offers to install it with winget), runs `npm install`, builds everything, links the Adobe panel into Photoshop, Illustrator and After Effects with CEP debug mode on, and walks you through the single Figma click (the manifest path is put on your clipboard). Then open the LazyLord panel in any Adobe app — it runs the bridge — and follow [TESTING.md](../TESTING.md) for the live-app checklist. `install.bat /uninstall` removes the panel.
 
 Manually, on any platform:
 
@@ -220,6 +220,45 @@ Either way the layout reflows rather than overflowing: the Send-to and Image-sca
 `auto-fit` grids, so they go from one column at the narrowest to as many as fit, and stop growing
 past a readable width instead of stretching a handful of chips across a wide window.
 
+
+## Redoing the pictures in docs/
+
+`docs/images/panel.png` and `panel-photoshop.png` are the real panel, not a mockup
+and not a drawing. To remake them after a UI change:
+
+```
+node tools/docs-shots.mjs
+```
+
+It needs Google Chrome, which takes the screenshots, and a built bridge
+(`packages/bridge/dist/server.js` — `install.bat` builds it).
+
+The panel is a web page already. The only thing it has inside Photoshop,
+Illustrator or After Effects that a plain browser does not is
+`window.__adobe_cep__`, the object CEP injects, so `tools/docs-shot-server.mjs`
+serves the real files untouched and inserts one `<script>` before
+`csinterface.js` that supplies it. Everything after that — the stylesheet, the
+layout, the strings, the bridge connection — is the panel doing its real work.
+
+Two copies are served, one reporting After Effects and one Photoshop, and both
+connect to a real bridge. So each genuinely sees the other as a peer and offers
+to send to it: the **Send to Photoshop** in the picture is the panel's own doing,
+not a caption.
+
+Three things worth knowing before changing that script:
+
+- **The bridge refuses origins it does not know**, which is exactly why a web
+  page cannot talk to it by accident. `LAZYLORD_ALLOW_ORIGINS` is its own
+  supported way to let one in — the same switch the Figma plugin needs — and the
+  script uses that rather than working around the check.
+- **Chrome's `--screenshot` fires as soon as the page loads**, which is before
+  the bridge answers and before the peer list arrives, so the panel would be
+  photographed half awake. `--virtual-time-budget` lets its clock and network run
+  on first.
+- **`--window-size` is in CSS pixels and the scale factor multiplies it**, so 520
+  wide at 2× writes a 1040px picture of a 520px panel. Below about 460 the
+  panel's own layout starts running off the right edge, so 520 is the narrowest
+  width worth photographing.
 
 ## Host-API assumptions still to be confirmed
 

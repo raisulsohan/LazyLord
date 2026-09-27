@@ -175,6 +175,11 @@ transfer under **Incoming**, and it reaches the canvas only when you press
 
 ## The Adobe panel
 
+<img src="images/panel.png" width="420" alt="The LazyLord panel in After Effects: connected, Send to Photoshop, image scale, destination, options, precomps">
+
+*In After Effects, with Photoshop open too. In Photoshop the same panel
+reads **Send to After Effects**, and the Precomps row is not there.*
+
 The panel is the same in all three apps; only the parts that do not apply are
 hidden. Every choice is remembered **per app**, so Illustrator and After
 Effects can each keep their own.

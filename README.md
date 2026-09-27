@@ -136,6 +136,20 @@ In Figma: **Plugins → Development → Manage plugins in development → remove
 
 ## What talks to what
 
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/panel.png" alt="The LazyLord panel in After Effects, connected, offering to send to Photoshop" width="100%"></td>
+<td width="50%" valign="top"><img src="docs/images/panel-photoshop.png" alt="The LazyLord panel in Photoshop, connected, offering to send to After Effects" width="100%"></td>
+</tr>
+<tr>
+<td align="center"><em>After Effects</em></td>
+<td align="center"><em>Photoshop</em></td>
+</tr>
+</table>
+
+*The same panel in two apps, each seeing the other. Whichever app you are
+in, the other one appears under **Send to** and the button names it.*
+
 Every app both sends and receives, so all twelve directions work:
 
 | sends ↓ / receives → | Figma | Illustrator | After Effects | Photoshop |

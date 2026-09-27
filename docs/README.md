@@ -8,6 +8,8 @@ The [README](../README.md) is the tour. These pages are the detail.
 
 *Written for LazyLord 1.1.10.*
 
+<img src="images/panel.png" alt="The LazyLord panel in After Effects" width="380">
+
 ## Using it
 
 | | |

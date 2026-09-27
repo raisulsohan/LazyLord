@@ -17,7 +17,7 @@ editable paths, live text, proper layers — not a flattened screenshot.
 [![Licence: MIT](https://img.shields.io/badge/Licence-MIT-2ea043?style=for-the-badge&labelColor=1a1a1a)](LICENSE)
 [![Windows and macOS](https://img.shields.io/badge/Windows-%C2%B7%20macOS-444?style=for-the-badge&labelColor=1a1a1a)](#what-you-need)
 
-**[Download](#download-and-install) · [How to use it](#what-talks-to-what) · [What travels](#what-transfers) · [Trouble?](#if-something-goes-wrong)**
+**[Download](#download-and-install) · [How to use it](#what-talks-to-what) · [What travels](#what-transfers) · [The manual](docs/) · [Trouble?](#if-something-goes-wrong)**
 
 **Stuck somewhere?** [Email me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) at **lettertosohan@gmail.com** with the details, and I will sort it out.
 
@@ -443,6 +443,23 @@ what happened in detail and I will solve it. The more you send, the faster that 
 | **Figma says it cannot connect** | Open a LazyLord panel in Photoshop, Illustrator or After Effects first. In a browser, allow Figma to reach apps on this device if it asks; Safari never allows it, so use Chrome, Edge, Firefox or the desktop app. |
 | **Something arrived wrong** | Open **Log** in the panel and copy what it says, then [email me](mailto:lettertosohan@gmail.com?subject=LazyLord%20problem) that and a screenshot of both sides (or [open an issue](../../issues)). The panel lists everything it could not rebuild, so the answer is usually already in there. |
 
+More symptoms, the messages the panel prints and how to read them are in
+**[docs/troubleshooting.md](docs/troubleshooting.md)**.
+
+---
+
+## The manual
+
+The pages above are the tour. Everything in detail is in **[docs/](docs/)**:
+
+- **[The manual](docs/manual.md)** — installing, then every control in the
+  panel and the plugin: destinations, options, update in place, conflicts,
+  Live, images, presets, privacy.
+- **[What transfers](docs/transfers.md)** — what travels on each of the twelve
+  routes, what is approximated, and what each app reports instead.
+- **[If something goes wrong](docs/troubleshooting.md)** — symptoms and fixes,
+  and what to send when you report a problem.
+
 ---
 
 ## Questions people ask
@@ -489,6 +506,7 @@ running the test suites and how the pieces fit together are in
 **[docs/development.md](docs/development.md)**. Packaging a signed release of
 your own is in **[PUBLISHING.md](PUBLISHING.md)**, and
 **[docs/history.md](docs/history.md)** keeps the notes from how it was built.
+Everything else is indexed in **[docs/](docs/)**.
 
 Issues and pull requests are welcome.
 

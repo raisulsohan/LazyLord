@@ -175,9 +175,9 @@ function count(dir) {
 
 /*
  * package.json holds the version; the panel's manifest and its ExtendScript
- * each carry a copy, and so do the workspace packages and the README's
- * download line. Keep them in step here rather than asking a person to
- * remember them all — Adobe decides whether an install is an update by
+ * each carry a copy, and so do the workspace packages, the README's download
+ * line and the documentation. Keep them in step here rather than asking a
+ * person to remember them all — Adobe decides whether an install is an update by
  * comparing the manifest version, so a stale one ships as "already installed",
  * and a workspace asking for an old @lazylord/core breaks npm install.
  */
@@ -192,6 +192,23 @@ function syncVersion() {
       file: join(root, "README.md"),
       find: /(LazyLord-)\d+\.\d+\.\d+(\.zip)/g,
       to: `$1${VERSION}$2`,
+    },
+    // The documentation says which LazyLord it describes, and the manual
+    // shows the version the panel's header carries.
+    ...["manual.md", "transfers.md", "troubleshooting.md"].map((name) => ({
+      file: join(root, "docs", name),
+      find: /(This describes LazyLord )\d+\.\d+\.\d+/g,
+      to: `$1${VERSION}`,
+    })),
+    {
+      file: join(root, "docs", "README.md"),
+      find: /(Written for LazyLord )\d+\.\d+\.\d+/g,
+      to: `$1${VERSION}`,
+    },
+    {
+      file: join(root, "docs", "manual.md"),
+      find: /(`v)\d+\.\d+\.\d+/g,
+      to: `$1${VERSION}`,
     },
     {
       file: join(root, "packages", "adobe-cep", "CSXS", "manifest.xml"),

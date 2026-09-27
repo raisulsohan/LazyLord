@@ -2,7 +2,9 @@
 
 You do **not** need any of this to use LazyLord — the release on the
 [releases page](../../../releases) installs with a double-click. This is for
-changing it.
+changing it. Using it is [the manual](manual.md), what travels on each route
+is [transfers.md](transfers.md), and everything is indexed in
+[docs/](README.md).
 
 ## How it works
 
@@ -102,19 +104,17 @@ npm test
 Enable CEP debug mode and link the panel into your CEP extensions folder:
 
 ```bash
+# Windows (PowerShell)
+./tools/install-cep.ps1
 
-### Install the Figma plugin
+# macOS
+./tools/install-cep.sh
+```
 
-1. `npm run build:figma` (already done by `npm run build`).
-2. In the Figma **desktop** app: **Menu → Plugins → Development → Import plugin from manifest…**
-3. Pick `packages/figma-plugin/manifest.json`.
-4. Run **Plugins → Development → LazyLord**.
-
-### Install the Adobe panel
-
-Enable CEP debug mode and link the panel into your CEP extensions folder:
-
-```bash
+Both set `PlayerDebugMode` for CSXS 9-12 and link `packages/adobe-cep` into
+the per-user extensions folder, so an edit to the panel needs no reinstall —
+only a restart of the host app when `CSXS/manifest.xml` changes. Pass
+`-Uninstall` (or `--uninstall`) to remove the link.
 
 ## Development
 
@@ -183,63 +183,6 @@ They pin down the maths that is otherwise invisible until something looks wrong 
 - A host that can push ships a **reader** module registered in `READ_MODULE` in `js/main.js`. Adding one is how the remaining directions get built.
 - **Identity** is `source app | source document | layer id`, built by `LazyLord.tagKey` and stored on the built layer by the host's own means. `Document.sourceKey` carries the middle part: without it, ids from different files would collide. The tag helpers in `lazylord.jsx` are host-agnostic; only reading and writing the field is per-host, which is what a Photoshop implementation would have to solve.
 - An update **writes what LazyLord owns and searches for it first** (`_ae_findParts`) rather than trusting the structure it left behind, so a layer the user has since reworked is reported instead of clobbered.
-
-### Tests
-
-The CEP side is plain ES3 and needs no build, so it is checked with Windows Script Host, whose JScript engine is the same language level ExtendScript targets. No install required:
-
-```bash
-cscript //Nologo tools\check-extendscript.js
-```
-
-That parses every `.jsx`/`.js` file in the panel and catches what modern editors accept but ExtendScript rejects — above all **trailing commas**, which throw at load time. The other suites run the real modules against mocked host DOMs:
-
-```bash
-cscript //Nologo tools\test-ae-builder.js
-```
-```bash
-cscript //Nologo tools\test-ai-builder.js
-```
-```bash
-cscript //Nologo tools\test-ps-builder.js
-```
-```bash
-cscript //Nologo tools\test-illustrator-reader.js
-```
-```bash
-cscript //Nologo tools\test-aftereffects-reader.js
-```
-```bash
-cscript //Nologo tools\test-photoshop-reader.js
-```
-```bash
-cscript //Nologo tools\test-cep-panel.js
-```
-```bash
-cscript //Nologo tools\test-rollback.js
-```
-
-The core geometry and the Figma plugin's serialiser run under Node ≥ 22.7 with type stripping (the script copies the core sources to `.lazylord-tmp/` first):
-
-```bash
-node --experimental-transform-types tools/test-core.mjs
-```
-
-They pin down the maths that is otherwise invisible until something looks wrong on screen: y-flips, tangent signs, rotation direction and pivots, gradient handles, clip spaces, group order and opacity, and every fallback's diagnostic. The Phase 3 suites cover the mapping engine end to end — tags surviving a user's own comment, ids from different files not matching, a second transfer editing rather than duplicating, keys landing at the playhead, and a reworked shape being reported rather than clobbered. The v0.6 ones add the Photoshop reader, the Figma builder (including a subpaths → SVG → subpaths round trip and gradient handles that survive the transform they are turned into), and that a shadow offset becomes the direction-and-distance dial After Effects actually uses.
-
-### Architecture notes
-
-- The **IR** (`packages/core/src/ir.ts`) is the contract. Y is down everywhere (Figma/AE convention); Illustrator and Photoshop flip Y against the active artboard/canvas on the way in and out.
-- A layer's geometry is in its **local** space (origin at its frame's top-left); frames, clip paths and group boxes are in **frame** space (selection-normalised). Vectors are always baked (rotation 0); text and images carry a clockwise rotation about their frame centre.
-- Bezier tangents are stored **relative to their vertex** (After Effects `Shape` convention), so AE reconstruction is direct and other hosts add the anchor back. Converting a point and its handle *before* subtracting is what makes the y-flip come out right.
-- **Groups** are structural: a group's children keep frames in the same frame space, so a target that does not rebuild hierarchy just flattens (`LazyLord.flattenLayers`).
-- All SVG-path parsing (including arcs and quadratics → cubics) happens once in `packages/core/src/svg-path.ts`; ExtendScript only ever consumes plain numbers.
-- `Document.originSpace` says whether `bounds` is a real page offset (`"document"`: Illustrator, After Effects, Figma inside one frame) or an arbitrary canvas point (`"canvas"`). Only the former is added back when placing, and only then does `Document.canvas` size a new document or comp.
-- Every conversion that is not native records a diagnostic (`approximated`, `rasterized` or `skipped`) naming the object and the reason.
-- A host that can push ships a **reader** module registered in `READ_MODULE` in `js/main.js`. Adding one is how the remaining directions get built.
-- **Identity** is `source app | source document | layer id`, built by `LazyLord.tagKey` and stored on the built layer by the host's own means. `Document.sourceKey` carries the middle part: without it, ids from different files would collide. The tag helpers in `lazylord.jsx` are host-agnostic; only reading and writing the field is per-host, which is what a Photoshop implementation would have to solve.
-- An update **writes what LazyLord owns and searches for it first** (`_ae_findParts`) rather than trusting the structure it left behind, so a layer the user has since reworked is reported instead of clobbered.
-
 
 ## The interface: one stylesheet, two hosts
 

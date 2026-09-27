@@ -108,6 +108,13 @@ the slot is worth more as an app name.
 https://github.com/raisulsohan/LazyLord/issues
 ```
 
+**The issues link, not an email.** Figma prints this on the listing as
+*Support:*, and it is the one field a user clicks when something has gone
+wrong: an issue stays readable, searchable and answerable in public, while a
+mailbox is one address away from breaking. The version published on 17
+September 2026 still carries an old email address there — replace it when
+republishing.
+
 ---
 
 ## Before any of this: two-factor authentication

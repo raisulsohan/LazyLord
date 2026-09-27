@@ -197,7 +197,10 @@ node tools/render-art.mjs
      নির্দেশনা পাওয়া যাক।
    - **Tags** — যেমন: illustrator, photoshop, after effects, export, vector,
      handoff, motion
-   - **Support contact** — একটা ইমেইল বা GitHub issues-এর লিংক। এটা বাধ্যতামূলক।
+   - **Support contact** — `https://github.com/raisulsohan/LazyLord/issues`
+     (বাধ্যতামূলক ফিল্ড)। ইমেইল নয়: এটা লিস্টিংয়ে *Support:* হিসেবে দেখায়, আর
+     issues লিংক পাবলিক, সার্চযোগ্য ও কখনো বদলায় না। `docs/figma-listing.md`-এ
+     পুরো লেখাটা পেস্ট করার মতো করে রাখা আছে।
    - আইকন আর থাম্বনেইল।
 3. Submit for review।
 

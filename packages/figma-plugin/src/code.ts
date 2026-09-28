@@ -31,6 +31,7 @@ import type {
   Document,
   GroupLayer,
   Guide,
+  ImageBudget,
   ImageLayer,
   Layer,
   Paint,
@@ -51,6 +52,9 @@ import {
   curveBounds,
   gradientHandlesFromTransform,
   groupBox,
+  imageBudget,
+  imageScale,
+  imageScaleNote,
   intersectBoxes,
   isAxisAligned,
   isSimilarity,
@@ -448,6 +452,8 @@ type Ctx = {
   origin: Vec2;
   /** Export scale for rasterised nodes. */
   scale: number;
+  /** What this document may still spend on rasterised nodes (core's image limits). */
+  budget: ImageBudget;
   // No inherited opacity: every container above a node is a group of its own
   // carrying its opacity, so a leaf's frame.opacity is only ever its own.
   clip: ClipState | null;
@@ -489,7 +495,7 @@ async function buildDocument(
   }
   const origin = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
 
-  const ctx: Ctx = { origin, scale, clip: null, diag: { list: [], keys: new Set() } };
+  const ctx: Ctx = { origin, scale, budget: imageBudget(), clip: null, diag: { list: [], keys: new Set() } };
   const layers: Layer[] = [];
   await collectSiblings(selection, ctx, layers, true);
 
@@ -1332,18 +1338,27 @@ function hasImageFill(node: SceneNode): boolean {
  */
 async function nodeToImage(node: SceneNode, ctx: Ctx): Promise<ImageLayer | null> {
   const any = node as any;
-  let bytes: Uint8Array;
-  try {
-    bytes = await any.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: ctx.scale } });
-  } catch (e) {
-    warn(ctx, node.name, `Could not be exported as an image (${(e as Error).message || e}), so it was left out`, "skipped");
-    return null;
-  }
   const rb = (any.absoluteRenderBounds || any.absoluteBoundingBox) as Box | null;
   if (!rb) {
     warn(ctx, node.name, "Has no visible area to export, so it was left out", "skipped");
     return null;
   }
+  // Held under core's image size limits: a huge node goes at a lower scale
+  // rather than as a hundred-megapixel PNG, and past the document's budget
+  // it is left out. It still sits at its full size; only its resolution drops.
+  const fit = imageScale(rb.width, rb.height, ctx.scale, ctx.budget);
+  if (fit.skip) {
+    warn(ctx, node.name, `Left out: ${imageScaleNote(fit, rb.width, rb.height)}`, "skipped");
+    return null;
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await any.exportAsync({ format: "PNG", constraint: { type: "SCALE", value: fit.scale } });
+  } catch (e) {
+    warn(ctx, node.name, `Could not be exported as an image (${(e as Error).message || e}), so it was left out`, "skipped");
+    return null;
+  }
+  if (fit.clamped) warn(ctx, node.name, imageScaleNote(fit, rb.width, rb.height), "approximated");
   const frame = { x: rb.x - ctx.origin.x, y: rb.y - ctx.origin.y, width: rb.width, height: rb.height, rotation: 0, opacity: 1 };
   const size = pngSize(bytes);
   const layer: ImageLayer = {
@@ -1357,8 +1372,8 @@ async function nodeToImage(node: SceneNode, ctx: Ctx): Promise<ImageLayer | null
     // these pixels, and sending them too would draw every shadow twice.
     blendMode: readBlend(node, ctx),
     pngBase64: figma.base64Encode(bytes),
-    pixelWidth: size ? size.width : Math.max(1, Math.round(frame.width * ctx.scale)),
-    pixelHeight: size ? size.height : Math.max(1, Math.round(frame.height * ctx.scale)),
+    pixelWidth: size ? size.width : Math.max(1, Math.round(frame.width * fit.scale)),
+    pixelHeight: size ? size.height : Math.max(1, Math.round(frame.height * fit.scale)),
   };
   attachClip(layer, ctx, frame);
   return layer;

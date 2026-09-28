@@ -71,7 +71,7 @@ uploaded, no account is needed, and it keeps working offline.
 
 ### 1. The Adobe panel
 
-1. **[Download `LazyLord-1.1.10.zip`](../../releases/latest)** from the releases page.
+1. **[Download `LazyLord-1.1.11.zip`](../../releases/latest)** from the releases page.
 2. **Unzip it** — right-click → *Extract All* on Windows, double-click on macOS.
    Do not run anything from inside the zip itself.
 3. **Close** Photoshop, Illustrator and After Effects.
@@ -436,6 +436,7 @@ Worth knowing:
 - **Adjustment layers only rebuild in After Effects**, and only the kinds in the table above; Curves, Gradient Map, Channel Mixer and the like are reported, as are Levels and Hue/Saturation set per colour channel.
 - **Kerning** needs After Effects 24.0 (method) or 24.3 (kerned pairs). Photoshop's kerned pairs are not read, and Photoshop does not rebuild kerned pairs. Figma always uses the font's own kerning.
 - **Layers as frames** is a one-off send: Live and Update keep layers in step, not sequences.
+- **Big pictures are held down.** One generated image is kept under 30 megapixels (12,000 px a side) and a transfer's generated images together under 300 megapixels: a layer past that goes at a lower scale, below 1x if it must, and once the transfer's share is spent the rest are left out — reported either way, with the layer still at its full size on the page. Without this, a big old PSD sent at 2x could ask Photoshop for hundreds of megapixels per layer and stall the whole machine. Your own linked files are never resampled.
 - **Figma in the browser** works in Chrome, Edge and Firefox once the plugin comes from Figma Community; Safari does not let a web page reach the panel.
 - A clip on a group (rather than on its layers) is not rebuilt by After Effects. No source produces one today.
 - Combining shapes in After Effects may pull a shape above its neighbours when only some shapes in a Figma clipping frame carry the clip (reported).

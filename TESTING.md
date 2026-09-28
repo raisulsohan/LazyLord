@@ -142,6 +142,7 @@
 - [ ] **Destination = New — selection size:** শুধু সিলেকশনের মাপে নতুন document, আর্টওয়ার্ক তার origin-এ।
 - [ ] **Image scale:** 1x আর 4x দিয়ে এমন কিছু পাঠান যা raster হয় (mesh, symbol, PS pixel layer) — 4x-এর ছবি স্পষ্ট বেশি ধারালো।
 - [ ] অ্যাপ বন্ধ করে খুললে Destination আর scale মনে থাকে।
+- [ ] ⚠ **বড় ছবির সীমা (v1.1.11):** Photoshop-এ 8000×6000-এর একটা pixel layer 2x-এ Illustrator-এ পাঠান — Photoshop আটকে না থেকে কয়েক সেকেন্ডে ফেরে, লেয়ারটা পুরো মাপেই বসে, আর Fallbacks-এ *Exported at 0.79x rather than 2x* আসে। এমন দশটার বেশি লেয়ার একসঙ্গে পাঠালে বাড়তিগুলো *send fewer layers* বলে বাদ যায়। (একজন ইউজারের রিপোর্ট: বড় পুরোনো PSD-তে effect layer rasterize করে PS → AI পাঠাতে গোটা PC হ্যাং।)
 
 ## ৬ঘ. Blend mode আর Effects — নতুন
 

@@ -4,7 +4,7 @@ What LazyLord can carry on each of the twelve routes, what it can only
 approximate, and what it tells you about instead. The everyday side of this is
 in [the manual](manual.md); this page is the reference.
 
-*This describes LazyLord 1.1.10.*
+*This describes LazyLord 1.1.11.*
 
 ---
 
@@ -378,6 +378,14 @@ both a layer mask and a clipping mask keeps one and reports the other.
 - Anything LazyLord generates — Figma bytes, a rasterised fallback, an
   embedded raster — is written as a PNG at the chosen **Image scale** (1x–4x,
   2x by default).
+- **One generated image is kept under 30 megapixels (12,000 px a side)**, and
+  the generated images of one transfer together under 300 megapixels: a
+  layer past that goes at a lower scale — below 1x if it must — and once the
+  transfer's share is spent the rest are left out. Either way the layer keeps
+  its full size on the page, only its resolution drops, and the Fallbacks
+  card says which (*Exported at 0.79x rather than 2x*, or *send fewer layers
+  at once*). Without this, a big old PSD sent at 2x could ask Photoshop for
+  hundreds of megapixels per layer and stall the whole machine.
 - **After Effects** copies generated images into `LazyLord Assets/` beside the
   saved project (or a folder you chose) and links them from there. A project
   that has never been saved stops the transfer with a message rather than

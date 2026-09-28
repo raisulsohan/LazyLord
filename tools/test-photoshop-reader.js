@@ -419,6 +419,48 @@ WScript.Echo("");
     ok("raster: the scratch document was scaled", !!app.created[0].resized, dump(app.created[0].resized));
 })();
 
+// 4b) Image size limits: a layer the size of a big canvas is held under 30 MP by
+// exporting it at a lower scale; it still sits at its full size on the page.
+// Past the transfer's 300 MP the rest are left out and say so.
+(function () {
+    reset();
+    var big = layer("Poster", LayerKind.NORMAL, [0, 0, 8000, 6000]);
+    var doc = setUp(makeDoc({ width: 8000, height: 6000, layers: [big] }));
+    select(doc, [big]);
+    var l = readIt({ scale: 2 }).layers[0];
+    // 8000 x 6000 = 48 MP at 1x; sqrt(30/48) = 0.79 at two decimals.
+    var rs = app.created[0].resized;
+    ok("big raster: the scratch document was scaled to 0.79x, not 2x", !!rs && near(rs[0], 6320) && near(rs[1], 4740), dump(rs));
+    ok("big raster: pixel size follows the scale used", l.pixelWidth === 6320 && l.pixelHeight === 4740, l.pixelWidth + "x" + l.pixelHeight);
+    ok("big raster: still placed at its full size", near(l.frame.width, 8000) && near(l.frame.height, 6000), dump(l.frame));
+    var d = diagWith(/0\.79x rather than 2x/);
+    ok("big raster: reported, with the size it would have been", d !== null && d.resolution === "approximated" &&
+       /16000 x 12000 px \(192 MP\)/.test(d.reason), dump(LazyLord.diagnostics));
+
+    reset();
+    var stack = [];
+    for (var i = 0; i < 12; i++) stack.push(layer("Plate " + i, LayerKind.NORMAL, [0, 0, 6000, 5000]));
+    doc = setUp(makeDoc({ width: 6000, height: 5000, layers: stack }));
+    select(doc, stack);
+    var out = readIt({ scale: 1 });
+    ok("too many: ten 30 MP layers use the transfer's 300 MP; two are left out",
+       out.layers.length === 10 && MOCK.exports.length === 10, out.layers.length + " built, " + MOCK.exports.length + " exported");
+    var left = diagWith(/send fewer layers, or send this one on its own/);
+    ok("too many: the ones left out say why", left !== null && left.resolution === "skipped", dump(LazyLord.diagnostics));
+    ok("too many: the ones that went are at full 1x", out.layers[0].pixelWidth === 6000 && out.layers[9].pixelWidth === 6000,
+       out.layers[0].pixelWidth + " / " + out.layers[9].pixelWidth);
+
+    // The helper itself: a small image is untouched, a wide one is held by its side.
+    reset();
+    var fit = LazyLord.imageScale(200, 100, 4, LazyLord.imageBudget());
+    ok("imageScale: a small image keeps the scale asked for", fit.scale === 4 && !fit.clamped && !fit.skip, dump(fit));
+    fit = LazyLord.imageScale(20000, 100, 1, LazyLord.imageBudget());
+    ok("imageScale: a 20000 px wide image is held to 12000 px a side (0.6x)", fit.scale === 0.6 && fit.why === "side", dump(fit));
+    var budget = { left: 1000 };
+    fit = LazyLord.imageScale(1000, 1000, 1, budget);
+    ok("imageScale: an exhausted budget skips, and charges nothing", fit.skip === true && budget.left === 1000, dump(fit));
+})();
+
 // 6) The scale option reaches the export; 1x does not resize at all.
 (function () {
     reset();

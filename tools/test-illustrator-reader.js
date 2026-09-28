@@ -1933,6 +1933,26 @@ function linkedImage(file, bw, bh, deg, opts) {
     }
 })();
 
+(function () {
+    // Image size limits: an 8000 x 6000 item (48 MP at 1x) is exported at
+    // 0.79x rather than the 2x asked for, so it stays under 30 MP; it is still
+    // placed at its full size, and the drop is reported.
+    var realExport = LazyLord._air_export, asked = [];
+    LazyLord._air_export = function (item, outPath, scalePct) { asked.push(scalePct); };
+    try {
+        var it = linkedImage("gone.png", 8000, 6000, 0);
+        it.file = { exists: false };
+        var l = readSel([it]).layers[0];
+        ok("big raster: exported at 79%, not 200%", asked.length === 1 && near(asked[0], 79), String(asked));
+        ok("big raster: pixel size follows the scale used", l.pixelWidth === 6320 && l.pixelHeight === 4740,
+           l.pixelWidth + "x" + l.pixelHeight);
+        ok("big raster: still placed at its full size", near(l.frame.width, 8000) && near(l.frame.height, 6000), fr(l.frame));
+        ok("big raster: reported", warned("0.79x rather than 2x", "approximated"), diags());
+    } finally {
+        LazyLord._air_export = realExport;
+    }
+})();
+
 // Live sync: the stamp the panel polls.
 (function () {
     var sq = squarePath();

@@ -4,7 +4,7 @@
 Tell me what happened in detail and I will sort it out. Most of what is below
 you can fix in a minute without writing to anyone.
 
-*This describes LazyLord 1.1.10.*
+*This describes LazyLord 1.1.11.*
 
 ---
 
@@ -78,6 +78,7 @@ Four checks answer most problems:
 | **A build failed part-way** | What it had made is taken back automatically — new layers and items are removed, or Photoshop steps back to its history state from before the build. Layers an *Update* had already edited stay edited; use Undo. |
 | **"The host scripts are not loaded yet"** | The app was busy or still starting when the panel opened. Press **Send** (or send again): the panel loads them once more. If it keeps failing, the log names the file and line. |
 | **"Preferences cannot be stored here"** | The panel's storage is locked down on this machine. Everything still works; the options simply reset when the panel closes. |
+| **Photoshop, or the whole computer, freezes while a big document is sent** | Every layer that has to travel as a picture — a pixel layer, a smart object, a rasterised effect layer — is exported through a scratch document its own size, and Photoshop is busy until that is done. Since 1.1.11 one image is kept under 30 megapixels and a transfer under 300, so a big old PSD no longer asks for gigabytes at once; if you are on an older version, update. On any version: send fewer layers at a time, choose **1x** under Image scale, and rasterise only what has to be. |
 
 ---
 
@@ -144,6 +145,8 @@ A few lines from the log, and what they mean:
 | *Rebuilt in After Effects: 12 layers created · 3 images (1 original, 2 generated) · fallbacks: 2 approximated / 0 rasterized / 1 skipped* | The one-line summary of a finished transfer. "Original" images are your own files, used in place; "generated" ones LazyLord made. |
 | *LazyLord 1.2.0 is available (this panel is 1.1.10).* | The update check found a newer release. |
 | *Could not check for updates: GitHub answered 403.* | Shown only for a check you asked for, and only when the fallback failed too: GitHub's API limit (60 requests an hour per internet address) was reached *and* the release page could not be read either. Ordinarily the fallback answers and you see nothing. Try again later. |
+| *Exported at 0.79x rather than 2x: at 2x it would be 16000 x 12000 px (192 MP)…* (Fallbacks card) | The layer was too big to export at the scale you chose, so it went at a lower one. It is still placed at its full size; only its resolution dropped. Send it on its own at 1x if it must be sharper. |
+| *Left out: this transfer already carries 300 MP of generated images…* (Fallbacks card) | The transfer's share of pictures was used up before this layer. Send fewer layers at once, or send this one on its own. |
 
 ---
 

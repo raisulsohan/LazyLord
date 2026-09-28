@@ -32,7 +32,7 @@ writeFileSync(join(figmaEsm, "package.json"), JSON.stringify({ type: "module" })
 // The same modules as packages/core/src/index.ts.
 writeFileSync(
   join(figmaEsm, "core.ts"),
-  ["ir", "protocol", "geometry", "svg-path"].map((m) => `export * from "../core-esm/${m}.ts";\n`).join("")
+  ["ir", "protocol", "geometry", "svg-path", "images"].map((m) => `export * from "../core-esm/${m}.ts";\n`).join("")
 );
 const pluginSrc = join(root, "packages", "figma-plugin", "src");
 for (const f of ["code.ts", "ui.ts", "build.ts"]) {
@@ -1401,6 +1401,29 @@ const frameNode = (name, w, h, t, props = {}) =>
   const d3 = await docFor([broken, rectNode(5, 5, T(0))]);
   ok("unreadable contour: reported", diag(d3, "Broken", "skipped", "could not be read"));
   ok("unexportable node: skipped with its reason", diag(d3, "Broken", "skipped", "export failed") && d3.layers.length === 1);
+}
+
+// Image size limits: a huge node is exported at a lower scale than asked for
+// (under 30 MP), still placed at its full size, and the drop is reported; past
+// the document's 300 MP the rest are left out.
+{
+  const imageFill = () => [{ type: "IMAGE", visible: true, scaleMode: "FILL", imageHash: "big" }];
+  const huge = rectNode(8000, 6000, T(0), { name: "Huge", fills: imageFill(), absoluteRenderBounds: { x: 0, y: 0, width: 8000, height: 6000 } });
+  const d = await docFor([huge], [huge], 2);
+  // 48 MP at 1x; sqrt(30/48) = 0.79 at two decimals.
+  ok("huge image: exported at 0.79x rather than 2x", exportCalls.length === 1 && exportCalls[0].settings.constraint.value === 0.79);
+  ok("huge image: still placed at its full size", near(d.layers[0].frame.width, 8000) && near(d.layers[0].frame.height, 6000));
+  ok("huge image: pixel size follows the scale used", d.layers[0].pixelWidth === 6320 && d.layers[0].pixelHeight === 4740);
+  ok("huge image: reported with the size it would have been", diag(d, "Huge", "approximated", "16000 x 12000 px (192 MP)"));
+
+  const plates = [];
+  for (let i = 0; i < 12; i++) {
+    plates.push(rectNode(6000, 5000, T(0, i, 0), { name: `Plate ${i}`, fills: imageFill(), absoluteRenderBounds: { x: i, y: 0, width: 6000, height: 5000 } }));
+  }
+  const d2 = await docFor(plates, plates, 1);
+  ok("too many images: ten 30 MP nodes use the 300 MP; two are left out", d2.layers.length === 10 && exportCalls.length === 10);
+  ok("too many images: the ones left out say why", diag(d2, "Plate 10", "skipped", "send fewer layers") && diag(d2, "Plate 11", "skipped"));
+  ok("too many images: the ones that went are at full 1x", d2.layers[0].pixelWidth === 6000);
 }
 
 // Diagnostics.

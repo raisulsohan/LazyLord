@@ -6,7 +6,7 @@ layers. It is free, open source and runs entirely on your own machine.
 
 The [README](../README.md) is the tour. These pages are the detail.
 
-*Written for LazyLord 1.1.10.*
+*Written for LazyLord 1.1.11.*
 
 <img src="images/panel.png" alt="The LazyLord panel in After Effects" width="380">
 

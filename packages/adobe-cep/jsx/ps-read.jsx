@@ -78,6 +78,7 @@ LazyLord.readSelection = function (outDir, opts) {
       target: (opts && opts.target) || "",
       idCounter: 1,
       imageIndex: 0,
+      budget: LazyLord.imageBudget(),
       minX: 0,
       minY: 0,
       pathK: LazyLord._psr_pathScale(psDoc)
@@ -849,17 +850,27 @@ LazyLord._psr_raster = function (ctx, lyr, reason, lifted) {
   }
 
   var name = lyr.name || "Layer";
+
+  // Held under the image size limits (lazylord.jsx): a layer the size of a
+  // big canvas goes at a lower scale rather than as a hundred-megapixel
+  // scratch document, and past the transfer's budget it is left out.
+  var fit = LazyLord.imageScale(box.width, box.height, ctx.scale, ctx.budget);
+  if (fit.skip) {
+    LazyLord.warn(name, "Left out: " + LazyLord.imageScaleNote(fit, box.width, box.height), "skipped");
+    return null;
+  }
   var file = LazyLord.join(ctx.outDir, LazyLord._psr_safe(name) + "-" + (ctx.imageIndex++) + ".png");
 
   var bare = false;
   try {
-    bare = LazyLord._psr_export(ctx, lyr, box, file, false, !!lifted);
+    bare = LazyLord._psr_export(ctx, lyr, box, file, false, !!lifted, fit.scale);
   } catch (e) {
     LazyLord.warn(name, "Could not be rasterised — " + LazyLord._ps_msg(e), "skipped");
     return null;
   }
 
   if (reason) LazyLord.warn(name, reason, "rasterized");
+  if (fit.clamped) LazyLord.warn(name, LazyLord.imageScaleNote(fit, box.width, box.height), "approximated");
   if (lifted && !bare) {
     LazyLord.warn(name, "Its layer style could not be taken off the pixels, so it is part of the image " +
       "instead of After Effects layer styles", "approximated");
@@ -871,8 +882,8 @@ LazyLord._psr_raster = function (ctx, lyr, reason, lifted) {
     frame: LazyLord._psr_frame(lyr, box),
     filePath: file,
     isOriginalFile: false,
-    pixelWidth: Math.round(box.width * ctx.scale),
-    pixelHeight: Math.round(box.height * ctx.scale)
+    pixelWidth: Math.round(box.width * fit.scale),
+    pixelHeight: Math.round(box.height * fit.scale)
   };
   if (lifted && bare) out.effects = lifted;
   return out;
@@ -914,6 +925,13 @@ LazyLord._psr_sequence = function (ctx, source) {
   }
   if (!box) throw new Error("Every frame layer is empty, so there is nothing to send.");
 
+  // One scale for every frame, so they stay the same size; the whole sequence
+  // is one charge against the transfer's image budget.
+  var fit = LazyLord.imageScale(box.width, box.height, ctx.scale, ctx.budget, source.frames.length);
+  if (fit.skip) {
+    throw new Error("The frames were left out: " + LazyLord.imageScaleNote(fit, box.width, box.height) + ".");
+  }
+
   var base = LazyLord._psr_safe(source.name);
   var dir = LazyLord.join(ctx.outDir, base + "-frames-" + (ctx.imageIndex++));
   var folder = new Folder(dir);
@@ -925,11 +943,14 @@ LazyLord._psr_sequence = function (ctx, source) {
     while (digits.length < 4) digits = "0" + digits;
     var file = LazyLord.join(dir, base + "_" + digits + ".png");
     try {
-      LazyLord._psr_export(ctx, source.frames[f], box, file, true);
+      LazyLord._psr_export(ctx, source.frames[f], box, file, true, false, fit.scale);
     } catch (e) {
       throw new Error("Frame " + (f + 1) + " ('" + (source.frames[f].name || "Layer") + "') could not be exported — " + LazyLord._ps_msg(e));
     }
     frames.push(file);
+  }
+  if (fit.clamped) {
+    LazyLord.warn(source.name, LazyLord.imageScaleNote(fit, box.width, box.height, "The frames were exported"), "approximated");
   }
   return {
     id: LazyLord._psr_id(ctx, source.owner) + (source.owner.typename === "LayerSet" ? "" : "-frames"),
@@ -939,8 +960,8 @@ LazyLord._psr_sequence = function (ctx, source) {
     visible: true,
     filePath: frames[0],
     isOriginalFile: false,
-    pixelWidth: Math.round(box.width * ctx.scale),
-    pixelHeight: Math.round(box.height * ctx.scale),
+    pixelWidth: Math.round(box.width * fit.scale),
+    pixelHeight: Math.round(box.height * fit.scale),
     sequence: { frames: frames }
   };
 };
@@ -950,12 +971,14 @@ LazyLord._psr_sequence = function (ctx, source) {
  * `bare`, the copy's layer style is cleared first (the user's layer is never
  * touched); true when that was done.
  */
-LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame, bare) {
+LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame, bare, scale) {
   var stripped = false;
   var src = ctx.doc;
   var res = LazyLord._pv(src.resolution) || 72;
   var w = Math.max(1, Math.ceil(box.width));
   var h = Math.max(1, Math.ceil(box.height));
+  // The scale imageScale settled on, else the one asked for.
+  if (!(scale > 0)) scale = ctx.scale;
 
   var tmp = app.documents.add(w, h, res, "LazyLord export", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
   try {
@@ -987,8 +1010,8 @@ LazyLord._psr_export = function (ctx, lyr, box, outPath, asFrame, bare) {
       } catch (eS) {}
     }
 
-    if (ctx.scale !== 1) {
-      tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);
+    if (scale !== 1) {
+      tmp.resizeImage(UnitValue(w * scale, "px"), UnitValue(h * scale, "px"), res, ResampleMethod.BICUBIC);
     }
 
     var png = new PNGSaveOptions();
@@ -1827,12 +1850,23 @@ LazyLord._psr_withMask = function (ctx, lyr, raw) {
   if (!LazyLord._psr_maskState(lyr).on) return raw;
   var f = raw.frame;
   var box = { x: f.x, y: f.y, width: f.width, height: f.height };
+  // A mask is a picture too, and goes through the same size limits; the
+  // target stretches it over the layer's frame, so a lower scale still masks.
+  var fit = LazyLord.imageScale(box.width, box.height, ctx.scale, ctx.budget);
+  if (fit.skip) {
+    LazyLord.warn(raw.name, "Its layer mask was left off, so it arrives unmasked: " +
+      LazyLord.imageScaleNote(fit, box.width, box.height), "approximated");
+    return raw;
+  }
   var file = LazyLord.join(ctx.outDir, LazyLord._psr_safe(raw.name) + "-mask-" + (ctx.imageIndex++) + ".png");
   try {
-    LazyLord._psr_exportMask(ctx, lyr, box, file);
+    LazyLord._psr_exportMask(ctx, lyr, box, file, fit.scale);
   } catch (e) {
     LazyLord.warn(raw.name, "Its layer mask could not be read (" + LazyLord._ps_msg(e) + "), so it arrives unmasked", "approximated");
     return raw;
+  }
+  if (fit.clamped) {
+    LazyLord.warn(raw.name, LazyLord.imageScaleNote(fit, box.width, box.height, "Its layer mask was exported"), "approximated");
   }
   raw.mask = { frame: box, filePath: file };
   return raw;
@@ -1860,11 +1894,12 @@ LazyLord._psr_loadMaskSelection = function () {
 };
 
 /** Draw `lyr`'s layer mask over `box` into a greyscale PNG at `outPath`. */
-LazyLord._psr_exportMask = function (ctx, lyr, box, outPath) {
+LazyLord._psr_exportMask = function (ctx, lyr, box, outPath, scale) {
   var src = ctx.doc;
   var res = LazyLord._pv(src.resolution) || 72;
   var w = Math.max(1, Math.ceil(box.width));
   var h = Math.max(1, Math.ceil(box.height));
+  if (!(scale > 0)) scale = ctx.scale;
 
   var tmp = app.documents.add(w, h, res, "LazyLord mask", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);
   try {
@@ -1888,8 +1923,8 @@ LazyLord._psr_exportMask = function (ctx, lyr, box, outPath) {
     tmp.selection.deselect();
     copy.remove();
 
-    if (ctx.scale !== 1) {
-      tmp.resizeImage(UnitValue(w * ctx.scale, "px"), UnitValue(h * ctx.scale, "px"), res, ResampleMethod.BICUBIC);
+    if (scale !== 1) {
+      tmp.resizeImage(UnitValue(w * scale, "px"), UnitValue(h * scale, "px"), res, ResampleMethod.BICUBIC);
     }
     var png = new PNGSaveOptions();
     png.compression = 6;

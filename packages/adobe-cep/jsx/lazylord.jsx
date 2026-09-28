@@ -7,7 +7,7 @@
 
 if (typeof LazyLord === "undefined") { var LazyLord = {}; }
 
-LazyLord.VERSION = "1.1.10";
+LazyLord.VERSION = "1.1.11";
 
 /** Read a UTF-8 text file and return its contents. */
 LazyLord.readFile = function (path) {
@@ -493,6 +493,80 @@ LazyLord.normaliseReadOptions = function (opts) {
 
 /** What runRead was last asked for; readers use it when rasterising. */
 LazyLord.readOptions = { scale: 2 };
+
+/* -------------------------------------------------------------------------
+ * Image size limits
+ *
+ * A rasterised layer is exported through a scratch document its own size, at
+ * the Image scale asked for. A layer the size of a large canvas at 2x is a
+ * hundred-megapixel document: the host resamples it and saves it, the
+ * receiving app embeds it, and a stack of them stalls both apps and the
+ * machine. So one export is held under IMAGE_MAX_PIXELS and IMAGE_MAX_SIDE by
+ * lowering its scale (below 1x when it must, down to IMAGE_MIN_SCALE), and
+ * the generated images of one transfer together under TRANSFER_MAX_PIXELS,
+ * after which the rest are left out. The layer still sits at its full size on
+ * the page; only its resolution drops. Every change is reported. The Figma
+ * plugin applies the same limits (packages/core/src/images.ts).
+ * ---------------------------------------------------------------------- */
+
+LazyLord.IMAGE_MAX_PIXELS = 30000000;
+LazyLord.IMAGE_MAX_SIDE = 12000;
+LazyLord.IMAGE_MIN_SCALE = 0.25;
+LazyLord.TRANSFER_MAX_PIXELS = 300000000;
+
+/** A fresh per-transfer image budget, kept on a reader's context. */
+LazyLord.imageBudget = function () {
+  return { left: LazyLord.TRANSFER_MAX_PIXELS };
+};
+
+/**
+ * The scale to export `count` images of `width` x `height` px at, when
+ * `scale` was asked for: { scale, asked, clamped, skip, why }. `why` names
+ * what held it down ("side", "pixels" or "budget"). `budget` is charged what
+ * the export costs; with too little left even at the smallest scale, `skip`
+ * is true and nothing is charged.
+ */
+LazyLord.imageScale = function (width, height, scale, budget, count) {
+  var w = Math.max(1, width || 0), h = Math.max(1, height || 0), n = Math.max(1, count || 1);
+  var asked = scale > 0 ? scale : 1;
+  var s = asked, why = "";
+  var side = LazyLord.IMAGE_MAX_SIDE / Math.max(w, h);
+  if (side < s) { s = side; why = "side"; }
+  var each = Math.sqrt(LazyLord.IMAGE_MAX_PIXELS / (w * h));
+  if (each < s) { s = each; why = "pixels"; }
+  var left = (budget && typeof budget.left === "number") ? budget.left : LazyLord.TRANSFER_MAX_PIXELS;
+  var least = w * h * n * LazyLord.IMAGE_MIN_SCALE * LazyLord.IMAGE_MIN_SCALE;
+  if (left < least) return { scale: 0, asked: asked, clamped: true, skip: true, why: "budget" };
+  var all = Math.sqrt(left / (w * h * n));
+  if (all < s) { s = all; why = "budget"; }
+  if (s < LazyLord.IMAGE_MIN_SCALE) s = LazyLord.IMAGE_MIN_SCALE;
+  // Two decimals keep the note readable; the pixel size follows the rounded scale.
+  s = Math.floor(s * 100 + 1e-9) / 100;
+  if (s >= asked) { s = asked; why = ""; }
+  if (budget) budget.left = left - w * h * n * s * s;
+  return { scale: s, asked: asked, clamped: s < asked, skip: false, why: why };
+};
+
+/**
+ * What to report for an export imageScale held down: `fit` is its result,
+ * `what` the opening words ("Exported" by default). Ends without a full stop.
+ */
+LazyLord.imageScaleNote = function (fit, width, height, what) {
+  var mp = function (px) { return (Math.round(px / 100000) / 10) + " MP"; };
+  var w = Math.max(1, width || 0), h = Math.max(1, height || 0);
+  if (fit.skip) {
+    return "this transfer already carries " + mp(LazyLord.TRANSFER_MAX_PIXELS) +
+      " of generated images, as much as the apps take at once; send fewer layers, or send this one on its own";
+  }
+  var held = fit.why === "budget"
+    ? "this transfer's generated images are kept under " + mp(LazyLord.TRANSFER_MAX_PIXELS) +
+      " together; send fewer layers at once for full resolution"
+    : "LazyLord keeps one image under " + mp(LazyLord.IMAGE_MAX_PIXELS) + " (" + LazyLord.IMAGE_MAX_SIDE +
+      " px a side) so the apps stay responsive";
+  return (what || "Exported") + " at " + fit.scale + "x rather than " + fit.asked + "x: at " + fit.asked +
+    "x it would be " + Math.round(w * fit.asked) + " x " + Math.round(h * fit.asked) + " px (" +
+    mp(w * h * fit.asked * fit.asked) + "), and " + held;
+};
 
 /** The document's transfer options with defaults applied (mirrors core's transferOptions). */
 LazyLord.options = function (doc) {

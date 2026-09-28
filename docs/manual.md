@@ -7,7 +7,7 @@ What travels on each route has a reference of its own,
 [What transfers](transfers.md), and when something goes wrong there is
 [Troubleshooting](troubleshooting.md).
 
-*This describes LazyLord 1.1.10.*
+*This describes LazyLord 1.1.11.*
 
 ---
 
@@ -188,7 +188,7 @@ Effects can each keep their own.
 
 | | |
 | --- | --- |
-| **The version**, beside the logo (`v1.1.10`) | Click it to check for a newer LazyLord. While one is waiting it reads `v1.1.10 · update`, and clicking brings its card back. |
+| **The version**, beside the logo (`v1.1.11`) | Click it to check for a newer LazyLord. While one is waiting it reads `v1.1.11 · update`, and clicking brings its card back. |
 | **The dot**, at the right | The bridge. *Offline* before it connects, *Connecting…*, *Connected* (green), *Bridge offline* when it drops. It reconnects by itself every 2.5 seconds. |
 
 ### Update
@@ -216,6 +216,18 @@ Illustrator).
 **1x, 2x, 3x, 4x** — the resolution of anything that has to travel as a
 picture: an image you placed, a rasterised fallback, a layer sent as an
 image. The default is 2x. It does not affect vectors or text.
+
+**Big pictures are held down.** A layer the size of a large canvas at 2x would
+be a hundred-megapixel image — Photoshop has to build and save it, the
+receiving app has to embed it, and a stack of them stalls both apps and the
+computer. So one exported image is kept under **30 megapixels (12,000 px a
+side)** by lowering its scale, below 1x if it must, and the generated images
+of one transfer together under **300 megapixels**, after which the rest are
+left out. The layer still sits at its full size on the page; only its
+resolution drops. Each case is reported in the Fallbacks card with the scale
+used — *Exported at 0.79x rather than 2x* — or, when a transfer's budget is
+used up, with the advice to send fewer layers at once. Your own linked files
+are never resampled, so they are not counted.
 
 ### Destination
 

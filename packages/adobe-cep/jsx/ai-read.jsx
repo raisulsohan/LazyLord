@@ -88,6 +88,7 @@ LazyLord.readSelection = function (outDir) {
     top: rect[1],
     outDir: outDir,
     imageIndex: 0,
+    budget: LazyLord.imageBudget(),
     idCounter: 1,
     clipCounter: 1,
     // Every mask record made so far, and every clipping container resolved, so
@@ -1854,20 +1855,29 @@ LazyLord._air_raster = function (ctx, item, reason) {
   if (!gb) { LazyLord.warn(item.name || item.typename, "No bounds to export", "skipped"); return null; }
 
   var name = item.name || item.typename;
+
+  // Held under the image size limits (lazylord.jsx): a huge item goes at a
+  // lower scale, and past the transfer's budget it is left out.
+  var gw = Math.max(1, Math.ceil(gb[2] - gb[0])), gh = Math.max(1, Math.ceil(gb[1] - gb[3]));
+  var fit = LazyLord.imageScale(gw, gh, LazyLord.readOptions.scale, ctx.budget);
+  if (fit.skip) {
+    LazyLord.warn(name, "Left out: " + LazyLord.imageScaleNote(fit, gw, gh), "skipped");
+    return null;
+  }
   var outPath = LazyLord.join(ctx.outDir, LazyLord._air_safe(name) + "-" + (ctx.imageIndex++) + ".png");
 
-  var scale = LazyLord.readOptions.scale;
   try {
-    LazyLord._air_export(item, outPath, scale * 100);
+    LazyLord._air_export(item, outPath, fit.scale * 100);
   } catch (e) {
     LazyLord.warn(name, "Could not rasterize — " + e.message, "skipped");
     return null;
   }
 
   LazyLord.warn(name, reason, "rasterized");
+  if (fit.clamped) LazyLord.warn(name, LazyLord.imageScaleNote(fit, gw, gh), "approximated");
   // The export is of the item as it looks on the page, already turned, so the
   // PNG fills the outer box upright.
-  return LazyLord._air_imageLayer(ctx, item, LazyLord._air_frame(ctx, item, gb), outPath, false, scale);
+  return LazyLord._air_imageLayer(ctx, item, LazyLord._air_frame(ctx, item, gb), outPath, false, fit.scale);
 };
 
 /** An item's visible bounds (strokes and effects included), else its geometric ones; null when neither reads. */
